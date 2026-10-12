@@ -178,6 +178,68 @@ about 1.5 to 2 s per frame wall clock with the bake and 4 substeps every frame. 
 clearance and seam gap were not measured on the Mac. That frame time is 3 to 4 times the Linux container's 0.5 s and is
 unexplained.
 
+## Mac performance (2026-10-12, branch `mac/perf-2026-10-12`)
+
+The "1.5 to 2 s per frame" in the paragraph above was a measurement mistake, and there is no Mac slowdown.
+`--quit-after N` counts main-loop iterations, not physics frames: headless it runs about 8 physics ticks per
+iteration (`--quit-after 40` produced 317 `FRAME` lines, `--quit-after 5` produced 36). Dividing the wall time by
+the `--quit-after` count overstated the frame time by that factor. The real Mac number is ~0.26 s/frame wall,
+~0.24 s/frame CPU: faster than the Linux container's ~0.5 s/frame wall, as an Apple-silicon Mac should be.
+
+### Build check (no rebuild)
+
+`build-gd/CMakeCache.txt`: `CMAKE_BUILD_TYPE=Release`; extension objects compile with `-O3 -DNDEBUG -arch arm64`;
+godot-cpp built in-tree as `libgodot-cpp.darwin.release.64.a` with `-O3 -DNDEBUG`. An incremental
+`cmake --build build-gd` was a no-op, so the shipped `libfailoring.dylib` was already a true Release build.
+Nothing was changed or rebuilt for performance.
+
+### Numbers (`walk_demo.tscn`, Apple M3, Godot 4.3 headless, final `walk_demo.gd`)
+
+36 physics frames, exit 0, no errors. `STARTUP engine_to_ready_ms` ~0.4-0.6 s headless (9.6 s with a real window:
+first-window Metal init), scene build ~34 ms (rest-body bake included).
+
+| part | median | worst |
+|---|---|---|
+| frame total | 258.5 ms | 270.1 ms |
+| body bake (`set_body_positions`, every frame) | 25.1 ms | 25.9 ms |
+| solver step (4 substeps) | 232.8 ms | 243.4 ms |
+
+Solver: Newton 48/frame = the cap (12, `cloth.hpp:56`) hit on all 4 substeps from frame ~8 on (never converges;
+same non-convergence as the handoff doc's garment-on-body finding, with `tension_stiffness=1` as the browser sets
+it). Line-search failures 0, CG fallback never fires (`cg=0`: Cholesky succeeds every time). Minimum body
+clearance 1.65 mm, maximum seam gap 3.14 mm, kinetic energy settled to ~1e-5 J. Process totals over a 317-frame run:
+79.3 s real / 77.5 s user (98 % CPU-bound; machine load average was 5-14 on 8 cores but this run got its CPU).
+
+Comparison with the Linux run above: physics agrees (clearance 1.65 vs 1.6 mm, gap 3.14 vs 3.1 mm, zero
+line-search failures both sides, 748 verts / 1,352 tris the same tube). Linux recorded no Newton/CG counts, so
+solver effort cannot be compared directly; wall time is ~0.26 s Mac vs ~0.5 s Linux (whose container was heavily
+loaded and whose CPU time was never recorded).
+
+### Screenshots (real window, not headless)
+
+`godot/docs-shots/front.png` + `side.png` (800x450, Apple M3, Forward+), taken at frames 30/33 via `FL_SHOOT=1`
+(the demo quits itself; the window was briefly visible). The demo previously rendered no body at all, so a simple
+unshaded body mesh (current baked pose) was added to `walk_demo.gd`; it also renders headless without errors.
+Honest verdict: the body renders, the numbers at the shot frames are healthy (clearance 1.65 mm, gap 0.8-1.6 mm,
+KE < 1e-3 J), but the cloth shows only as a small grey patch at the top of the ellipsoid in both views, not a
+tube around the torso. That is scene staging, not solver or Mac rendering: the garment spans y 0.25-0.55 m while
+the placeholder ellipsoid spans y +/-0.35 m, and the "walk" is a 2 cm sway. Whether the drape itself is right needs
+someone with the intended-drape reference; these stills cannot confirm it.
+
+### Threading
+
+`cloth_core` is entirely single-threaded: no `std::thread`/`async`/`mutex`/`pthread`, no `#pragma omp` anywhere.
+The `FL_OPENMP` CMake option links OpenMP but nothing uses it (the `CMakeLists.txt` comment claiming
+`sdf_grid.cpp` uses `#pragma omp` under `_OPENMP` is stale). Only the SDF bake (~10 % of this frame) would be an
+easy OpenMP target; the solver (serial assembly + serial Cholesky, ~90 %) needs algorithmic work (blocked/
+supernodal factorisation, then threads). Nothing implemented here; `cloth_core/` untouched, `ctest` not re-run.
+
+### Not measured
+
+Linux Newton/CG iteration counts; same-host wasm-vs-native; windowed render cost (frames above are
+bake + solver; one unshaded body + one cloth mesh are trivial next to them); why Newton never converges on a
+garment (known open issue); whether `FL_OPENMP` on the bake is worth it (Amdahl says ~5 % here).
+
 ## Not done
 
 * Originally nothing was executed in Godot; see "Fixed after this review" for what was run afterwards.

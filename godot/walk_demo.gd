@@ -1,10 +1,11 @@
 # Walking-body demo: the call sequence for FailoringSim (gdextension/src/failoring_sim.h) with a mesh body that moves
 # every frame, the same flow as the browser's walking mannequin (app/src/worker.js).
 #
-# Run once in headless Godot 4.3 (Linux, 30 frames: no NaN, no penetration, seams closed from frame 0). Not yet looked at
-# in a real window or on macOS. Open godot/walk_demo.tscn (main.tscn runs demo.gd). Treat it as a starting point.
-# The body pose below is a placeholder (a slow sway of the rest mesh); a real walk needs the skinned body's vertices
-# each frame, e.g. from a Skeleton3D's skinned mesh or a precomputed gait sheet.
+# Run headless (30+ frames verified Linux and macOS) or with a real window. The body pose below is a placeholder
+# (a slow sway of the rest mesh); a real walk needs the skinned body's vertices each frame.
+# Per-frame stats print as FRAME lines (total/bake/step ms, Newton, substeps, line-search failures, CG, clearance,
+# seam gap, kinetic energy); FL_SHOOT=1 saves godot/docs-shots/front.png + side.png and quits (needs a real window).
+# A skinned body would feed its vertices each frame, e.g. from a Skeleton3D or a precomputed gait sheet.
 #
 # Call order:
 #   1. sim = FailoringSim.new(); sim.load_materials(path)            fabrics.json
@@ -43,18 +44,27 @@ var rest_verts: PackedVector3Array
 var frame := 0
 var cloth_mesh: ArrayMesh
 var cloth_instance: MeshInstance3D
+var body_mesh: ArrayMesh
+var body_instance: MeshInstance3D
+var body_pose: PackedVector3Array   # current body verts for the visible mesh (rest pose until the first bake)
+var cam: Camera3D
+var startup_usec := 0
+var shoot := false   # FL_SHOOT=1: save front/side PNGs to res://docs-shots and quit (real window, not --headless)
 
 
 func _ready() -> void:
+	startup_usec = Time.get_ticks_usec()
+	shoot = OS.has_environment("FL_SHOOT")
 	_build_scene()
 	_start()
+	print("STARTUP engine_to_ready_ms=%.1f scene_build_ms=%.1f" % [Time.get_ticks_msec(), (Time.get_ticks_usec() - startup_usec) / 1000.0])
 
 
 func _build_scene() -> void:
 	var sun := DirectionalLight3D.new()
 	sun.rotation_degrees = Vector3(-50, 30, 0)
 	add_child(sun)
-	var cam := Camera3D.new()
+	cam = Camera3D.new()
 	cam.position = Vector3(0, 0.3, 1.6)
 	add_child(cam)
 	cam.look_at(Vector3(0, 0.1, 0))
@@ -62,6 +72,14 @@ func _build_scene() -> void:
 	cloth_instance = MeshInstance3D.new()
 	cloth_instance.mesh = cloth_mesh
 	add_child(cloth_instance)
+	body_mesh = ArrayMesh.new()
+	body_instance = MeshInstance3D.new()
+	body_instance.mesh = body_mesh
+	var skin := StandardMaterial3D.new()
+	skin.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	skin.albedo_color = Color(0.85, 0.68, 0.58)
+	body_instance.material_override = skin
+	add_child(body_instance)
 
 
 func _start() -> void:
@@ -113,22 +131,66 @@ func _start() -> void:
 	# 8. display mesh
 	sim.setup_display()
 	rest_verts = body_verts.duplicate()
+	body_pose = rest_verts.duplicate()
+	_draw_body()
 
 
 func _physics_process(_delta: float) -> void:
 	if sim == null:
 		return
 	frame += 1
+	var t0 := Time.get_ticks_usec()
 	# 9. body moves; re-bake every BAKE_EVERY frames (placeholder pose: rest mesh swaying 2 cm)
+	var bake_ms := 0.0
 	if frame % BAKE_EVERY == 0:
 		var pose := PackedVector3Array()
 		pose.resize(rest_verts.size())
 		var dx := 0.02 * sin(frame / 30.0)
 		for i in range(rest_verts.size()):
 			pose[i] = rest_verts[i] + Vector3(dx, 0, 0)
-		sim.set_body_positions(pose)
+		bake_ms = sim.set_body_positions(pose)
+		body_pose = pose
+	var t1 := Time.get_ticks_usec()
 	sim.step(1)
+	var t2 := Time.get_ticks_usec()
 	_draw_cloth()
+	_draw_body()
+	var st := sim.get_solver_stats()
+	print("FRAME %d total_ms=%.1f bake_ms=%.1f step_ms=%.1f newton=%d substeps=%d lsfail=%d cg=%d clear_mm=%.2f gap_mm=%.2f ke=%s" % [
+		frame, (t2 - t0) / 1000.0, bake_ms, (t2 - t1) / 1000.0,
+		int(st.get("newton_iterations", -1)), int(st.get("substeps", -1)),
+		int(st.get("line_search_failures", -1)), int(st.get("cg_iterations", -1)),
+		sim.get_min_body_clearance() * 1000.0, sim.get_max_seam_gap() * 1000.0, str(sim.get_kinetic_energy())])
+	if shoot:
+		if frame == 30:
+			_shot("front")
+		elif frame == 31:
+			cam.position = Vector3(1.6, 0.3, 0)
+			cam.look_at(Vector3(0, 0.1, 0))
+		elif frame == 33:
+			_shot("side")
+			get_tree().quit()
+
+
+func _draw_body() -> void:
+	if body_pose.is_empty() or body_tris.is_empty():
+		return
+	var arr := []
+	arr.resize(Mesh.ARRAY_MAX)
+	arr[Mesh.ARRAY_VERTEX] = body_pose
+	arr[Mesh.ARRAY_INDEX] = body_tris
+	body_mesh.clear_surfaces()
+	body_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+
+
+func _shot(tag: String) -> void:
+	DirAccess.make_dir_recursive_absolute("res://docs-shots")
+	var img := get_viewport().get_texture().get_image()
+	var p := "res://docs-shots/" + tag + ".png"
+	if img.save_png(p) == OK:
+		print("SHOT saved ", p, " ", img.get_size())
+	else:
+		push_error("SHOT failed for " + p)
 
 
 func _draw_cloth() -> void:
