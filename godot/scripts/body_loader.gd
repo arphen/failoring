@@ -55,6 +55,13 @@ func show_standing() -> void:
 	_build(standing)
 
 
+# Shows an explicit pose (the editor drives the walk clock itself so the rendered
+# body and the collider stay in sync).
+func show_pose(v: PackedVector3Array) -> void:
+	walking = false
+	_build(v)
+
+
 func _process(delta: float) -> void:
 	if not walking or frames.is_empty():
 		return

@@ -2,7 +2,7 @@ config_version=5
 
 [application]
 config/name="Failoring"
-run/main_scene="res://main.tscn"
+run/main_scene="res://editor.tscn"
 config/features=PackedStringArray("4.3")
 
 [rendering]
