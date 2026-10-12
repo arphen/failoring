@@ -196,5 +196,9 @@ These are used by the tools and are not part of the distributed app.
 `LICENSE` is the GNU AGPL v3 text. Its structure matches the canonical text: the preamble, sections 0 to 17, `END OF
 TERMS AND CONDITIONS`, and "How to Apply These Terms", with the header `Version 3, 19 November 2007` and the FSF copyright
 line. SHA-256 of the file as committed: `895609d3e3043a5ffca941bbd0eb75e34470798261e49ba5c890292723952fb9`.
-**Not verified** byte-for-byte against https://www.gnu.org/licenses/agpl-3.0.txt: that host is refused by this
-environment's egress policy (HTTP 403).
+**Checked word for word** (2026-10-12) against `text/AGPL-3.0-only.txt` from github.com/spdx/license-list-data at commit
+`31ba1a50e5397e00a304dbadc76531740e89ee48` (committer date 2026-09-16): both texts have 5535 whitespace-separated words
+and differ in exactly three places, the URLs `http://fsf.org/` and `http://www.gnu.org/licenses/` (twice), which `LICENSE`
+writes as `https://`. Line wrapping differs (whitespace was not compared). **Not checked** byte for byte against
+https://www.gnu.org/licenses/agpl-3.0.txt: that host is refused by this environment's egress policy (HTTP 403), so the
+SPDX copy was the reference.

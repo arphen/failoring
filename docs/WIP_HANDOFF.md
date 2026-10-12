@@ -1,3 +1,6 @@
+> **Historical.** Checkpoint from 2026-10-12 afternoon. Current state: `docs/STATUS.md`. The "BLOCKER" about
+> `tensionStiffness` below is resolved (core default off, app on).
+
 # Mannequin task - work-in-progress handoff (checkpoint 2026-10-12 ~15:15 CEST)
 
 Task: `attachment.txt` (realistic parametric mannequin for Failoring). Decision taken: MakeHuman **CC0 assets** +
