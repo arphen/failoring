@@ -161,7 +161,10 @@
       // which armhole takes the first part of the cap (corner A -> peak): the one nearer to the cap's first half
       const mid = (f) => sl.wrapObj.point(...cap.cv.at(f)), amid = (a) => a.list[Math.floor(a.list.length / 2)].P3[M >> 1];
       const dd = (i, j) => dist3(mid(i ? (fp + 1) / 2 : fp / 2), amid(arm[j]));
-      const swap = dd(0, 0) + dd(1, 1) > dd(0, 1) + dd(1, 0), halves = [[0, fp], [fp, 1]];
+      const halves = [[0, fp], [fp, 1]], zOf = (f) => { let z = 0; for (let i = 0; i <= 8; i++) z += mid(f[0] + (f[1] - f[0]) * i / 8)[2]; return z / 9; };
+      // the cap half that lies further forward on the arm belongs to the front armhole
+      const frontHalf = zOf(halves[0]) >= zOf(halves[1]) ? 0 : 1, frontArm = arm.findIndex((a) => a.bp.spec.theta === 0), swap = frontArm !== frontHalf;
+      void dd;
       [0, 1].forEach((h) => {
         const a = arm[swap ? 1 - h : h], f = halves[h], tot = a.len; let acc = 0;
         const ord = h === 0 ? [0, 1] : [1, 0];   // cap order from the corner towards the peak: half 0 forward, half 1 backward
