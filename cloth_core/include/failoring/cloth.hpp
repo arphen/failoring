@@ -71,7 +71,7 @@ struct SolverParams {
     int seamRampFrames = 0;        // >0: seams fade in over this many frames (helps assembling far-apart panels)
     Real contactOffset = 0.0015;   // m, extra clearance cloth <-> body
     Real contactBand = 1e-4;       // m, implicit: a vertex this close to the body and pushed towards it is held (not released)
-    bool tensionStiffness = true;  // implicit: include the (PSD) tension part of the stretch Hessian; changes convergence, not the physics
+    bool tensionStiffness = false;  // garment option (the app turns it on): exact PSD tension term, see ARCHITECTURE.md  // implicit: include the (PSD) tension part of the stretch Hessian; changes convergence, not the physics
     bool selfCollision = true;
     Real selfThickness = 0.002;    // m, vertex-triangle contact distance
 };
@@ -96,6 +96,10 @@ public:
     void addSeam(int panelA, int edgeA, int panelB, int edgeB, bool reverse = false);
 
     void setCollider(std::shared_ptr<Collider> c) { collider_ = std::move(c); }
+    // Displacement of the collider surface at each cloth vertex over the coming frame (a moving body). Used only
+    // by the friction in solveBody (cloth is dragged along by the surface it rests on, not held back by it).
+    // Empty vector = a static collider.
+    void setColliderMotion(std::vector<Vec3> d) { colliderDisp_ = std::move(d); }
 
     // Pin a vertex (global index) in place; pinned vertices have infinite mass.
     void pinVertex(int v, bool pinned = true);
@@ -182,6 +186,7 @@ private:
     std::unordered_set<std::uint64_t> noCollide_;  // (vertex, triangle) pairs excluded from self collision
 
     std::shared_ptr<Collider> collider_;
+    std::vector<Vec3> colliderDisp_;
 
     // spatial hash for self collision
     struct Hash {

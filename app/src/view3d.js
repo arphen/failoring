@@ -79,7 +79,7 @@ V.buildBody = () => {
   const r = 0.0118 * body.m.height / 1.68;
   V.eyes[0].position.set(...body.joints['l-eye']); V.eyes[1].position.set(...body.joints['r-eye']);
   for (const e of V.eyes) e.scale.setScalar(r);
-  V.dirty = true;
+  V._bodyShown = null; V.dirty = true;
 };
 // Legacy primitive mannequin (only when the body asset is missing): primitives shrunk 4 mm so cloth resting on
 // the analytic surfaces does not z-fight with their coarse display meshes.
@@ -172,11 +172,22 @@ V.rebuildSeamObjects = (sim) => {
 
 // ---------------------------------------------------------------- timeline pose
 const _m = new THREE.Matrix4(), _q0 = new THREE.Quaternion(), _q1 = new THREE.Quaternion(), _q = new THREE.Quaternion(), _v = new THREE.Vector3();
-V.currentFrame = () => {
-  const sim = V.sim; if (!sim || !sim.frames.length) return null;
+V.frameIndex = () => {
+  const sim = V.sim; if (!sim || !sim.frames.length) return -1;
+  if (V.forceFrame != null) return Math.min(V.forceFrame, sim.frames.length - 1);
   const N = Math.max(2, sim.target || sim.frames.length);
   const idx = V.T >= 4 ? sim.frames.length - 1 : Math.round(clamp(V.T - 3, 0, 1) * (N - 1));
-  return sim.frames[Math.min(idx, sim.frames.length - 1)];
+  return Math.min(idx, sim.frames.length - 1);
+};
+V.currentFrame = () => { const i = V.frameIndex(); return i < 0 ? null : V.sim.frames[i]; };
+// walking: the mannequin is posed per simulated frame (sim.bodyFrames); standing frames use the standing body
+V.showBodyFrame = (T) => {
+  const sim = V.sim, mesh = V.bodyMesh; if (!mesh) return;
+  const i = T >= 3 ? V.frameIndex() : -1, bf = i >= 0 && sim.bodyFrames ? sim.bodyFrames[i] : null, want = bf || App.body.pos;
+  if (V._bodyShown === want) return;
+  V._bodyShown = want; mesh.geometry.attributes.position.array.set(want); mesh.geometry.attributes.position.needsUpdate = true; mesh.geometry.computeVertexNormals(); mesh.geometry.computeBoundingSphere();
+  const e = bf && sim.eyes ? sim.eyes : [App.body.joints['l-eye'], App.body.joints['r-eye']];
+  V.eyes[0].position.set(...e[0]); V.eyes[1].position.set(...e[1]);
 };
 V.pose = (T) => {
   const sim = V.sim; if (!sim || !V.cloth) return;
@@ -212,6 +223,7 @@ V.pose = (T) => {
     FL.withMidpoints(pos, meta.n, meta.edges, pos);
   }
   V.cloth.geometry.attributes.position.needsUpdate = true; V.cloth.geometry.computeVertexNormals();
+  if (App.body) V.showBodyFrame(T);
   // stitches: hidden before stage 2, faint guides while pieces move, drawn progressively in stage 3
   const reveal = T < 2 ? 1 : clamp(T - 2, 0, 1) * 1.0;
   for (const s of V.stitches) {

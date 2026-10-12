@@ -148,6 +148,7 @@ FL.profile = (body, y) => {
 // body.sections) or, for the legacy primitive mannequin, the measurements (ellipse wrap).
 FL.makeWrap = (piece, body) => {
   if (!body || !body.sections) return FL.makeWrapEllipse(piece, body);
+  if (piece.wrap && piece.wrap.mode) return FL.makeWrapRows(piece, body);
   const S = body.sections, w = piece.wrap, bb = FL.bbox(piece.outline), uc = (bb.x0 + bb.x1) / 2;
   const h0 = w.y, h1 = w.y + (bb.y1 - bb.y0);
   const k0 = Math.max(0, Math.floor(h0 / S.dy)), k1 = Math.min(S.ny - 1, Math.ceil(h1 / S.dy));
@@ -195,6 +196,147 @@ FL.makeWrap = (piece, body) => {
     point(u, v) { const f = flare(v), p = phiOf(sc + (u - uc) / f), r = rad(p) * f; return [r * Math.sin(p), w.y + (v - bb.y0), cz + r * Math.cos(p)]; },
     // exploded pose: upright and flat, tangent to the envelope at the piece centre, pushed outward by `d`
     flatPoint(u, v, d) { return [c0[0] - tz * d + tx * (u - uc), w.y + (v - bb.y0), c0[1] + tx * d + tz * (u - uc)]; },
+  };
+};
+
+
+// Arc-length parametrised section of the trunk at row k (hull around (0, cz), plus `clear`): the basis for
+// patterns that are drafted from the body (FL.draft) and wrapped back with mode 'arc' (arc length = pattern x).
+//   c.cum(phi): arc length from phi = 0 (front) to phi, increasing with phi in [0, 2pi]
+//   c.phiAt(s): inverse; c.pt(phi): [x, z]
+FL.sectionCurve = (body, k, clear) => {
+  const S = body.sections, cacheKey = k + '|' + clear;
+  const store = S._curves || (S._curves = new Map());
+  let c = store.get(cacheKey); if (c) return c;
+  let hull = null;
+  for (let d = 0; d < S.ny && !hull; d++) for (const kk of [k - d, k + d]) if (kk >= 0 && kk < S.ny && S.hulls[kk] && S.hulls[kk].length >= 6) { hull = S.hulls[kk]; break; }
+  const n = hull.length >> 1; let A = 0, cz = 0;
+  for (let i = 0; i < n; i++) { const j = (i + 1) % n, cr = hull[2 * i] * hull[2 * j + 1] - hull[2 * j] * hull[2 * i + 1]; A += cr; cz += (hull[2 * i + 1] + hull[2 * j + 1]) * cr; }
+  cz = Math.abs(A) > 1e-12 ? cz / (3 * A) : 0;
+  const NA = 360, R = new Float64Array(NA + 1);
+  for (let a = 0; a < NA; a++) {
+    const p = 2 * Math.PI * a / NA, dx = Math.sin(p), dz = Math.cos(p); let best = 0.02;
+    for (let i = 0; i < n; i++) {
+      const j = (i + 1) % n, px = hull[2 * i], pz = hull[2 * i + 1] - cz, ex = hull[2 * j] - hull[2 * i], ez = hull[2 * j + 1] - hull[2 * i + 1];
+      const den = dx * ez - dz * ex; if (Math.abs(den) < 1e-12) continue;
+      const t = (px * ez - pz * ex) / den, s2 = (px * dz - pz * dx) / den;
+      if (t > best && s2 >= -1e-9 && s2 <= 1 + 1e-9) best = t;
+    }
+    R[a] = best + clear;
+  }
+  R[NA] = R[0];
+  const rad = (phi) => { const f = (((phi / (2 * Math.PI)) % 1) + 1) % 1 * NA, i = Math.min(NA - 1, Math.floor(f)); return R[i] + (R[i + 1] - R[i]) * (f - i); };
+  const pt = (phi) => { const r = rad(phi); return [r * Math.sin(phi), cz + r * Math.cos(phi)]; };
+  const N = 720, ST = new Float64Array(N + 1); let prev = pt(0);
+  for (let i = 1; i <= N; i++) { const q = pt(2 * Math.PI * i / N); ST[i] = ST[i - 1] + Math.hypot(q[0] - prev[0], q[1] - prev[1]); prev = q; }
+  const per = ST[N];
+  const cum = (phi) => { const w = Math.floor(phi / (2 * Math.PI)), ph = phi - w * 2 * Math.PI, f = ph / (2 * Math.PI) * N, i = Math.min(N - 1, Math.floor(f)); return w * per + ST[i] + (ST[i + 1] - ST[i]) * (f - i); };
+  const phiAt = (s2) => { const w = Math.floor(s2 / per), r = s2 - w * per; let lo = 0, hi = N; while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (ST[mid] <= r) lo = mid; else hi = mid; } return w * 2 * Math.PI + (lo + (r - ST[lo]) / (ST[lo + 1] - ST[lo])) / N * 2 * Math.PI; };
+  c = { cz, per, pt, cum, phiAt }; store.set(cacheKey, c); return c;
+};
+
+// Row-wise wrap (wrap.mode 'torso' or 'leg'): every row of the piece is laid on the body section at its own height
+// instead of one envelope for the whole piece, and the row's width is spread over the section's arc *by fraction*
+// (so a pattern that is a little wider or narrower than the body is stretched or eased evenly instead of
+// overshooting). Used for shirts (torso) and trousers (leg tubes below the crotch, half the pelvis above it).
+//   wrap: { mode, theta (0 front / 180 back), y, clear, span (torso: degrees of the section covered, default 180),
+//           side ('L'|'R', leg only) }
+// The piece's x runs the same way as the section angle phi (from +z towards +x), as for makeWrap.
+FL.makeWrapRows = (piece, body) => {
+  const S = body.sections, w = piece.wrap, bb = FL.bbox(piece.outline), uc = (bb.x0 + bb.x1) / 2, o = piece.outline;
+  const D = Math.PI / 180, NA = 180, clear = w.clear == null ? 0.012 : w.clear, vc = (bb.y0 + bb.y1) / 2;
+  const theta = w.theta * D, yc = S.yCrotch || 0, zb = 0.05;
+  const rowExt = (v) => { let lo = 1e9, hi = -1e9;
+    for (let i = 0; i < o.length; i++) { const a = o[i], b = o[(i + 1) % o.length]; if ((a[1] - v) * (b[1] - v) <= 0 && a[1] !== b[1]) { const x = a[0] + (b[0] - a[0]) * (v - a[1]) / (b[1] - a[1]); lo = Math.min(lo, x); hi = Math.max(hi, x); } }
+    return hi > lo ? [lo, hi] : [uc - 1e-4, uc + 1e-4]; };
+  const nearest = (list, k) => { for (let d = 0; d < S.ny; d++) { if (k - d >= 0 && list[k - d] && list[k - d].length >= 6) return list[k - d]; if (k + d < S.ny && list[k + d] && list[k + d].length >= 6) return list[k + d]; } return null; };
+  // polar description of a convex polygon around its area centroid (x centre optional)
+  const polar = (hull, fixX) => {
+    const n = hull.length >> 1; let A = 0, cx = 0, cz = 0;
+    for (let i = 0; i < n; i++) { const j = (i + 1) % n, cr = hull[2 * i] * hull[2 * j + 1] - hull[2 * j] * hull[2 * i + 1]; A += cr; cx += (hull[2 * i] + hull[2 * j]) * cr; cz += (hull[2 * i + 1] + hull[2 * j + 1]) * cr; }
+    if (Math.abs(A) > 1e-12) { cx /= 3 * A; cz /= 3 * A; } else { cx = 0; cz = 0; }
+    if (fixX != null) cx = fixX;
+    const R = new Float64Array(NA + 1);
+    for (let a = 0; a < NA; a++) {
+      const p = 2 * Math.PI * a / NA, dx = Math.sin(p), dz = Math.cos(p); let best = 0.02;
+      for (let i = 0; i < n; i++) {
+        const j = (i + 1) % n, px = hull[2 * i] - cx, pz = hull[2 * i + 1] - cz, ex = hull[2 * j] - hull[2 * i], ez = hull[2 * j + 1] - hull[2 * i + 1];
+        const den = dx * ez - dz * ex; if (Math.abs(den) < 1e-12) continue;
+        const t = (px * ez - pz * ex) / den, s2 = (px * dz - pz * dx) / den;
+        if (t > best && s2 >= -1e-9 && s2 <= 1 + 1e-9) best = t;
+      }
+      R[a] = best;
+    }
+    R[NA] = R[0];
+    return { cx, cz, R };
+  };
+  const rad = (R, phi) => { const f = (((phi / (2 * Math.PI)) % 1) + 1) % 1 * NA, i = Math.min(NA - 1, Math.floor(f)); return R[i] + (R[i + 1] - R[i]) * (f - i); };
+  // arc through [pa, pb] of a polar section: t in [0, 1] -> [x, z]
+  const MS = 48, cache = new Map();
+  const arc = (key, hull, fixX, pa, pb) => {
+    let e = cache.get(key);
+    if (!e) {
+      const pl = polar(hull, fixX), cum = new Float64Array(MS + 1); let prev = null;
+      for (let i = 0; i <= MS; i++) { const p = pa + (pb - pa) * i / MS, r = rad(pl.R, p) + clear, c = [pl.cx + r * Math.sin(p), pl.cz + r * Math.cos(p)]; if (prev) cum[i] = cum[i - 1] + Math.hypot(c[0] - prev[0], c[1] - prev[1]); prev = c; }
+      e = { pl, cum, pa, pb }; cache.set(key, e);
+    }
+    return (t) => {
+      const tot = e.cum[MS], s2 = Math.max(0, Math.min(1, t)) * tot; let lo = 0, hi = MS;
+      while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (e.cum[mid] <= s2) lo = mid; else hi = mid; }
+      const p = e.pa + (e.pb - e.pa) * (lo + (s2 - e.cum[lo]) / ((e.cum[lo + 1] - e.cum[lo]) || 1)) / MS, r = rad(e.pl.R, p) + clear;
+      return [e.pl.cx + r * Math.sin(p), e.pl.cz + r * Math.cos(p)];
+    };
+  };
+  const span = (w.span == null ? 180 : w.span) * D;
+  const regimeTorso = (k) => arc('t' + k, nearest(S.hulls, k), 0, theta - span / 2, theta + span / 2);
+  const regimeLeg = (k) => { const side = w.side, kv = Math.min(k, Math.floor((yc - 0.006) / S.dy));
+    return arc('l' + side + kv, nearest(S.legs[side], kv), null, theta - Math.PI / 2, theta + Math.PI / 2); };
+  const regimeHalf = (k) => { const up = (w.side === 'L') === (w.theta === 0), pa = up ? theta : theta - Math.PI / 2;
+    return arc('h' + w.side + (up ? 'u' : 'd') + k, nearest(S.hulls, k), 0, pa, pa + Math.PI / 2); };
+  const ySmooth = (x) => { x = Math.max(0, Math.min(1, x)); return x * x * (3 - 2 * x); };
+  const armPos = (u, v) => {   // sleeve: a tube around the arm axis; row fraction t -> angle from the underarm seam
+    const A = body.arms[w.side], [x0, x1] = rowExt(v), t = (u - x0) / (x1 - x0);
+    const s = Math.max(0, Math.min(A.total, (w.sTop || 0.06) + (bb.y1 - v))), k = s < A.len[0] ? 0 : 1, l = s - (k ? A.len[0] : 0);
+    const a = A.seg[k], c = [A.pts[k][0] + a[0] * l, A.pts[k][1] + a[1] * l, A.pts[k][2] + a[2] * l];
+    const dz = a[2]; let e0 = [-dz * a[0], -dz * a[1], 1 - dz * a[2]]; const l0 = Math.hypot(...e0); e0 = e0.map((q) => q / l0);
+    const up = [-a[0], -a[1], -a[2]], e1 = [up[1] * e0[2] - up[2] * e0[1], up[2] * e0[0] - up[0] * e0[2], up[0] * e0[1] - up[1] * e0[0]];
+    const ra = A.rad[Math.min(A.rad.length - 1, Math.round(s / 0.01))], r = Math.max(ra + 0.004, Math.min(ra + clear + (w.loose || 0), (x1 - x0) / (2 * Math.PI))), ph = (w.phiSeam * D) + 2 * Math.PI * t, cs = Math.cos(ph), sn = Math.sin(ph);
+    return [c[0] + r * (cs * e0[0] + sn * e1[0]), c[1] + r * (cs * e0[1] + sn * e1[1]), c[2] + r * (cs * e0[2] + sn * e1[2])];
+  };
+  const posAt = (u, v) => {
+    if (w.mode === 'arm') return armPos(u, v);
+    const y = w.y + (v - bb.y0), k = Math.max(0, Math.min(S.ny - 1, Math.round(y / S.dy))), [x0, x1] = rowExt(v), t = (u - x0) / (x1 - x0);
+    let p;
+    if (w.mode === 'leg') {
+      const wt = ySmooth((y - (yc - zb)) / (2 * zb));
+      if (wt <= 0) p = regimeLeg(k)(t);
+      else if (wt >= 1) p = regimeHalf(k)(t);
+      else { const a = regimeLeg(k)(t), b = regimeHalf(k)(t); p = [a[0] + (b[0] - a[0]) * wt, a[1] + (b[1] - a[1]) * wt]; }
+    } else if (w.mode === 'fit') {
+      // pattern x = distance along the section from the piece's centre line, on a section inflated until its girth equals
+      // what all pieces of the garment cover at this height (w.P: total width per row), or compressed if the garment is smaller
+      const Pi = (y - w.Py0) / w.Pdy, i0 = Math.max(0, Math.min(w.P.length - 1, Math.floor(Pi))), i1 = Math.min(w.P.length - 1, i0 + 1), Pw = w.P[i0] + (w.P[i1] - w.P[i0]) * Math.max(0, Math.min(1, Pi - i0));
+      const c0 = FL.sectionCurve(body, k, clear), d = Pw > c0.per ? Math.min(0.06, Math.round((Pw - c0.per) / (2 * Math.PI) * 1000) / 1000) : 0;
+      const c = d > 0 ? FL.sectionCurve(body, k, clear + d) : c0, kk = c.per / Pw;
+      p = c.pt(c.phiAt(c.cum(theta < 0 ? theta + 2 * Math.PI : theta) + u * kk));
+    } else if (w.mode === 'arc') {
+      const c = FL.sectionCurve(body, k, clear), q = c.pt(c.phiAt(c.cum(theta < 0 ? theta + 2 * Math.PI : theta) + u));
+      p = q;
+    } else p = regimeTorso(k)(t);
+    return [p[0], y, p[1]];
+  };
+  if (w.mode === 'arm') {
+    const A = body.arms[w.side], sg = w.side === 'L' ? 1 : -1;
+    return { ax: 0.2, az: 0.12, cz: 0, per: 1, uc, vmin: bb.y0, point: (u, v) => armPos(u, v),
+      flatPoint: (u, v, d) => { const s = Math.max(0, Math.min(A.total, (w.sTop || 0.06) + (bb.y1 - v))), k = s < A.len[0] ? 0 : 1, l = s - (k ? A.len[0] : 0), a = A.seg[k];
+        return [A.pts[k][0] + a[0] * l + sg * (A.rad[Math.round(s / 0.01)] + clear + d), A.pts[k][1] + a[1] * l, A.pts[k][2] + a[2] * l - sg * (u - uc)]; } };
+  }
+  const c0 = posAt(uc, vc), ca = posAt(uc - 0.005, vc), cb = posAt(uc + 0.005, vc);
+  let tx = cb[0] - ca[0], tz = cb[2] - ca[2]; const tl = Math.hypot(tx, tz) || 1; tx /= tl; tz /= tl;
+  return {
+    ax: 0.2, az: 0.12, cz: 0, per: 1, uc, vmin: bb.y0,
+    point: (u, v) => posAt(u, v),
+    flatPoint: (u, v, d) => [c0[0] - tz * d + tx * (u - uc), w.y + (v - bb.y0), c0[2] + tx * d + tz * (u - uc)],
   };
 };
 

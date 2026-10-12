@@ -1,0 +1,1 @@
+export default function get(o, p, d) { const a = Array.isArray(p) ? p : String(p).replace(/\[(\w+)\]/g, '.$1').split('.').filter(Boolean); let r = o; for (const k of a) { if (r == null) return d; r = r[k]; } return r === undefined ? d : r; }

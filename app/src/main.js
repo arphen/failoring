@@ -9,7 +9,7 @@ App.initWorker = () => {
   const w = App.worker = new Worker(url);
   w.onmessage = (ev) => App.onWorker(ev.data);
   w.onerror = (e) => { App.setStatus('worker error: ' + e.message); console.error(e); };
-  w.postMessage({ type: 'init', wasm: bytes.buffer, fabrics: FL.FABRICS }, [bytes.buffer]);
+  w.postMessage({ type: 'init', wasm: bytes.buffer, fabrics: FL.FABRICS, bodyAsset: App.bodyBytes || null }, [bytes.buffer]);
 };
 App.setStatus = (t) => { $('#status').textContent = t; };
 
@@ -21,7 +21,7 @@ App.onWorker = (d) => {
     if (d.bake) App.lastBake = d.bake;
     App.setStatus(`${d.n} vertices, ${d.tris.length / 3 | 0} triangles - simulating`); App.refreshBodyNote && App.refreshBodyNote();
   } else if (d.type === 'frame' && App.sim && d.job === App.sim.job) {
-    const s = App.sim; s.frames.push(d.pos); s.ke = d.ke; s.gap = d.gap; s.ms = d.ms; s.clear = d.clear;
+    const s = App.sim; s.frames.push(d.pos); (s.bodyFrames = s.bodyFrames || []).push(d.body || null); if (d.eyes) s.eyes = d.eyes; if (d.bake) s.lastBake = d.bake; s.ke = d.ke; s.gap = d.gap; s.ms = d.ms; s.clear = d.clear;
     V.dirty = true; App.updateSimUi();
   } else if (d.type === 'done' && App.sim && d.job === App.sim.job) { App.sim.done = true; V.dirty = true; App.updateSimUi(); }
   else if (d.type === 'error') { App.setStatus('simulation error: ' + d.msg.split('\n')[0]); console.error(d.msg); }
@@ -34,6 +34,7 @@ App.updateSimUi = () => {
   App.setStatus(s.done ? `${s.meta.n} vertices - ready` : `${s.meta.n} vertices - simulating ${s.frames.length}/${s.target}`);
 };
 
+const WALK = { cycle: 64, ramp: 24 };   // frames per gait cycle (1/60 s each: 1.07 s), frames to ease from standing into the stride
 App.rebuildTimer = null;
 App.scheduleRebuild = (delay) => { clearTimeout(App.rebuildTimer); App.rebuildTimer = setTimeout(App.rebuild, delay); };
 App.rebuild = () => {
@@ -43,16 +44,17 @@ App.rebuild = () => {
   const q = App.QUALITY[S.quality], fab = FL.fabricById(S.fabric), job = ++App.jobId;
   const ids = new Set(pieces.map((p) => p.id));
   // the mesh body (or null: legacy primitive mannequin); the worker re-bakes its collider only when `key` changes
-  const body = App.body ? { key: App.body.key, pos: App.body.pos.slice(), tris: App.bodyTris, sections: App.body.sections } : null;
+  const body = App.body ? { key: App.body.key, pos: App.body.pos.slice(), tris: App.bodyTris, sections: App.body.sections, arms: App.body.arms } : null;
+  const walk = S.motion === 'walk' && App.body && App.bodyRest ? { rest: App.bodyRest.allPos.slice(), joints: App.bodyRest.joints, settle: q.frames + (S.extraFrames || 0), cycle: WALK.cycle, ramp: WALK.ramp, stride: 1 } : null;
   const spec = {
-    job, meas: S.meas, fabric: fab, quality: q, rampFrames: S.rampFrames, seamStiffness: S.seamStiffness, selfCollision: S.selfCollision, frames: q.frames + (S.extraFrames || 0),
+    job, walk, meas: S.meas, fabric: fab, quality: q, rampFrames: S.rampFrames, seamStiffness: S.seamStiffness, selfCollision: S.selfCollision || !!q.self, frames: q.frames + (S.extraFrames || 0) + (walk ? Math.round(1.5 * WALK.cycle) : 0),
     pieces: pieces.map((p) => ({ id: p.id, outline: p.outline, grain: p.grain, wrap: p.wrap })),
     seams: S.seams.filter((s) => ids.has(s.a[0]) && ids.has(s.b[0])), body,
   };
   App.worker.postMessage({ type: 'cancel' });
   App.worker.postMessage({ type: 'build', spec });
-  App.pending = { job, pieces: JSON.parse(JSON.stringify(spec.pieces)), seams: JSON.parse(JSON.stringify(spec.seams)), meta: null, frames: [], target: spec.frames, done: false,
-    body: body ? { sections: body.sections } : null };
+  App.pending = { job, pieces: JSON.parse(JSON.stringify(spec.pieces)), seams: JSON.parse(JSON.stringify(spec.seams)), meta: null, frames: [], target: spec.frames, done: false, walkCycle: walk ? WALK.cycle : 0,
+    body: body ? { sections: body.sections, arms: body.arms } : null };
   if (V.T >= 3) V.T = 4;    // follow the live drape while editing
   App.setStatus('meshing...'); Ed.dirty = true;
 };
@@ -65,10 +67,15 @@ App.loadBodyModel = () => {
     const el = $('#bodyB64'); if (!el) throw new Error('no body asset in this build');
     const bin = atob(el.textContent.trim()), u8 = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
-    App.bodyModel = FL.Body.load(u8); App.bodyTris = Int32Array.from(App.bodyModel.tris);
+    App.bodyBytes = u8.slice(); App.bodyModel = FL.Body.load(u8); App.bodyTris = Int32Array.from(App.bodyModel.tris);
   } catch (e) { console.error(e); App.bodyModel = null; App.toast('Body model could not be loaded - using the simple mannequin'); }
 };
-App.regenBody = () => { App.body = App.bodyModel ? FL.Body.generate(App.bodyModel, App.S.meas, App.body) : null; };
+// App.bodyRest = the generated (A-pose) body; App.body = the standing mannequin posed from it (the cloth starts on this one)
+App.regenBody = () => {
+  if (!App.bodyModel) { App.body = App.bodyRest = null; return; }
+  App.bodyRest = FL.Body.generate(App.bodyModel, App.S.meas, App.bodyRest);
+  App.body = FL.Gait.stand(App.bodyModel, App.bodyRest);
+};
 
 // ------------------------------------------------------------------ change routing
 App.onChange((kind) => {
@@ -210,7 +217,7 @@ App.refreshBodyNote = () => {
   el.textContent = (off.length ? 'Out of the body model\'s range: ' + off.join('; ') + '.' : 'All measurements matched (within 1 mm).') + ` Body ${b.ms.toFixed(0)} ms${bake}.`;
 };
 App.refreshAll = () => {
-  const S = App.S; $('#qualSel').value = S.quality;
+  const S = App.S; $('#qualSel').value = S.quality; $('#motionSel').value = S.motion || 'stand';
   App.refreshPanels();
 };
 
@@ -244,16 +251,25 @@ App.tickTimeline = (now) => {
 // ------------------------------------------------------------------ boot
 App.boot = () => {
   FL.FABRICS = JSON.parse($('#fabricsJson').textContent);
-  App.S = { pieces: [], seams: [], fabric: 'cotton_poplin', meas: Object.assign({}, App.DEFAULT_MEAS), quality: 'standard', seamStiffness: 20000, rampFrames: 20, selfCollision: false,
+  App.S = { pieces: [], seams: [], fabric: 'cotton_poplin', meas: Object.assign({}, App.DEFAULT_MEAS), quality: 'standard', motion: 'stand', seamStiffness: 20000, rampFrames: 20, selfCollision: false,
     tool: 'select', snap: true, sel: null, selV: -1, sewA: null, hotSeam: -1, planName: '', planNotes: '' };
   const sel = $('#planSel'); sel.innerHTML = Object.keys(PLANS).map((k) => `<option value="${k}">${PLANS[k].name}</option>`).join('');
   sel.onchange = () => App.loadPattern(PLANS[sel.value]);
   $('#qualSel').onchange = (e) => { App.S.quality = e.target.value; App.scheduleRebuild(50); };
+  $('#motionSel').onchange = (e) => { App.S.motion = e.target.value; App.scheduleRebuild(50); };
   $('#snap').onchange = (e) => (App.S.snap = e.target.checked);
   $('#btnSave').onclick = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([App.exportPattern()], { type: 'application/json' })); a.download = (App.S.planName || 'pattern').replace(/\W+/g, '-').toLowerCase() + '.failoring.json'; a.click(); };
   $('#btnOpen').onclick = () => $('#fileIn').click();
   $('#fileIn').onchange = async (e) => { const f = e.target.files[0]; if (!f) return; try { App.loadPattern(JSON.parse(await f.text())); } catch (err) { App.toast('Could not read that pattern: ' + err.message); } e.target.value = ''; };
   App.loadBodyModel(); App.regenBody();
+  // garments drafted from the mannequin's measurements (FL.draft): added to the plan list, re-draftable after a body change
+  App.DRAFTS = { pants: 'pants', shirt: 'shirt', tank: 'tank' };
+  const fillPlans = () => { sel.innerHTML = Object.keys(PLANS).map((k) => `<option value="${k}">${PLANS[k].name}</option>`).join(''); };
+  App.draftPlans = () => { if (!App.body || !FL.draft) return; for (const k of Object.keys(App.DRAFTS)) { const p = FL.draft[App.DRAFTS[k]](App.body); p.draft = k; PLANS[k] = p; } };
+  App.draftPlans(); fillPlans();
+  const showDraft = () => { $('#btnDraft').hidden = !(PLANS[sel.value] && PLANS[sel.value].draft); };
+  sel.onchange = () => { App.loadPattern(PLANS[sel.value]); showDraft(); };
+  $('#btnDraft').onclick = () => { const k = sel.value; if (!PLANS[k] || !PLANS[k].draft) return; App.draftPlans(); App.loadPattern(PLANS[k]); App.toast('Re-drafted from the current body'); };
   V.init(); Ed.init(); App.buildPanels(); App.initTimeline(); App.initWorker();
   if (App.shootInit) App.shootInit();
   App.loadPattern(PLANS.pencil);

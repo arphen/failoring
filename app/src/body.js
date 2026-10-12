@@ -150,13 +150,15 @@
       tris[o] = a; tris[o + 1] = b; tris[o + 2] = c; tris[o + 3] = a; tris[o + 4] = c; tris[o + 5] = d;
     }
     const part = blob.slice(H.part, H.part + nv);
+    const skinIdx = blob.slice(H.skin, H.skin + 4 * nb), skinW = new Float32Array(4 * nb);
+    for (let i = 0; i < 4 * nb; i++) skinW[i] = blob[H.skin + 4 * nb + i] / 255;
     const targets = {};
     for (const t of H.targets) {
       const idx = undelta(u16(t.off, t.n)), dq = new Int16Array(u16(t.off + 2 * t.n, 3 * t.n).buffer), d = new Float32Array(3 * t.n);
       for (let i = 0; i < t.n; i++) for (let c = 0; c < 3; c++) d[3 * i + c] = dq[c * t.n + i] * H.qTarget;
       targets[t.name] = { idx, d, src: t.src };
     }
-    const M = { header: H, nv, nb, nq, base, tris, part, parts: H.parts, targets, joints: H.joints, lm: H.landmarks, masks: H.masks, bytes: packed.length };
+    const M = { header: H, skinIdx, skinW, bones: H.bones, nv, nb, nq, base, tris, part, parts: H.parts, targets, joints: H.joints, lm: H.landmarks, masks: H.masks, bytes: packed.length };
     // triangle subsets used by the tape measures and the wrap sections
     const triSet = (names) => {
       const ok = new Uint8Array(32); for (const s of names) ok[H.parts.indexOf(s)] = 1;
@@ -389,6 +391,51 @@
     body.ms = now() - t0;
     return body;
   };
+  // ---------------------------------------------------------------- posing
+  // Linear blend skinning on the reduced skeleton (asset 'bones'; each bone rotates about its joint helper's
+  // centroid). rot[b] = [rx, ry, rz] radians, applied as Ry*Rx*Rz about the bone's rest joint, in the parent's
+  // frame; root = [x, y, z] translation of the pelvis. Returns a new body object (same topology) with posed
+  // positions, joints and landmarks; rest = the generated body.
+  const rotM = (rx, ry, rz) => {
+    const cx = Math.cos(rx), sx = Math.sin(rx), cy = Math.cos(ry), sy = Math.sin(ry), cz = Math.cos(rz), sz = Math.sin(rz);
+    // Ry * Rx * Rz
+    return [cy * cz + sy * sx * sz, -cy * sz + sy * sx * cz, sy * cx,
+            cx * sz, cx * cz, -sx,
+            -sy * cz + cy * sx * sz, sy * sz + cy * sx * cz, cy * cx];
+  };
+  B.fk = (M, body, rot, root) => {
+    const nbn = M.bones.length, W = new Array(nbn);
+    for (let k = 0; k < nbn; k++) {
+      const R = rotM(...(rot[k] || [0, 0, 0])), J = body.joints[M.bones[k].joint], par = M.bones[k].parent;
+      const A = par < 0 ? [1, 0, 0, 0, 1, 0, 0, 0, 1] : W[par].A, t = par < 0 ? (root || [0, 0, 0]) : W[par].t;
+      const mul = (a, b) => [a[0] * b[0] + a[1] * b[3] + a[2] * b[6], a[0] * b[1] + a[1] * b[4] + a[2] * b[7], a[0] * b[2] + a[1] * b[5] + a[2] * b[8],
+        a[3] * b[0] + a[4] * b[3] + a[5] * b[6], a[3] * b[1] + a[4] * b[4] + a[5] * b[7], a[3] * b[2] + a[4] * b[5] + a[5] * b[8],
+        a[6] * b[0] + a[7] * b[3] + a[8] * b[6], a[6] * b[1] + a[7] * b[4] + a[8] * b[7], a[6] * b[2] + a[7] * b[5] + a[8] * b[8]];
+      const An = mul(A, R);
+      const d = [J[0] - (R[0] * J[0] + R[1] * J[1] + R[2] * J[2]), J[1] - (R[3] * J[0] + R[4] * J[1] + R[5] * J[2]), J[2] - (R[6] * J[0] + R[7] * J[1] + R[8] * J[2])];
+      W[k] = { A: An, t: [A[0] * d[0] + A[1] * d[1] + A[2] * d[2] + t[0], A[3] * d[0] + A[4] * d[1] + A[5] * d[2] + t[1], A[6] * d[0] + A[7] * d[1] + A[8] * d[2] + t[2]] };
+    }
+    return W;
+  };
+  const xf = (w, x, y, z, o, i) => { const A = w.A; o[i] = A[0] * x + A[1] * y + A[2] * z + w.t[0]; o[i + 1] = A[3] * x + A[4] * y + A[5] * z + w.t[1]; o[i + 2] = A[6] * x + A[7] * y + A[8] * z + w.t[2]; };
+  B.pose = (M, body, rot, root) => {
+    const W = B.fk(M, body, rot, root), nb = M.nb, rest = body.allPos, out = new Float32Array(rest.length);
+    const si = M.skinIdx, sw = M.skinW, tmp = [0, 0, 0];
+    for (let i = 0; i < nb; i++) {
+      const x = rest[3 * i], y = rest[3 * i + 1], z = rest[3 * i + 2]; let ax = 0, ay = 0, az = 0;
+      for (let j = 0; j < 4; j++) { const w = sw[4 * i + j]; if (w === 0) continue; xf(W[si[4 * i + j]], x, y, z, tmp, 0); ax += w * tmp[0]; ay += w * tmp[1]; az += w * tmp[2]; }
+      out[3 * i] = ax; out[3 * i + 1] = ay; out[3 * i + 2] = az;
+    }
+    // joint helpers (and the landmarks that are vertex ids) follow the bone they belong to: use the joint's own bone
+    const jb = {}; M.bones.forEach((b, k) => (jb[b.joint] = k));
+    const joints = {};
+    for (const name of Object.keys(body.joints)) {
+      const J = body.joints[name], k = jb[name] != null ? jb[name] : (/head|eye/.test(name) ? jb.head : 0), o = [0, 0, 0];
+      xf(W[k], J[0], J[1], J[2], o, 0); joints[name] = o;
+    }
+    for (let i = nb; i < M.nv; i++) out[3 * i] = out[3 * i + 1] = out[3 * i + 2] = 0;
+    return { pos: out.subarray(0, 3 * nb), allPos: out, joints, W };
+  };
   const clamp01 = (v) => Math.max(0, Math.min(1, v));
   B.key = (req) => [...B.PRIMARY, ...B.SECONDARY, 'muscle', 'cup', 'belly', 'seat', 'weight'].map((k) => (req[k] == null ? '-' : (+req[k]).toFixed(4))).join('/');
 
@@ -407,13 +454,19 @@
     for (let k = 0; k < ny; k++) cnt[k + 1] += cnt[k];
     const fill = cnt.slice(), bins = new Uint32Array(cnt[ny]);
     for (let q = 0; q < set.length; q++) for (let k = k0[q]; k <= k1[q]; k++) bins[fill[k]++] = set[q];
-    const hulls = [], girth = new Float32Array(ny);
+    const hulls = [], girth = new Float32Array(ny), yc = P[3 * M.lm.crotch + 1], legs = { L: [], R: [] };
     for (let k = 0; k < ny; k++) {
       const n = slice(P, T, bins.subarray(cnt[k], cnt[k + 1]), Y, k * dy, X, Z);
+      // below the crotch each leg has its own section (split at the body's symmetry plane)
+      for (const [side, sg] of [['L', 1], ['R', -1]]) {
+        let m = 0; const q = new Float64Array(2 * n);
+        if (k * dy < yc - 0.004) for (let i = 0; i < n; i++) if (PTS[2 * i] * sg > 0) { q[2 * m] = PTS[2 * i]; q[2 * m + 1] = PTS[2 * i + 1]; m++; }
+        legs[side].push(m >= 3 ? Float32Array.from(B.hull2(q, m)) : null);
+      }
       const h = n >= 3 ? B.hull2(PTS, n) : new Float64Array(0);
       hulls.push(Float32Array.from(h)); girth[k] = h.length ? B.perimeter2(h) : 0;
     }
-    return { dy, ny, hulls, girth };
+    return { dy, ny, hulls, girth, legs, yCrotch: yc };
   };
 
   if (typeof module !== 'undefined') module.exports = B;

@@ -42,6 +42,21 @@ JOINTS = ['ground', 'pelvis', 'spine-4', 'spine-3', 'spine-2', 'spine-1', 'neck'
           'l-hand', 'r-hand', 'l-upper-leg', 'r-upper-leg', 'l-knee', 'r-knee', 'l-ankle', 'r-ankle',
           'l-eye', 'r-eye']
 
+# reduced skeleton for posing: (joint name, parent index). Every MakeHuman bone (163, with twist and finger bones)
+# is merged into the nearest of these via its parent chain; each bone rotates about its joint helper centroid.
+BONES = [('pelvis', -1), ('spine-4', 0), ('spine-3', 1), ('spine-2', 2), ('spine-1', 3), ('neck', 4), ('head', 5)]
+for _s in ('l', 'r'):
+    _b = len(BONES)
+    BONES += [(_s + '-clavicle', 4), (_s + '-shoulder', _b), (_s + '-elbow', _b + 1), (_s + '-hand', _b + 2)]
+for _s in ('l', 'r'):
+    _b = len(BONES)
+    BONES += [(_s + '-upper-leg', 0), (_s + '-knee', _b), (_s + '-ankle', _b + 1), (_s + '-toe', _b + 2)]
+BONE_RULES = {'root': 'pelvis', 'pelvis': 'pelvis', 'spine05': 'pelvis', 'spine04': 'spine-4', 'spine03': 'spine-3',
+              'spine02': 'spine-2', 'spine01': 'spine-1', 'neck01': 'neck', 'neck02': 'neck', 'neck03': 'neck',
+              'clavicle': '#-clavicle', 'shoulder01': '#-clavicle', 'upperarm01': '#-shoulder', 'upperarm02': '#-shoulder',
+              'lowerarm01': '#-elbow', 'lowerarm02': '#-elbow', 'wrist': '#-hand', 'upperleg01': '#-upper-leg',
+              'upperleg02': '#-upper-leg', 'lowerleg01': '#-knee', 'lowerleg02': '#-knee', 'foot': '#-ankle', 'head': 'head'}
+
 PARTS = ['trunk', 'neck', 'head', 'arm.L', 'arm.R', 'hand.L', 'hand.R', 'leg.L', 'leg.R', 'foot.L', 'foot.R']
 
 
@@ -202,6 +217,11 @@ def main():
         vs = sorted(set(i for f in groups['joint-' + j] for i in f))
         joint_ids[j] = list(range(len(keep), len(keep) + len(vs)))
         keep += vs
+    skel_j = json.load(open(os.path.join(data, 'rigs/default.mhskel')))['joints']
+    for side in ('L', 'R'):
+        vs = sorted(set(v for n in range(1, 6) for v in skel_j['toe%d-1.%s____head' % (n, side)]))
+        joint_ids[side.lower() + '-toe'] = list(range(len(keep), len(keep) + len(vs)))
+        keep += vs
     keep = np.array(keep)
     remap = -np.ones(len(V0), dtype=np.int64)
     remap[keep] = np.arange(len(keep))
@@ -236,6 +256,39 @@ def main():
                 best[i] = w
                 part[i] = pid
     assert (part[:nb] != 255).all()
+
+    # skinning: MakeHuman weights merged onto the reduced skeleton, top 4 per surface vertex, 8-bit
+    skel = json.load(open(os.path.join(data, 'rigs/default.mhskel')))['bones']
+    bone_names = [b for b, _ in BONES]
+
+    def reduce_bone(b):
+        while b is not None:
+            base = b.split('.')[0]
+            if base.startswith('toe'):
+                return bone_names.index(('l' if b.endswith('.L') else 'r') + '-toe')
+            if base in BONE_RULES:
+                r = BONE_RULES[base]
+                if r.startswith('#'):
+                    r = ('l' if b.endswith('.L') else 'r') + r[1:]
+                return bone_names.index(r)
+            b = skel[b]['parent']
+        raise KeyError(b)
+    acc = [defaultdict(float) for _ in range(nb)]
+    for bone, lst in W.items():
+        k = reduce_bone(bone)
+        for i, w in lst:
+            if i < nb:
+                acc[i][k] += w
+    sk_idx = np.zeros((nb, 4), np.uint8)
+    sk_w = np.zeros((nb, 4), np.uint8)
+    for i in range(nb):
+        top = sorted(acc[i].items(), key=lambda kv: -kv[1])[:4]
+        tot = sum(w for _, w in top)
+        q = [int(round(255 * w / tot)) for _, w in top]
+        q[0] += 255 - sum(q)
+        for j, (k, _) in enumerate(top):
+            sk_idx[i, j] = k
+            sk_w[i, j] = q[j]
 
     # landmarks (vertex ids on the female base; body.js re-reads their positions after deformation)
     X = Vf[:nb]
@@ -336,6 +389,7 @@ def main():
     o_base = add_blob(shuffle16(base_q.T.reshape(-1)))  # planar x[], y[], z[]
     o_quads = add_blob(shuffle16(delta16(remap[body].reshape(-1))))
     o_part = add_blob(part.astype('u1').tobytes())
+    o_skin = add_blob(sk_idx.tobytes() + sk_w.tobytes())   # nb x 4 bone ids, then nb x 4 weights (/255)
     theader = []
     for name, rel in target_list().items():
         i, d = read_target(os.path.join(data, 'targets', rel), len(V0))
@@ -351,12 +405,13 @@ def main():
     header = {
         'format': 'failoring-body/1', 'units': 'm', 'nv': nv, 'nb': nb, 'nq': int(len(body)),
         'qBase': Q_BASE, 'qTarget': Q_TARGET, 'base': o_base, 'quads': o_quads, 'part': o_part, 'parts': PARTS,
+        'skin': o_skin, 'bones': [{'joint': j, 'parent': p} for j, p in BONES],
         'targets': theader, 'joints': joint_ids, 'landmarks': lm, 'masks': masks,
         'source': {'project': 'MakeHuman 1.x (github.com/makehumancommunity/makehuman)', 'commit': commit,
                    'licence': 'CC0 1.0 Universal (assets; see LICENSE.md section C and file headers)',
                    'copyright': 'Data Collection AB, Joel Palmius, Jonas Hauquier (originally Manuel Bastioni); '
                                 'released to CC0 in September 2020',
-                   'files': SOURCES},
+                   'files': SOURCES + ['rigs/default.mhskel']},
     }
     hj = json.dumps(header, separators=(',', ':')).encode()
     hj += b' ' * ((-len(hj)) % 4)

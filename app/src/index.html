@@ -10,11 +10,13 @@
 <header id="top">
   <div class="brand"><span class="mark">&#9986;</span><b>Failoring</b><span class="sub">pattern studio</span></div>
   <label class="field">Plan <select id="planSel"></select></label>
+  <button id="btnDraft" hidden title="Draft this garment again from the mannequin's current measurements">Re-draft to body</button>
   <button id="btnOpen" title="Load a pattern JSON file">Open&hellip;</button>
   <button id="btnSave" title="Save the pattern as JSON">Save</button>
   <input id="fileIn" type="file" accept=".json,application/json" hidden>
   <span class="grow"></span>
-  <label class="field">Mesh <select id="qualSel"><option value="draft">Draft (fast)</option><option value="standard" selected>Standard</option><option value="fine">Fine (slow)</option></select></label>
+  <label class="field">Mesh <select id="qualSel"><option value="draft">Draft (fast)</option><option value="standard" selected>Standard</option><option value="fine">Fine (slow)</option><option value="photo">Photo (slowest)</option></select></label>
+  <label class="field">Motion <select id="motionSel"><option value="stand" selected>Standing</option><option value="walk">Walking</option></select></label>
   <span id="status" class="status">starting&hellip;</span>
 </header>
 <main id="main">

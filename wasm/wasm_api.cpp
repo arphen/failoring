@@ -175,6 +175,13 @@ EXPORT(fl_set_body_mesh) double fl_set_body_mesh(const float* pos, int nv, const
     rebuildColliders();
     return st.msTotal;
 }
+// Per-cloth-vertex displacement (3 floats each) of the body surface over the next frame, for friction; n = 0 clears it.
+EXPORT(fl_set_body_motion) void fl_set_body_motion(const float* d, int n) {
+    if (!g.solver) return;
+    std::vector<Vec3> v;
+    for (int i = 0; i < n; ++i) v.push_back(Vec3(d[3 * i], d[3 * i + 1], d[3 * i + 2]));
+    g.solver->setColliderMotion(std::move(v));
+}
 EXPORT(fl_body_enable) void fl_body_enable(int on) { gb.enabled = on != 0 && gb.grid != nullptr; rebuildColliders(); }
 // Last bake: [ms, bricks, fine samples, coarse samples, bytes, distance evaluations, h, triangles]
 EXPORT(fl_body_stats) const double* fl_body_stats() { return gb.stats; }

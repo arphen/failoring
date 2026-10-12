@@ -1,0 +1,1 @@
+export default function cloneDeep(v) { if (v === null || typeof v !== 'object') return v; if (Array.isArray(v)) return v.map(cloneDeep); if (v instanceof Date) return new Date(v); const o = Object.create(Object.getPrototypeOf(v)); for (const k of Object.keys(v)) o[k] = cloneDeep(v[k]); return o; }

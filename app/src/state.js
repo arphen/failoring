@@ -7,6 +7,7 @@ const App = {
     draft:    { label: 'Draft',    edge: 0.060, sub: 1, newton: 6,  frames: 36 },
     standard: { label: 'Standard', edge: 0.040, sub: 2, newton: 8,  frames: 48 },
     fine:     { label: 'Fine',     edge: 0.028, sub: 2, newton: 10, frames: 60 },
+    photo:    { label: 'Photo',    edge: 0.025, sub: 3, newton: 12, frames: 60, self: true },   // slow: finer mesh, more substeps, self-collision
   },
 };
 const $ = (s, el) => (el || document).querySelector(s);

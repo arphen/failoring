@@ -21,6 +21,45 @@ const put = (arr) => { const p = X.fl_alloc(arr.byteLength); new arr.constructor
 const f32 = (ptr, n) => new Float32Array(mem.buffer, ptr, n).slice();
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
+// ---- walking mannequin (spec.walk): the body is posed every frame by FL.Gait, its collider re-baked, and the
+// cloth's friction is told how fast the surface under each vertex moves.
+let bodyM = null, bodyAssetBytes = null;
+function walkModel() { if (!bodyM) bodyM = FL.Body.load(bodyAssetBytes); return bodyM; }
+// displacement of the body surface at each cloth vertex: nearest vertex of the previous body pose (cell hash)
+function surfaceMotion(prev, next, nb, cloth, n) {
+  const cell = 0.03, key = (x, y, z) => ((x * 73856093) ^ (y * 19349663) ^ (z * 83492791)) | 0, grid = new Map();
+  for (let i = 0; i < nb; i++) {
+    const k = key(Math.floor(prev[3 * i] / cell), Math.floor(prev[3 * i + 1] / cell), Math.floor(prev[3 * i + 2] / cell));
+    let a = grid.get(k); if (!a) grid.set(k, (a = [])); a.push(i);
+  }
+  const out = new Float32Array(3 * n);
+  for (let v = 0; v < n; v++) {
+    const x = cloth[3 * v], y = cloth[3 * v + 1], z = cloth[3 * v + 2], cx = Math.floor(x / cell), cy = Math.floor(y / cell), cz = Math.floor(z / cell);
+    let best = -1, bd = 0.05 * 0.05;
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
+      const a = grid.get(key(cx + dx, cy + dy, cz + dz)); if (!a) continue;
+      for (const i of a) { const d = (prev[3 * i] - x) ** 2 + (prev[3 * i + 1] - y) ** 2 + (prev[3 * i + 2] - z) ** 2; if (d < bd) { bd = d; best = i; } }
+    }
+    if (best >= 0) { out[3 * v] = next[3 * best] - prev[3 * best]; out[3 * v + 1] = next[3 * best + 1] - prev[3 * best + 1]; out[3 * v + 2] = next[3 * best + 2] - prev[3 * best + 2]; }
+  }
+  return out;
+}
+function walkStep(s, f) {
+  const w = s.spec.walk, k = f - w.settle;
+  if (k <= 0) return null;
+  const u = Math.min(1, k / w.ramp), stride = u * u * (3 - 2 * u) * (w.stride == null ? 1 : w.stride);
+  const P = FL.Gait.pose(walkModel(), s.rest, (k / w.cycle) % 1, { stride, arms: stride, armAbduct: w.armAbduct });
+  const prev = s.bodyPos, next = P.pos;
+  const pp = put(next), tp = put(s.bodyTris);
+  const ms = X.fl_set_body_mesh(pp, next.length / 3, tp, s.bodyTris.length / 3, s.spec.body.h || 0);
+  X.fl_free(pp); X.fl_free(tp); bodyKey = null;   // the grid no longer holds the standing body
+  if (ms < 0) throw new Error('walking body: collider bake failed');
+  const cloth = new Float32Array(mem.buffer, X.fl_positions(), s.n * 3);
+  const mo = surfaceMotion(prev, next, next.length / 3, cloth, s.n), mp = put(mo); X.fl_set_body_motion(mp, s.n); X.fl_free(mp);
+  s.bodyPos = next.slice(); s.bakeMs = ms; s.eyes = [P.joints['l-eye'], P.joints['r-eye']];
+  return s.bodyPos;
+}
+
 let sim = null, runToken = 0, active = false;   // { spec, n, nframes, pieces, ... }
 
 async function build(spec) {
@@ -32,7 +71,8 @@ async function build(spec) {
   const mat = X.fl_add_material(pr.density_kg_m2, pr.thickness_m, pr.tensile_warp_N_m, pr.tensile_weft_N_m, pr.shear_N_m_rad,
     pr.bending_warp_Nm, pr.bending_weft_Nm, pr.compression_ratio, pr.friction_static, pr.friction_kinetic, pr.damping_1_s);
   X.fl_set_param(0, spec.quality.sub); X.fl_set_param(1, spec.quality.newton); X.fl_set_param(3, spec.rampFrames);
-  X.fl_set_param(2, spec.seamStiffness); X.fl_set_param(4, spec.selfCollision ? 1 : 0);
+  X.fl_set_param(2, spec.seamStiffness); X.fl_set_param(7, 1);   // tension stiffness: keeps taut seams/waistbands from creeping
+  X.fl_set_param(4, spec.selfCollision ? 1 : 0);
   const FLOOR = { t: 'p', p: [0, 0, 0], n: [0, 1, 0] };
   let bake = null;
   if (spec.body) {
@@ -64,7 +104,7 @@ async function build(spec) {
   const byId = {}; pieces.forEach((pc, i) => (byId[pc.id] = i));
   for (const s of spec.seams) {
     const a = byId[s.a[0]], b = byId[s.b[0]];
-    if (a === undefined || b === undefined || a === b) continue;
+    if (a === undefined || b === undefined || (a === b && s.a[1] === s.b[1])) continue;   // a seam may join two edges of one piece (a sleeve tube)
     X.fl_add_seam(idx[a], s.a[1], idx[b], s.b[1], s.reverse ? 1 : 0);
   }
   const n = X.fl_vertex_count(), nt = X.fl_triangle_count();
@@ -88,7 +128,7 @@ async function build(spec) {
   });
   const q = put(P2); X.fl_set_positions(q); X.fl_free(q);
   const nd = n + disp.edges.length / 2;
-  sim = { spec, n, nd, frame: 0, target: spec.frames, cycle: spec.walk ? spec.walk.cycle : 0, t0: Date.now() };
+  sim = { spec, n, nd, frame: 0, rest: spec.walk ? { allPos: spec.walk.rest, joints: spec.walk.joints } : null, bodyPos: spec.walk ? spec.body.pos : null, bodyTris: spec.walk ? new Int32Array(spec.body.tris) : null, target: spec.frames, cycle: spec.walk ? spec.walk.cycle : 0, t0: Date.now() };
   postMessage({ type: 'meta', job: spec.job, n, nd, tris, dtris: disp.tris, edges: disp.edges, uv, ranges, chains, P1, P2, warn: X.fl_warnings(), bake }, [tris.buffer]);
   postMessage({ type: 'frame', job: spec.job, i: 0, pos: FL.withMidpoints(P2, n, disp.edges), ke: 0, gap: 0 }, []);
   await run(spec.job);
@@ -99,6 +139,8 @@ async function run(job) {
   while (sim && sim.frame < sim.target) {
     if (job !== curJob || tok !== runToken) return;
     const s = sim, w = s.spec.body ? null : s.spec.walk, f = s.frame + 1;
+    let bodyOut = null;
+    if (s.spec.walk && s.spec.body) { try { bodyOut = walkStep(s, f); } catch (e) { postMessage({ type: 'error', job, msg: String(e && e.stack || e) }); return; } }
     if (w && f > w.settle) {      // legacy primitive body only: it starts walking after the garment has settled
       const prims = FL.bodyPrims(s.spec.meas, ((f - w.settle) / w.cycle) % 1).concat([{ t: 'p', p: [0, 0, 0], n: [0, 1, 0] }]);
       const p = put(FL.collidersFlat(prims)); X.fl_set_colliders(p, prims.length); X.fl_free(p);
@@ -111,7 +153,9 @@ async function run(job) {
     try { X.fl_step(1); } catch (e) { postMessage({ type: 'error', job, msg: String(e) }); X = null; sim = null; active = false; bodyKey = null; return; }
     s.frame = f;
     const pos = f32(X.fl_display_positions(DISPLAY_MARGIN), s.nd * 3);   // display mesh: subdivided, following the body
-    postMessage({ type: 'frame', job, i: f, pos, ke: X.fl_kinetic(), gap: X.fl_seam_gap(), ms: performance.now() - t, clear: X.fl_clearance() }, [pos.buffer]);
+    const tr = [pos.buffer], msg = { type: 'frame', job, i: f, pos, ke: X.fl_kinetic(), gap: X.fl_seam_gap(), ms: performance.now() - t, clear: X.fl_clearance() };
+    if (bodyOut) { msg.body = bodyOut.slice(); msg.bake = s.bakeMs; msg.eyes = s.eyes; tr.push(msg.body.buffer); }
+    postMessage(msg, tr);
     await tick();
   }
   if (tok === runToken) active = false;
@@ -123,7 +167,7 @@ async function run(job) {
 
 onmessage = (ev) => {
   const d = ev.data;
-  if (d.type === 'init') { wasmBytes = d.wasm; FL.FABRICS = d.fabrics; }
+  if (d.type === 'init') { wasmBytes = d.wasm; FL.FABRICS = d.fabrics; if (d.bodyAsset) bodyAssetBytes = d.bodyAsset; }
   else if (d.type === 'build') { build(d.spec).catch((e) => postMessage({ type: 'error', job: d.spec.job, msg: String(e && e.stack || e) })); }
   else if (d.type === 'more') { if (sim && d.job === curJob) { sim.target = sim.frame + d.count; if (!active) run(d.job); } }
   else if (d.type === 'cancel') { curJob = -1; }

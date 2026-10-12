@@ -10,7 +10,7 @@ const SHOTS = [
   { id: 'hem', name: 'Hem detail', cam: [1.5, 0.46, 2.2], tgt: [0, 0.46, 0], fov: 24, yaw: 0.35 },
 ];
 const SHOOT_SIZES = { preview: [800, 1000], standard: [1200, 1500], high: [1600, 2000] };
-const Sh = { shots: [], enabled: {}, size: 'standard', busy: false, runway: null };
+const Sh = { shots: [], enabled: {}, size: 'standard', busy: false, runway: null, sameMoment: false };
 SHOTS.forEach((s) => (Sh.enabled[s.id] = true));
 
 const rng = (seed) => { let a = seed >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; };
@@ -18,10 +18,12 @@ const rng = (seed) => { let a = seed >>> 0; return () => { a = (a + 0x6D2B79F5) 
 App.shootInit = () => {
   $('#tab-shoot').innerHTML = `<h4>Shots</h4><div id="shotList"></div>
     <h4>Resolution</h4><select id="shotSize" style="width:100%"><option value="preview">Preview 800 x 1000</option><option value="standard" selected>Standard 1200 x 1500</option><option value="high">High 1600 x 2000</option></select>
+    <label class="chk" style="display:flex;margin:8px 0"><input type="checkbox" id="shotSame"> Same moment for every shot</label>
     <div class="btns"><button id="shootGo" class="accent" style="width:100%;padding:9px">&#128247; Take photos</button></div>
-    <div class="note">Each shot is rendered from the finished drape (the latest simulated frame) with long lenses, studio key, fill and rim lights, a runway, bokeh backdrop, vignette and film grain. The mannequin stands in its A-pose and only turns slightly; a walking cycle would need a posed (skinned) body and a moving collider, which this build does not have.</div>`;
+    <div class="note">Each shot is rendered from the finished drape (the latest simulated frame) with long lenses, studio key, fill and rim lights, a runway, bokeh backdrop, vignette and film grain. With Motion set to Walking (top bar) the mannequin is in mid-stride and every shot catches a different moment of the gait cycle - a different leg position, the skirt or trousers swinging differently - unless "Same moment" is ticked. Standing: the mannequin stays still and only turns slightly.</div>`;
   $('#shotList').innerHTML = SHOTS.map((s) => `<label class="chk" style="display:flex;margin:5px 0"><input type="checkbox" data-shot="${s.id}" checked> ${s.name}</label>`).join('');
   for (const c of $$('[data-shot]')) c.onchange = () => (Sh.enabled[c.dataset.shot] = c.checked);
+  $('#shotSame').onchange = (e) => (Sh.sameMoment = e.target.checked);
   $('#shotSize').onchange = (e) => (Sh.size = e.target.value);
   $('#shootGo').onclick = () => App.takeShots();
   $('#btnShoot').onclick = () => { App.showTab('shoot'); App.takeShots(); };
@@ -80,10 +82,13 @@ App.takeShots = async () => {
   V.stitches.concat(V.seamLines).forEach((o) => (o.line.visible = false)); V.noSel = true; V.recolor();
   r.setPixelRatio(1); r.setSize(w, h, false); V.cam.aspect = w / h; r.toneMappingExposure = 1.0;
   V.T = 4; V.pose(4);
+  // walking: spread the shots over the last gait cycle of the simulation (frames after the stride has built up)
+  const bf = V.sim.bodyFrames, walking = !!(bf && bf.some((b) => b)), last = V.sim.frames.length - 1, cyc = V.sim.walkCycle || 64;
   const H = App.S.meas.height / 1.68, out = [];
   for (let i = 0; i < list.length; i++) {
     const s = list[i]; busy.textContent = `Shooting ${i + 1} / ${list.length}: ${s.name}`; await new Promise((res) => setTimeout(res, 30));
     V.modelGroup.rotation.y = s.yaw;
+    if (walking) { V.forceFrame = Sh.sameMoment ? last : Math.max(0, last - Math.round(cyc * (1 - i / list.length))); V._bodyShown = null; V.pose(4); }
     const cam = new THREE.Vector3(s.cam[0], s.cam[1] * H, s.cam[2]), tgt = new THREE.Vector3(s.tgt[0], s.tgt[1] * H, s.tgt[2]);
     V.cam.fov = s.fov; V.cam.position.copy(cam); V.cam.lookAt(tgt); V.cam.updateProjectionMatrix();
     // photographer lights follow the camera: key high and to the camera's left, fill from the right, two rims from behind the model
@@ -95,6 +100,7 @@ App.takeShots = async () => {
     const cv = Sh.composite(s, i, w, h); out.push({ name: s.name, url: cv.toDataURL('image/png') });
   }
   // restore
+  V.forceFrame = null; V._bodyShown = null;
   V.modelGroup.rotation.y = 0; V.floor.visible = true; V.matGroup.visible = true; Sh.runway.visible = false;
   sc.background = saved.bg; sc.fog = saved.fog; r.setClearColor(0x12151a, 1); V.key.intensity = saved.key[0]; V.key.position.copy(saved.key[1]); V.key.target.position.set(0, 0, 0);
   V.rim.intensity = saved.rim[0]; V.rim.position.copy(saved.rim[1]); hemi.intensity = saved.hemi; V.cam.fov = saved.fov; r.toneMappingExposure = saved.exp;

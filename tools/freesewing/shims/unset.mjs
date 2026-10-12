@@ -1,0 +1,1 @@
+export default function unset(o, p) { const a = Array.isArray(p) ? p : String(p).replace(/\[(\w+)\]/g, '.$1').split('.').filter(Boolean); let r = o; for (let i = 0; i < a.length - 1; i++) { if (r == null) return true; r = r[a[i]]; } if (r == null) return true; return delete r[a[a.length - 1]]; }

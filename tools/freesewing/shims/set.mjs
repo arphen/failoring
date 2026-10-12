@@ -1,0 +1,1 @@
+export default function set(o, p, v) { const a = Array.isArray(p) ? p : String(p).replace(/\[(\w+)\]/g, '.$1').split('.').filter(Boolean); let r = o; a.forEach((k, i) => { if (i === a.length - 1) r[k] = v; else { if (r[k] == null || typeof r[k] !== 'object') r[k] = /^\d+$/.test(a[i + 1]) ? [] : {}; r = r[k]; } }); return o; }

@@ -396,6 +396,8 @@ void ClothSolver::solveSeams(Real invH2, Real scale) {
 void ClothSolver::solveBody() {
     if (!collider_) return;
     const int N = vertexCount();
+    const bool movingCollider = static_cast<int>(colliderDisp_.size()) == N;
+    const Real invS = Real(1) / std::max(1, p_.substeps);
     for (int i = 0; i < N; ++i) {
         if (w_[i] == 0) continue;
         Vec3 n;
@@ -403,7 +405,8 @@ void ClothSolver::solveBody() {
         if (phi >= 0) continue;
         x_[i] -= n * phi;  // push out to the surface
         const Real pen = -phi;
-        const Vec3 disp = x_[i] - xPrev_[i];
+        Vec3 disp = x_[i] - xPrev_[i];
+        if (movingCollider) disp = disp - colliderDisp_[i] * invS;   // motion relative to the surface
         const Vec3 tang = disp - n * dot(disp, n);
         const Real dl = length(tang);
         if (dl > 1e-14) {
