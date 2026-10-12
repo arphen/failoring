@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <ctime>
 #include <cstdio>
 #include <memory>
 #include <vector>
@@ -23,6 +24,10 @@ using Tris = std::vector<std::array<int, 3>>;
 namespace {
 
 double nowMs() { return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
+
+// Process CPU time (all threads). Wall time on a shared machine includes time spent waiting for a core, so the CPU
+// time is the number to compare with the browser (which runs one thread).
+double cpuMs() { return 1000.0 * static_cast<double>(std::clock()) / CLOCKS_PER_SEC; }
 
 double median(std::vector<double> v) {
     std::sort(v.begin(), v.end());
@@ -67,19 +72,20 @@ void benchBake(int nu, int nv, int repeats) {
     Tris T;
     ellipsoidMesh(Vec3(0.17, 0.35, 0.11), nu, nv, V, T);
     SdfGridParams p;  // defaults: h = 7 mm
-    std::vector<double> ms;
+    std::vector<double> ms, cpu;
     double sum = 0;
     SdfGridStats st;
     for (int r = 0; r < repeats; ++r) {
         SdfGrid g;
-        const double t0 = nowMs();
+        const double t0 = nowMs(), c0 = cpuMs();
         g.bake(V, T, p);
         ms.push_back(nowMs() - t0);
+        cpu.push_back(cpuMs() - c0);
         st = g.stats();
         if (r == 0) sum = gridChecksum(g);
     }
-    std::printf("bake   tris %6zu  verts %6zu  h %.1f mm  median %8.1f ms  (min %.1f)  fine %d bricks  distance evals %lld  checksum %.9e\n",
-                T.size(), V.size(), p.h * 1000, median(ms), *std::min_element(ms.begin(), ms.end()), st.bricks, st.distanceEvals, sum);
+    std::printf("bake   tris %6zu  verts %6zu  h %.1f mm  median %8.1f ms wall  %8.1f ms cpu  (min wall %.1f)  fine %d bricks  distance evals %lld  checksum %.9e\n",
+                T.size(), V.size(), p.h * 1000, median(ms), median(cpu), *std::min_element(ms.begin(), ms.end()), st.bricks, st.distanceEvals, sum);
 }
 
 // One garment case: test_garment's setup with the given panel edge length and body collider.
@@ -98,7 +104,7 @@ void benchSolve(const char* label, Real edge, bool sdfBody, int frames, int repe
     }
     const Real W = 0.40, H = 0.30, y0 = 0.25;
 
-    std::vector<double> ms;
+    std::vector<double> ms, cpu;
     double checksum = 0;
     int nVerts = 0, nTris = 0;
     for (int r = 0; r < repeats; ++r) {
@@ -122,16 +128,17 @@ void benchSolve(const char* label, Real edge, bool sdfBody, int frames, int repe
                 const Vec3 q = (p == pf) ? Vec3(-Rc * std::cos(th), y, Rc * std::sin(th)) : Vec3(Rc * std::cos(th), y, -Rc * std::sin(th));
                 cs.setVertexPosition(cs.firstVertex(p) + static_cast<int>(i), q);
             }
-        const double t0 = nowMs();
+        const double t0 = nowMs(), c0 = cpuMs();
         for (int f = 0; f < frames; ++f) cs.step();
         ms.push_back((nowMs() - t0) / frames);
+        cpu.push_back((cpuMs() - c0) / frames);
         nVerts = cs.vertexCount();
         nTris = cs.triangleCount();
         if (r == 0)
             for (const Vec3& x : cs.positions()) checksum += x.x + 2 * x.y + 3 * x.z;
     }
-    std::printf("solve  %-14s verts %5d tris %5d edge %4.1f mm  %3d frames  median %7.2f ms/step  (min %.2f)  checksum %.9e\n", label, nVerts,
-                nTris, edge * 1000, frames, median(ms), *std::min_element(ms.begin(), ms.end()), checksum);
+    std::printf("solve  %-14s verts %5d tris %5d edge %4.1f mm  %3d frames  median %7.2f ms/step wall  %7.2f ms/step cpu  checksum %.9e\n",
+                label, nVerts, nTris, edge * 1000, frames, median(ms), median(cpu), checksum);
 }
 
 }  // namespace

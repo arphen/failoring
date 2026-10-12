@@ -5,3 +5,4 @@ __pycache__/
 *.o
 .claude/
 third_party/
+build-native/
