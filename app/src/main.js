@@ -86,7 +86,7 @@ App.onChange((kind) => {
   }
   if (kind === 'structure' || kind === 'structure-drag') { App.refreshPanels(); if (kind === 'structure') { V.buildMat(); App.scheduleRebuild(120); } else { App.scheduleRebuild(260); } }
   else if (kind === 'table' || kind === 'table-done') { V.buildMat(); }
-  else if (kind === 'body') { App.regenBody(); V.buildBody(); App.refreshPanels(); App.scheduleRebuild(200); }
+  else if (kind === 'body') { App.regenBody(); V.buildBody(); App.refreshPanels(); App.scheduleRebuild(200); App.scheduleDraftPlans(); }
   else if (kind === 'fabric') { V.recolor(); App.scheduleRebuild(150); }
   else { App.refreshPanels(); if (V.recolor) V.recolor(); }
 });
@@ -248,6 +248,36 @@ App.tickTimeline = (now) => {
   $('#tlPlay').innerHTML = V.playing ? '&#10074;&#10074;' : '&#9654;'; $('#stageName').textContent = V.stageLabel(V.T);
 };
 
+// ------------------------------------------------------------------ FreeSewing patterns (fsimport.js)
+// Each design is drafted by FreeSewing for six presets (embedded as #fsRaw). The preset nearest to the current
+// measurements is planned onto the mannequin with FL.fsimport.plan; plan.info is kept for the sewing-table panel.
+// fsimport.js reads optional tuning knobs from process.env (node-only; sleeve placement, default -90 degrees).
+// The browser has no process object, so provide an empty one: the defaults apply.
+if (typeof process === 'undefined') window.process = { env: {} };
+App.FS_DESIGNS = { teagan: 'T-shirt (FreeSewing Teagan)', penelope: 'Pencil skirt (FreeSewing Penelope)', charlie: 'Chinos (FreeSewing Charlie)' };
+App.fsRaw = null;
+App.fsPreset = () => {
+  const M = App.S.meas, keys = ['height', 'bust', 'waist', 'hip', 'shoulder', 'muscle'];
+  let best = 'average', bd = Infinity;
+  for (const k of Object.keys(FL.PRESETS)) {
+    const P = FL.PRESETS[k]; let d = 0;
+    for (const f of keys) { const v = M[f] == null ? P[f] : M[f], r = (v - P[f]) / P[f]; d += r * r; }
+    if (d < bd) { bd = d; best = k; }
+  }
+  return best;
+};
+App.fsPlan = (design) => {
+  if (!FL.fsimport || !App.body) return null;
+  try {
+    App.fsRaw = App.fsRaw || JSON.parse($('#fsRaw').textContent);
+    const preset = App.fsPreset(), raw = App.fsRaw[design] && App.fsRaw[design][preset];
+    if (!raw) return null;
+    const p = FL.fsimport.plan(JSON.parse(JSON.stringify(raw)), App.body);
+    p.name = App.FS_DESIGNS[design]; p.info.preset = preset;
+    return p;
+  } catch (e) { console.error(e); App.toast('FreeSewing ' + design + ' could not be planned: ' + e.message); return null; }
+};
+
 // ------------------------------------------------------------------ boot
 App.boot = () => {
   FL.FABRICS = JSON.parse($('#fabricsJson').textContent);
@@ -265,7 +295,13 @@ App.boot = () => {
   // garments drafted from the mannequin's measurements (FL.draft): added to the plan list, re-draftable after a body change
   App.DRAFTS = { pants: 'pants', shirt: 'shirt', tank: 'tank' };
   const fillPlans = () => { sel.innerHTML = Object.keys(PLANS).map((k) => `<option value="${k}">${PLANS[k].name}</option>`).join(''); };
-  App.draftPlans = () => { if (!App.body || !FL.draft) return; for (const k of Object.keys(App.DRAFTS)) { const p = FL.draft[App.DRAFTS[k]](App.body); p.draft = k; PLANS[k] = p; } };
+  App.draftPlans = () => {
+    if (!App.body) return;
+    if (FL.draft) for (const k of Object.keys(App.DRAFTS)) { const p = FL.draft[App.DRAFTS[k]](App.body); p.draft = k; PLANS[k] = p; }
+    for (const d of Object.keys(App.FS_DESIGNS)) { const p = App.fsPlan(d); if (p) { p.draft = 'fs-' + d; PLANS['fs-' + d] = p; } }
+  };
+  // the body sliders fire often and a FreeSewing plan takes a few hundred ms: refresh the plan list once they settle
+  App.scheduleDraftPlans = () => { clearTimeout(App.draftTimer); App.draftTimer = setTimeout(App.draftPlans, 400); };
   App.draftPlans(); fillPlans();
   const showDraft = () => { $('#btnDraft').hidden = !(PLANS[sel.value] && PLANS[sel.value].draft); };
   sel.onchange = () => { App.loadPattern(PLANS[sel.value]); showDraft(); };
