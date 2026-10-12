@@ -19,6 +19,8 @@
       parts: { 'teagan.front': { kind: 'body', theta: 0, top: 'hps', role: 'Front' }, 'teagan.back': { kind: 'body', theta: 180, top: 'hps', role: 'Back' }, 'teagan.sleeve': { kind: 'sleeve', role: 'Sleeve' } } },
     aaron: { title: 'Aaron a-shirt', fabric: 'cotton_jersey', url: 'https://freesewing.org/docs/designs/aaron',
       parts: { 'aaron.front': { kind: 'body', theta: 0, top: 'hps', role: 'Front' }, 'aaron.back': { kind: 'body', theta: 180, top: 'hps', role: 'Back' } } },
+    charlie: { title: 'Charlie chinos', fabric: 'cotton_poplin', url: 'https://freesewing.org/docs/designs/charlie',
+      parts: { 'charlie.front': { kind: 'leg', theta: 0, origSide: 'R', top: 'waist', role: 'Front leg' }, 'charlie.back': { kind: 'leg', theta: 180, origSide: 'L', top: 'waist', role: 'Back leg' } } },
     penelope: { title: 'Penelope pencil skirt', fabric: 'wool_suiting', url: 'https://freesewing.org/docs/designs/penelope',
       parts: { 'penelope.front': { kind: 'body', theta: 0, top: 'waist', role: 'Front' }, 'penelope.back': { kind: 'body', theta: 180, top: 'waist', role: 'Back half' }, 'penelope.waistband': { kind: 'band', role: 'Waistband' } } },
   };
@@ -65,7 +67,7 @@
       if (spec.kind === 'band') chains = chains.map((c) => ({ label: c.label, pts: c.pts.map(([x, y]) => [-y, x]) }));   // long axis horizontal
       const flat = [].concat(...chains.map((c) => c.pts));
       if (area(flat) < 0) chains = chains.slice().reverse().map((c) => ({ label: c.label, pts: c.pts.slice().reverse() }));
-      const copies = rp.cut >= 2 && !rp.onFold ? ['L', 'R'] : [null];
+      const o = spec.origSide || 'L', copies = rp.cut >= 2 && !rp.onFold ? [o, o === 'L' ? 'R' : 'L'] : [null];
       copies.forEach((side, k) => {
         let ch = chains; if (k === 1) ch = mirrorChains(chains);
         const parts = [].concat(...ch.map(splitCorners));
@@ -78,8 +80,10 @@
       pc.bb = FL.bbox(flat);
       const h = pc.bb.y1 - pc.bb.y0;
       if (pc.spec.kind === 'body') pc.wrap = { mode: 'fit', theta: pc.spec.theta, y: (pc.spec.top === 'hps' ? yHps : yWaist) - h, clear: 0.012 };
+      else if (pc.spec.kind === 'leg') pc.wrap = { mode: 'leg', side: pc.side, theta: pc.spec.theta, y: yWaist - h, clear: 0.012 };
       else if (pc.spec.kind === 'band') pc.wrap = { mode: 'fit', theta: 0, y: yWaist - 0.002, clear: 0.012, group: 'band' };
       else if (pc.spec.kind === 'sleeve') pc.wrap = { mode: 'arm', side: pc.side === 'R' ? 'R' : 'L', sTop: 0.045, clear: 0.02, phiSeam: pc.side === 'R' ? (+process.env.PR || -90) : (+process.env.PL || -90) };
+      if (pc.wrap.mode === 'fit' && pc.side) pc.wrap.over = pc.bb.x1 > -pc.bb.x0 ? 1 : -1;
       pc.flat = flat;
     }
     // sleeves: a cut-2 part; the left copy is the original; wrap sides assigned above (L/R)
@@ -127,8 +131,10 @@
       return runs.filter((r) => r.i1 - r.i0 >= 3 && (r.i1 - r.i0) / M * a.cv.L >= 0.012).map((r) => ({ f: [r.i0 / M, r.i1 / M], js: ok.slice(r.i0, r.i1 + 1).filter((x) => x >= 0) }));
     };
     const cand = [];
+    const FREE = /^(pocketBag|hem|hemBase|bottom)$/;   // pocket openings and hems are never sewn to another piece
     for (let x = 0; x < chainList.length; x++) for (let y = x + 1; y < chainList.length; y++) {
-      const a = chainList[x], b = chainList[y], ra = runsOn(a, b), rb = runsOn(b, a);
+      const a = chainList[x], b = chainList[y]; if (FREE.test(a.c.label || '') || FREE.test(b.c.label || '')) continue;
+      const ra = runsOn(a, b), rb = runsOn(b, a);
       for (const p of ra) for (const q of rb) {
         const ja = [Math.min(...p.js) / M, Math.max(...p.js) / M];   // where on b the a-run points to
         const ov = Math.min(ja[1], q.f[1]) - Math.max(ja[0], q.f[0]);

@@ -318,7 +318,9 @@ FL.makeWrapRows = (piece, body) => {
       const Pi = (y - w.Py0) / w.Pdy, i0 = Math.max(0, Math.min(w.P.length - 1, Math.floor(Pi))), i1 = Math.min(w.P.length - 1, i0 + 1), Pw = w.P[i0] + (w.P[i1] - w.P[i0]) * Math.max(0, Math.min(1, Pi - i0));
       const c0 = FL.sectionCurve(body, k, clear), d = Pw > c0.per ? Math.min(0.06, Math.round((Pw - c0.per) / (2 * Math.PI) * 1000) / 1000) : 0;
       const c = d > 0 ? FL.sectionCurve(body, k, clear + d) : c0, kk = c.per / Pw;
-      p = c.pt(c.phiAt(c.cum(theta < 0 ? theta + 2 * Math.PI : theta) + u * kk));
+      // an underlap that crosses the centre line (back-skirt vent): lifted off the body so it lies over the other half, not in it
+      const cc = (w.over && u * w.over < 0) ? FL.sectionCurve(body, k, clear + d + 0.014) : c;
+      p = cc.pt(cc.phiAt(cc.cum(theta < 0 ? theta + 2 * Math.PI : theta) + u * kk * (cc.per / c.per)));
     } else if (w.mode === 'arc') {
       const c = FL.sectionCurve(body, k, clear), q = c.pt(c.phiAt(c.cum(theta < 0 ? theta + 2 * Math.PI : theta) + u));
       p = q;
