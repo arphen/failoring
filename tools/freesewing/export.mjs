@@ -8,6 +8,7 @@ import { Charlie } from '@freesewing/charlie';
 import { Aaron } from '@freesewing/aaron';
 const DESIGNS = { teagan: Teagan, penelope: Penelope, charlie: Charlie, aaron: Aaron };
 const [design, mfile, outFile, onlyArg] = process.argv.slice(2);
+const DESIGN_OPTS = { charlie: { waistHeight: 1 } };
 const ref = { ...models.cisFemaleAdult34 };
 const mm = mfile && mfile !== '-' ? JSON.parse(fs.readFileSync(mfile, 'utf8')) : null;
 let meas = { ...ref };
@@ -25,11 +26,15 @@ if (mm) {   // scale the reference set with the mannequin: girths by their own r
     waistToUpperLeg: (mm.yWaist - mm.yCrotch) * 1000, shoulderToShoulder: mm.shoulderToShoulder * 1000,
     hpsToWaistBack: (mm.yNeck + 0.02 - mm.yWaist) * 1000 * 1.03, shoulderToElbow: mm.upperArmLen * 1000 * 1.03, shoulderToWrist: (mm.upperArmLen + mm.foreArmLen) * 1000 * 1.03 });
 }
+if (process.env.OVR) Object.assign(meas, JSON.parse(process.env.OVR));   // debugging: override single measurements, e.g. OVR='{"waistBack":187}'
 const settings = {};
 if (onlyArg) settings.only = onlyArg.split(',');
+if (DESIGN_OPTS[design]) settings.options = { ...DESIGN_OPTS[design] };   // charlie: waistHeight 1 puts the top at the natural waist (the default -4% is a hip-hugger that slides below the crotch)
+if (process.env.OPTS) settings.options = { ...(settings.options || {}), ...JSON.parse(process.env.OPTS) };   // design options, e.g. OPTS='{"waistHeight":0.8}'
 const D = DESIGNS[design];
 const pat = new D({ measurements: meas, ...settings }); pat.draft();
 const S = pat.setStores[0];
+if (process.env.DBGSTORE) console.log('STORE', process.env.DBGSTORE.split(',').map((k) => k + '=' + (S.get(k, 'n/a'))).join(' '));
 const sample = (op, from, n) => {   // polyline of one path op (mm)
   if (op.type === 'line') return [[op.to.x, op.to.y]];
   if (op.type === 'curve') { const pts = []; const p0 = from, c1 = op.cp1, c2 = op.cp2, p1 = op.to;

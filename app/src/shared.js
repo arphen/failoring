@@ -305,7 +305,7 @@ FL.makeWrapRows = (piece, body) => {
   };
   const posAt = (u, v) => {
     if (w.mode === 'arm') return armPos(u, v);
-    const y = w.y + (v - bb.y0), k = Math.max(0, Math.min(S.ny - 1, Math.round(y / S.dy))), [x0, x1] = rowExt(v), t = (u - x0) / (x1 - x0);
+    const y = w.y + (v - bb.y0), k = Math.max(0, Math.min(S.ny - 1, Math.round(y / S.dy))), [x0, x1] = rowExt(w.vcap == null ? v : Math.min(v, w.vcap)), t = (u - x0) / (x1 - x0);   // vcap: rows above it share its extents (a slanted top edge would otherwise squeeze to nothing)
     let p;
     if (w.mode === 'leg') {
       const wt = ySmooth((y - (yc - zb)) / (2 * zb));

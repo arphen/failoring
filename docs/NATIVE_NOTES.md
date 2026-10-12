@@ -174,9 +174,10 @@ cloth looks right.
 macOS arm64 (the user's Mac, evening of 2026-10-12; reported with the commit, logs not seen here):
 `godot/bin/libfailoring.dylib` (1.1 MB, Release, godot-cpp `godot-4.3-stable`) built from `gdextension/`;
 `api_smoke.tscn` 24 of 24 checks pass; `walk_demo.tscn` ran headless for 35 frames, exit 0, no errors; body bake 25 ms;
-about 1.5 to 2 s per frame wall clock with the bake and 4 substeps every frame. The demo prints no per-frame stats, so
-clearance and seam gap were not measured on the Mac. That frame time is 3 to 4 times the Linux container's 0.5 s and is
-unexplained.
+about 0.26 s wall (0.24 s CPU) per frame with the bake and 4 substeps every frame, against 0.5 s in the Linux container.
+Minimum clearance 1.65 mm and seam gap 3.14 mm (Linux: 1.6 and 3.1 mm), no line-search failures on either. An earlier
+figure of 1.5 to 2 s per frame was a miscount: `--quit-after N` counts main-loop iterations, about 8 physics ticks each
+when headless, so dividing the wall time by N overstated the frame time eight-fold.
 
 ## Not done
 

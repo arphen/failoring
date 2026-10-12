@@ -3,7 +3,7 @@
 OUT=${1:-/tmp/fs_batch}; mkdir -p $OUT; cd "$(dirname "$0")/.."
 for P in $(node -e "console.log(Object.keys(require('./app/src/shared.js').PRESETS).join(' '))"); do
   node tools/fs_measures.js $P > $OUT/m_$P.json
-  for D in teagan:cotton_jersey: penelope:wool_suiting: charlie:cotton_poplin:charlie.front,charlie.back; do
+  for D in teagan:cotton_jersey: penelope:wool_suiting: charlie:cotton_poplin:charlie.front,charlie.back,charlie.waistband; do
     N=${D%%:*}; R=${D#*:}; F=${R%%:*}; ONLY=${R#*:}
     (cd tools/freesewing && node --import ./reg.mjs export.mjs $N $OUT/m_$P.json $OUT/raw_${N}_$P.json $ONLY >/dev/null)
     node tools/fs_plan.js $OUT/raw_${N}_$P.json $P $OUT/plan_${N}_$P.json >/dev/null

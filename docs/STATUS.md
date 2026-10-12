@@ -27,8 +27,10 @@ solver "blocker" is resolved: the core default is `tensionStiffness = false` (ct
   frames (no NaN, no line-search failures, no penetration, seam gap at most 3.1 mm, about 0.5 s per frame).
 * Godot 4.3 on macOS arm64, headless (reported from the Mac session, logs not seen here): `libfailoring.dylib` (1.1 MB,
   Release, godot-cpp `godot-4.3-stable`) built from `gdextension/`; `api_smoke.tscn` 24 of 24 pass; `walk_demo.tscn`
-  35 frames, exit 0, no errors; body bake 25 ms; about 1.5 to 2 s per frame wall clock. The demo prints no per-frame
-  stats, so clearance and seam gap were not measured on the Mac. The pushed file is a genuine arm64 Mach-O library.
+  35 frames, exit 0, no errors; body bake 25 ms; about 0.26 s wall (0.24 s CPU) per frame, clearance 1.65 mm, seam gap
+  3.14 mm, no line-search failures (the Mac session's corrected figures: an earlier 1.5 to 2 s per frame came from dividing
+  by `--quit-after N`, which counts main-loop iterations of about 8 physics ticks each). The pushed file is a genuine
+  arm64 Mach-O library.
 
 ## Not verified
 
@@ -40,18 +42,21 @@ solver "blocker" is resolved: the core default is `tensionStiffness = false` (ct
 
 ## Open problems
 
-1. Pencil skirt twists sideways on tall, curvy and athletic bodies (it holds on average, petite, plus). Next suspects:
-   the 2.9 cm vent overlap counted twice in the target girth `w.P`, or the waistband.
+1. Pencil skirt: the sideways twist is fixed (the waistband and skirt top are held at their edge girth, `holdTop` in
+   `app/src/fsimport.js`; all six presets stable standing). The earlier "curvy twists" was not reproduced.
 2. Pencil skirt hem is baggy; at draft mesh quality the FreeSewing skirt has a 94.6 mm seam gap.
-3. Chinos have no waistband (the band piece comes out about 1.2 m long, cause unknown).
+3. Chinos now have a waistband and sit at the natural waist on all six presets (standing): Charlie is drafted with
+   `waistHeight` 1, the band is sewn to the front/back top edges, and leg pieces share their row extents above
+   `wrap.vcap` so the slanted top edge no longer collapses. Still baggy at the hips/thighs, the slant pocket has no
+   pocket bag, and the back-right top edge only partly seams to the band.
 4. Walking was checked for the tee on the average body only. Skirt and chinos were never walked; the tee was not walked
    on the other five presets.
 5. Godot wrapper: 13 of the 14 review findings in `docs/NATIVE_NOTES.md` are fixed (2026-10-12); only 13 (the
    synchronous body bake) remains.
 6. Native solver was not faster than wasm in the one comparison; threading is off; a `-march=native` build gives a
-   different solver checksum (undiagnosed). The walk demo takes about 1.5 to 2 s per frame on the Mac against about 0.5 s
-   in the Linux container; unexplained (candidates: dylib build type, scene-load time inside the wall clock, threads).
-   The demo garment and quality differ from the browser's, so this is not a like-for-like comparison with it.
+   different solver checksum (undiagnosed). The walk demo takes about 0.26 s per frame on the Mac (0.5 s in the Linux
+   container), with the same clearance and seam gap on both. The demo garment and quality differ from the browser's, so
+   this is not a like-for-like comparison with it.
 7. Small gaps: `tools/walk_sim.js` prints NaN/0 averages; the Demo bar overlaps the lower body; `plan.info` is lost on
    save/open; trouser pieces overlap on the cutting table.
 

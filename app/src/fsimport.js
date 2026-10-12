@@ -19,10 +19,10 @@
       parts: { 'teagan.front': { kind: 'body', theta: 0, top: 'hps', role: 'Front' }, 'teagan.back': { kind: 'body', theta: 180, top: 'hps', role: 'Back' }, 'teagan.sleeve': { kind: 'sleeve', role: 'Sleeve' } } },
     aaron: { title: 'Aaron a-shirt', fabric: 'cotton_jersey', url: 'https://freesewing.org/docs/designs/aaron',
       parts: { 'aaron.front': { kind: 'body', theta: 0, top: 'hps', role: 'Front' }, 'aaron.back': { kind: 'body', theta: 180, top: 'hps', role: 'Back' } } },
-    charlie: { title: 'Charlie chinos', fabric: 'cotton_poplin', url: 'https://freesewing.org/docs/designs/charlie',
-      parts: { 'charlie.front': { kind: 'leg', theta: 0, origSide: 'R', top: 'origin', role: 'Front leg' }, 'charlie.back': { kind: 'leg', theta: 180, origSide: 'L', top: 'origin', role: 'Back leg' } } },
+    charlie: { title: 'Charlie chinos', fabric: 'cotton_poplin', url: 'https://freesewing.org/docs/designs/charlie', free: /^(hem|hemBase|bottom)$/,   // the front's waist edge, slant and upper side edge all carry the pocket-bag label; the slant is sewn to the back's upper side edge (no pocket)
+      parts: { 'charlie.front': { kind: 'leg', theta: 0, origSide: 'R', top: 'origin', role: 'Front leg' }, 'charlie.back': { kind: 'leg', theta: 180, origSide: 'L', top: 'origin', role: 'Back leg' }, 'charlie.waistband': { kind: 'band', role: 'Waistband', holdTop: true } } },
     penelope: { title: 'Penelope pencil skirt', fabric: 'wool_suiting', url: 'https://freesewing.org/docs/designs/penelope',
-      parts: { 'penelope.front': { kind: 'body', theta: 0, top: 'waist', role: 'Front' }, 'penelope.back': { kind: 'body', theta: 180, top: 'waist', role: 'Back half' }, 'penelope.waistband': { kind: 'band', role: 'Waistband' } } },
+      parts: { 'penelope.front': { kind: 'body', theta: 0, top: 'waist', role: 'Front', holdTop: true }, 'penelope.back': { kind: 'body', theta: 180, top: 'waist', role: 'Back half', holdTop: true }, 'penelope.waistband': { kind: 'band', role: 'Waistband', holdTop: true } } },
   };
 
   const area = (p) => { let a = 0; for (let i = 0; i < p.length; i++) { const j = (i + 1) % p.length; a += p[i][0] * p[j][1] - p[j][0] * p[i][1]; } return a / 2; };
@@ -80,20 +80,33 @@
       pc.bb = FL.bbox(flat);
       const h = pc.bb.y1 - pc.bb.y0;
       if (pc.spec.kind === 'body') pc.wrap = { mode: 'fit', theta: pc.spec.theta, y: (pc.spec.top === 'hps' ? yHps : yWaist) - h, clear: 0.012 };
-      else if (pc.spec.kind === 'leg') pc.wrap = { mode: 'leg', side: pc.side, theta: pc.spec.theta, y: pc.spec.top === 'origin' ? yWaist + pc.bb.y0 : yWaist - h, clear: 0.012 };   // 'origin': the design's own y = 0 is the natural waist
-      else if (pc.spec.kind === 'band') pc.wrap = { mode: 'fit', theta: 0, y: yWaist - 0.002, clear: 0.012, group: 'band' };
+      else if (pc.spec.kind === 'leg') pc.wrap = { mode: 'leg', side: pc.side, theta: pc.spec.theta, y: pc.spec.top === 'origin' ? yWaist + pc.bb.y0 : yWaist - h, clear: 0.012, vcap: pc.bb.y1 - 0.03 };   // 'origin': the design's own y = 0 is the natural waist
+      else if (pc.spec.kind === 'band') pc.wrap = { mode: 'fit', theta: 0, y: yWaist - 0.002, clear: 0.012, group: 'band' };   // y is lowered onto the top edge of the other pieces below
       else if (pc.spec.kind === 'sleeve') pc.wrap = { mode: 'arm', side: pc.side === 'R' ? 'R' : 'L', sTop: 0.045, clear: 0.02, phiSeam: pc.side === 'R' ? 90 : -90 };   // the R arm's frame is mirrored (its cross product flips handedness), so its underarm is at +90
       if (pc.wrap.mode === 'fit' && pc.side) pc.wrap.over = pc.bb.x1 > -pc.bb.x0 ? 1 : -1;
       pc.flat = flat;
     }
+    // a waistband sits on the top edge of the garment it belongs to (the skirt's top is the natural waist, the chinos' top is where the pattern puts it)
+    { const others = inst.filter((p) => p.wrap.mode !== 'arm' && p.spec.kind !== 'band');
+      if (others.length) { const top = Math.max(...others.map((p) => p.wrap.y + (p.bb.y1 - p.bb.y0))); for (const pc of inst) if (pc.spec.kind === 'band') pc.wrap.y = top - 0.002; } }
     // sleeves: a cut-2 part; the left copy is the original; wrap sides assigned above (L/R)
     for (const grp of [...new Set(inst.filter((p) => p.wrap.mode === 'fit').map((p) => p.wrap.group || 'main'))]) {
       const fitters = inst.filter((p) => p.wrap.mode === 'fit' && (p.wrap.group || 'main') === grp);
       const y0 = Math.min(...fitters.map((p) => p.wrap.y)), y1 = Math.max(...fitters.map((p) => p.wrap.y + p.bb.y1 - p.bb.y0)), dy = 0.01, n = Math.ceil((y1 - y0) / dy) + 1;
-      const rowW = (pc, y) => { let v = y - pc.wrap.y + pc.bb.y0; if (v < pc.bb.y0 - 1e-6 || v > pc.bb.y1 + 1e-6) return 0; v = Math.max(pc.bb.y0 + 1e-5, Math.min(pc.bb.y1 - 1e-5, v)); let lo = 1e9, hi = -1e9;
+      // holdTop (set per part in RECIPES; the pencil skirt and its band): rows up to one step beyond a piece's top or bottom keep
+      // the piece's end width. A row sampled just past the edge used to count 0 and the linear blend in makeWrapRows cut the
+      // girth towards 0 over the last millimetres, stretching the top edge several times round the body (the waistband's top
+      // edge wound 3.6 turns on the tall body). The tee relies on the old behaviour (it falls off with the new one), so it is
+      // opt-in until the tee's top rows are reworked.
+      const hold = fitters.some((p) => p.spec.holdTop), ext = hold ? dy : 0;
+      const rowW = (pc, y) => { let v = y - pc.wrap.y + pc.bb.y0; if (v < pc.bb.y0 - ext - 1e-6 || v > pc.bb.y1 + ext + 1e-6) return 0; v = Math.max(pc.bb.y0 + 1e-5, Math.min(pc.bb.y1 - 1e-5, v)); let lo = 1e9, hi = -1e9;
         for (const ch of pc.chains) for (let i = 0; i + 1 < ch.pts.length; i++) { const a = ch.pts[i], b = ch.pts[i + 1]; if ((a[1] - v) * (b[1] - v) <= 0 && a[1] !== b[1]) { const x = a[0] + (b[0] - a[0]) * (v - a[1]) / (b[1] - a[1]); lo = Math.min(lo, x); hi = Math.max(hi, x); } }
         return hi > lo ? hi - lo : 0; };
       const P = []; for (let k = 0; k < n; k++) { const y = y0 + k * dy; P.push(+fitters.reduce((s, pc) => s + rowW(pc, y), 0).toFixed(4)); }
+      // The top rows of a piece only cover the highest part of a curved top edge (the waist curve of a skirt, a shoulder slope):
+      // the chord there is far narrower than the girth the edge really spans, and kk = per / P would spread the pattern two or
+      // three times round the body, so the top corners start on the far side of it. Hold the girth of the first full row.
+      if (hold) { let jt = n - 1; while (jt >= 2 && P[jt] < 0.9 * P[jt - 2]) jt--; for (let k = jt + 1; k < n; k++) P[k] = P[jt]; }
       for (const pc of fitters) { pc.wrap.P = P; pc.wrap.Py0 = y0; pc.wrap.Pdy = dy; }
     }
     // ---- 3. start geometry of every chain (3D) and seam matching
@@ -131,7 +144,7 @@
       return runs.filter((r) => r.i1 - r.i0 >= 3 && (r.i1 - r.i0) / M * a.cv.L >= 0.012).map((r) => ({ f: [r.i0 / M, r.i1 / M], js: ok.slice(r.i0, r.i1 + 1).filter((x) => x >= 0) }));
     };
     const cand = [];
-    const FREE = /^(pocketBag|hem|hemBase|bottom)$/;   // pocket openings and hems are never sewn to another piece
+    const FREE = rec.free || /^(pocketBag|hem|hemBase|bottom)$/;   // pocket openings and hems are never sewn to another piece
     for (let x = 0; x < chainList.length; x++) for (let y = x + 1; y < chainList.length; y++) {
       const a = chainList[x], b = chainList[y]; if (FREE.test(a.c.label || '') || FREE.test(b.c.label || '')) continue;
       const ra = runsOn(a, b), rb = runsOn(b, a);
