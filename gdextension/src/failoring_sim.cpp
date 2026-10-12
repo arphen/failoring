@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <exception>
 #include <unordered_map>
 
 #include <godot_cpp/classes/file_access.hpp>
@@ -62,6 +63,12 @@ std::vector<fl::Vec3> surfaceMotion(const std::vector<fl::Vec3>& prev, const std
     }
     return out;
 }
+
+// Edge length of a panel: a positive request is used as given (the browser passes its value directly); otherwise the
+// estimator's recommendation, floored at 6 mm.
+double panelEdgeLength(const fl::FabricMaterial& m, double requested) {
+    return requested > 0 ? requested : std::max(fl::optimalResolution(m).isotropic(), 0.006);
+}
 }  // namespace
 
 FailoringSim::FailoringSim() { resetSolver(); }
@@ -73,8 +80,10 @@ void FailoringSim::resetSolver() {
     solver_->setCollider(active_);
     panelEdges_.clear();
     warnings_ = 0;
+    panelUV_.clear();
     dispEdges_.clear();
     dispTris_.clear();
+    dispVertexCount_ = -1;
 }
 
 void FailoringSim::begin() { resetSolver(); }
@@ -116,7 +125,10 @@ Dictionary FailoringSim::get_material(const String& id) const {
     d["shear_N_m_rad"] = m->shear;
     d["bending_warp_Nm"] = m->bendWarp;
     d["bending_weft_Nm"] = m->bendWeft;
+    d["compression_ratio"] = m->compressionRatio;
     d["friction_static"] = m->frictionStatic;
+    d["friction_kinetic"] = m->frictionKinetic;
+    d["damping"] = m->damping;
     return d;
 }
 
@@ -125,41 +137,53 @@ real_t FailoringSim::get_recommended_edge_length(const String& id) const {
     return m ? static_cast<real_t>(fl::optimalResolution(*m).isotropic()) : real_t(0.01);
 }
 
-int FailoringSim::add_rect_panel(real_t width, real_t height, real_t edge_length, const String& material_id, Vector3 origin, Vector3 ex,
-                                 Vector3 ey, real_t grain_angle, const String& name) {
+int FailoringSim::addOutlinePanel(std::vector<fl::Vec2> poly, real_t edge_length, const String& material_id, Vector3 origin, Vector3 ex,
+                                  Vector3 ey, real_t grain_angle, const String& name) {
     const fl::FabricMaterial* m = material(material_id);
     if (!m) {
         UtilityFunctions::push_error("FailoringSim: unknown material ", material_id);
         return -1;
     }
-    const double h = edge_length > 0 ? edge_length : std::max(fl::optimalResolution(*m).isotropic(), 0.006);
-    fl::PanelPlacement pl;
-    pl.origin = toFl(origin); pl.ex = toFl(ex); pl.ey = toFl(ey);
-    const int p = solver_->addPanel(fl::meshRect(width, height, h), *m, pl, grain_angle, name.utf8().get_data());
-    panelEdges_.push_back(4);
-    return p;
+    if (poly.size() < 3) {
+        UtilityFunctions::push_error("FailoringSim: panel '", name, "' needs an outline of at least 3 points");
+        return -1;
+    }
+    // counter-clockwise outlines, as the browser's FL.normalizePiece: seam edge numbers refer to this order
+    if (fl::polygonSignedArea(poly) < 0) std::reverse(poly.begin(), poly.end());
+    try {
+        fl::PanelMesh mesh = fl::meshPolygon(poly, panelEdgeLength(*m, edge_length));
+        if (!mesh.boundaryComplete) {
+            warnings_ |= 1;
+            UtilityFunctions::push_warning("FailoringSim: panel '", name, "' has features thinner than the edge length; use a smaller edge_length");
+        }
+        fl::PanelPlacement pl;
+        pl.origin = toFl(origin); pl.ex = toFl(ex); pl.ey = toFl(ey);
+        const int p = solver_->addPanel(mesh, *m, pl, grain_angle, name.utf8().get_data());
+        panelEdges_.push_back(static_cast<int>(poly.size()));
+        panelUV_.push_back(mesh.verts);
+        return p;
+    } catch (const std::exception& e) {
+        UtilityFunctions::push_error("FailoringSim: cannot add panel '", name, "': ", String(e.what()), " (begin() starts a new simulation)");
+        return -1;
+    }
+}
+
+int FailoringSim::add_rect_panel(real_t width, real_t height, real_t edge_length, const String& material_id, Vector3 origin, Vector3 ex,
+                                 Vector3 ey, real_t grain_angle, const String& name) {
+    if (!(width > 0 && height > 0)) {
+        UtilityFunctions::push_error("FailoringSim: add_rect_panel: width and height must be positive");
+        return -1;
+    }
+    // the same mesher as every browser panel; outline edges 0 bottom, 1 right, 2 top, 3 left
+    std::vector<fl::Vec2> poly = {fl::Vec2(0, 0), fl::Vec2(width, 0), fl::Vec2(width, height), fl::Vec2(0, height)};
+    return addOutlinePanel(std::move(poly), edge_length, material_id, origin, ex, ey, grain_angle, name);
 }
 
 int FailoringSim::add_polygon_panel(const PackedVector2Array& outline, real_t edge_length, const String& material_id, Vector3 origin,
                                     Vector3 ex, Vector3 ey, real_t grain_angle, const String& name) {
-    const fl::FabricMaterial* m = material(material_id);
-    if (!m || outline.size() < 3) {
-        UtilityFunctions::push_error("FailoringSim: bad panel (material or outline)");
-        return -1;
-    }
     std::vector<fl::Vec2> poly;
     for (int i = 0; i < outline.size(); ++i) poly.push_back(fl::Vec2(outline[i].x, outline[i].y));
-    const double h = edge_length > 0 ? edge_length : std::max(fl::optimalResolution(*m).isotropic(), 0.006);
-    fl::PanelMesh mesh = fl::meshPolygon(poly, h);
-    if (!mesh.boundaryComplete) {
-        warnings_ |= 1;
-        UtilityFunctions::push_warning("FailoringSim: panel '", name, "' has features thinner than the edge length; use a smaller edge_length");
-    }
-    fl::PanelPlacement pl;
-    pl.origin = toFl(origin); pl.ex = toFl(ex); pl.ey = toFl(ey);
-    const int p = solver_->addPanel(mesh, *m, pl, grain_angle, name.utf8().get_data());
-    panelEdges_.push_back(static_cast<int>(poly.size()));
-    return p;
+    return addOutlinePanel(std::move(poly), edge_length, material_id, origin, ex, ey, grain_angle, name);
 }
 
 bool FailoringSim::validPanel(int panel, const char* who) const {
@@ -174,7 +198,12 @@ bool FailoringSim::add_seam(int a, int ea, int b, int eb, bool reverse) {
         UtilityFunctions::push_error("FailoringSim: add_seam: edge out of range");
         return false;
     }
-    solver_->addSeam(a, ea, b, eb, reverse);
+    try {
+        solver_->addSeam(a, ea, b, eb, reverse);
+    } catch (const std::exception& e) {
+        UtilityFunctions::push_error("FailoringSim: add_seam: ", String(e.what()), " (begin() starts a new simulation)");
+        return false;
+    }
     return true;
 }
 
@@ -212,11 +241,7 @@ PackedInt32Array FailoringSim::get_edge_chain(int panel, int edge) const {
 PackedVector2Array FailoringSim::get_panel_vertices_2d(int panel) const {
     PackedVector2Array out;
     if (!validPanel(panel, "get_panel_vertices_2d")) return out;
-    const int first = solver_->firstVertex(panel), n = solver_->vertexCountOfPanel(panel);
-    for (int i = 0; i < n; ++i) {
-        const fl::Vec2& u = solver_->restUV()[first + i];
-        out.push_back(Vector2(u.x, u.y));
-    }
+    for (const fl::Vec2& u : panelUV_[static_cast<size_t>(panel)]) out.push_back(Vector2(u.x, u.y));
     return out;
 }
 
@@ -302,7 +327,14 @@ real_t FailoringSim::set_body_positions(const PackedVector3Array& vertices) {
     return static_cast<real_t>(grid->stats().msTotal);
 }
 
-void FailoringSim::set_body_motion(const PackedVector3Array& displacement) { solver_->setColliderMotion(toFlArray(displacement)); }
+void FailoringSim::set_body_motion(const PackedVector3Array& displacement) {
+    if (displacement.size() != 0 && displacement.size() != solver_->vertexCount()) {
+        UtilityFunctions::push_error("FailoringSim: set_body_motion expects one displacement per cloth vertex (", solver_->vertexCount(),
+                                     "), got ", displacement.size(), "; ignored");
+        return;
+    }
+    solver_->setColliderMotion(toFlArray(displacement));
+}
 
 void FailoringSim::set_body_enabled(bool on) {
     body_.enabled = on && body_.grid != nullptr;
@@ -336,7 +368,7 @@ PackedFloat32Array FailoringSim::body_eval(const PackedVector3Array& points) con
     out.resize(points.size() * 4);
     float* o = out.ptrw();
     const Vector3* p = points.ptr();
-    const bool on = body_.grid && body_.enabled;
+    const bool on = body_.grid != nullptr;  // like the browser's fl_body_eval: evaluates whenever a grid exists, enabled or not
     const fl::GridCollider c(on ? body_.grid : nullptr);
     for (int64_t i = 0; i < points.size(); ++i) {
         fl::Vec3 n(0, 1, 0);
@@ -373,10 +405,23 @@ void FailoringSim::setup_display() {
         const int quad[12] = {a, ab, ca, ab, b, bc, ca, bc, c, ab, bc, ca};
         dispTris_.insert(dispTris_.end(), quad, quad + 12);
     }
+    dispVertexCount_ = static_cast<int>(n);
+}
+
+// The display topology is tied to the cloth vertex count at setup_display(): the midpoint of edge e is vertex n + e.
+bool FailoringSim::displayCurrent(const char* who) const {
+    if (dispVertexCount_ == solver_->vertexCount() && dispVertexCount_ >= 0) return true;
+    if (dispVertexCount_ < 0)
+        UtilityFunctions::push_error("FailoringSim: ", who, ": call setup_display() after the panels are added");
+    else
+        UtilityFunctions::push_error("FailoringSim: ", who, ": the cloth has ", solver_->vertexCount(), " vertices but setup_display() saw ",
+                                     dispVertexCount_, "; call setup_display() again after adding panels");
+    return false;
 }
 
 PackedInt32Array FailoringSim::get_display_indices() const {
     PackedInt32Array out;
+    if (!displayCurrent("get_display_indices")) return out;
     out.resize(static_cast<int64_t>(dispTris_.size()));
     int32_t* o = out.ptrw();
     for (size_t i = 0; i < dispTris_.size(); ++i) o[i] = dispTris_[i];
@@ -384,6 +429,7 @@ PackedInt32Array FailoringSim::get_display_indices() const {
 }
 
 PackedVector3Array FailoringSim::get_display_positions(real_t margin) const {
+    if (!displayCurrent("get_display_positions")) return PackedVector3Array();
     const auto& x = solver_->positions();
     const size_t n = x.size(), ne = dispEdges_.size() / 2, nd = n + ne;
     std::vector<fl::Vec3> P(nd), N(nd, fl::Vec3(0, 1, 0));
@@ -439,8 +485,18 @@ void FailoringSim::set_param(const String& name, real_t v) {
     else UtilityFunctions::push_warning("FailoringSim: unknown parameter ", name);
 }
 
-void FailoringSim::step(int frames) { for (int i = 0; i < frames; ++i) solver_->step(); }
-void FailoringSim::reset_velocities() { /* velocities are zeroed by set_vertex_position / set_positions; kept for compatibility */ }
+void FailoringSim::step(int frames) {
+    try {
+        for (int i = 0; i < frames; ++i) {
+            solver_->step();
+            // The surface motion described one frame; the solver keeps it until replaced, so clear it (the browser sets
+            // it before every fl_step(1)). Otherwise a body moved once is dragged against the cloth on every later frame.
+            solver_->setColliderMotion({});
+        }
+    } catch (const std::exception& e) {
+        UtilityFunctions::push_error("FailoringSim: step failed: ", String(e.what()));
+    }
+}
 
 PackedVector3Array FailoringSim::get_positions() const { return toGdArray(solver_->positions()); }
 
@@ -461,11 +517,71 @@ real_t FailoringSim::get_kinetic_energy() const { return solver_->kineticEnergy(
 real_t FailoringSim::get_max_seam_gap() const { return solver_->maxSeamGap(); }
 real_t FailoringSim::get_min_body_clearance() const { return solver_->minBodyClearance(); }
 
+Dictionary FailoringSim::get_solver_stats() const {
+    Dictionary d;
+    d["line_search_failures"] = solver_->lineSearchFailures();
+    d["newton_iterations"] = static_cast<int64_t>(solver_->newtonIterations());
+    d["substeps"] = static_cast<int64_t>(solver_->substepsDone());
+    d["cg_iterations"] = solver_->lastCgIterations();
+    return d;
+}
+
+bool FailoringSim::add_material(const String& id, const Dictionary& props) {
+    if (id.is_empty()) {
+        UtilityFunctions::push_error("FailoringSim: add_material needs a non-empty id");
+        return false;
+    }
+    fl::FabricMaterial m;
+    const fl::FabricMaterial* old = material(id);
+    if (old) m = *old;
+    m.id = id.utf8().get_data();
+    bool ok = true;
+    auto num = [&](const char* key, double& field, double scale, bool positive) {
+        const String k(key);
+        if (!props.has(k)) return;
+        const Variant v = props[k];
+        if (v.get_type() != Variant::FLOAT && v.get_type() != Variant::INT) {
+            UtilityFunctions::push_error("FailoringSim: add_material: '", k, "' must be a number");
+            ok = false;
+            return;
+        }
+        const double x = static_cast<double>(v) * scale;
+        if (!std::isfinite(x) || (positive ? x <= 0 : x < 0)) {
+            UtilityFunctions::push_error("FailoringSim: add_material: '", k, "' is out of range");
+            ok = false;
+            return;
+        }
+        field = x;
+    };
+    num("density_g_m2", m.density, 0.001, true);
+    num("thickness_mm", m.thickness, 0.001, true);
+    num("tensile_warp_N_m", m.tensileWarp, 1.0, true);
+    num("tensile_weft_N_m", m.tensileWeft, 1.0, true);
+    num("shear_N_m_rad", m.shear, 1.0, true);
+    num("bending_warp_Nm", m.bendWarp, 1.0, true);
+    num("bending_weft_Nm", m.bendWeft, 1.0, true);
+    num("compression_ratio", m.compressionRatio, 1.0, false);
+    num("friction_static", m.frictionStatic, 1.0, false);
+    num("friction_kinetic", m.frictionKinetic, 1.0, false);
+    num("damping", m.damping, 1.0, false);
+    if (props.has(String("name"))) m.name = String(props[String("name")]).utf8().get_data();
+    if (props.has(String("category"))) m.category = String(props[String("category")]).utf8().get_data();
+    if (!ok) return false;
+    if (old) {
+        for (auto& e : materials_)
+            if (e.id == m.id) e = m;
+    } else {
+        materials_.push_back(m);
+    }
+    return true;
+}
+
 void FailoringSim::_bind_methods() {
     ClassDB::bind_method(D_METHOD("load_materials", "path"), &FailoringSim::load_materials);
     ClassDB::bind_method(D_METHOD("get_material_ids"), &FailoringSim::get_material_ids);
     ClassDB::bind_method(D_METHOD("get_material", "id"), &FailoringSim::get_material);
     ClassDB::bind_method(D_METHOD("get_recommended_edge_length", "id"), &FailoringSim::get_recommended_edge_length);
+    ClassDB::bind_method(D_METHOD("add_material", "id", "properties"), &FailoringSim::add_material);
 
     ClassDB::bind_method(D_METHOD("begin"), &FailoringSim::begin);
     ClassDB::bind_method(D_METHOD("add_rect_panel", "width", "height", "edge_length", "material_id", "origin", "ex", "ey", "grain_angle", "name"), &FailoringSim::add_rect_panel);
@@ -505,7 +621,6 @@ void FailoringSim::_bind_methods() {
 
     ClassDB::bind_method(D_METHOD("set_param", "name", "value"), &FailoringSim::set_param);
     ClassDB::bind_method(D_METHOD("step", "frames"), &FailoringSim::step, DEFVAL(1));
-    ClassDB::bind_method(D_METHOD("reset_velocities"), &FailoringSim::reset_velocities);
 
     ClassDB::bind_method(D_METHOD("get_positions"), &FailoringSim::get_positions);
     ClassDB::bind_method(D_METHOD("get_indices"), &FailoringSim::get_indices);
@@ -515,4 +630,5 @@ void FailoringSim::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_kinetic_energy"), &FailoringSim::get_kinetic_energy);
     ClassDB::bind_method(D_METHOD("get_max_seam_gap"), &FailoringSim::get_max_seam_gap);
     ClassDB::bind_method(D_METHOD("get_min_body_clearance"), &FailoringSim::get_min_body_clearance);
+    ClassDB::bind_method(D_METHOD("get_solver_stats"), &FailoringSim::get_solver_stats);
 }

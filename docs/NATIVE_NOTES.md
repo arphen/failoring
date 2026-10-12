@@ -136,8 +136,43 @@ The browser numbers come from `docs/WIP_HANDOFF.md` (bake 185-390 ms, wasm wall 
 14. Unverified in Godot 4.3: `walk_demo.gd` passes untyped array literals to `PackedInt32Array.append_array`, which may
     need `PackedInt32Array([...])`.
 
+## Fixed after this review (2026-10-12)
+
+Findings 1 to 12 and 14 are fixed in `gdextension/src/failoring_sim.cpp/.h` and `godot/walk_demo.gd`. Each was checked in
+Godot 4.3.stable (Linux x86_64, headless): `godot/tests/api_smoke.tscn` runs the API checks (all pass) and
+`godot/walk_demo.tscn` runs the demo.
+
+* 1 `get_solver_stats()` returns line-search failures, Newton iterations, substeps and the last CG count.
+* 2 `add_material(id, properties)` adds or replaces a fabric (keys as `get_material` returns them).
+* 3 Kept as is and documented: `add_*` colliders append; `clear_colliders()` first to replace.
+* 4 `step()` clears the surface motion after every frame, so a body moved once no longer drags the cloth on later
+  frames. `walk_demo.gd` bakes the body every frame (`BAKE_EVERY = 1`), as the browser does. Checked by reading the
+  code path only; no test observes the friction directly.
+* 5 `get_panel_vertices_2d` returns the raw pattern coordinates (kept per panel in `panelUV_`, like wasm `restUV`).
+  The demo now starts with closed seams (gap 0.0000 m at frame 0, raw uv range (0,0)..(0.4,0.3)).
+* 6 `add_panel`, `add_seam` and `step` catch exceptions and `push_error`; adding a panel or seam after the first step
+  returns -1 / false instead of ending the process.
+* 7 `get_display_indices` / `get_display_positions` report an error and return empty arrays when `setup_display()` was
+  not called, or when the cloth vertex count changed since.
+* 8 `add_rect_panel` now meshes with `meshPolygon` (outline edges 0 bottom, 1 right, 2 top, 3 left), as the browser does.
+  A positive `edge_length` is used as given; only 0 or less selects the estimator's value (floored at 6 mm). The panel
+  triangulation, and so the demo's vertex count, changed (748 vertices, 1,352 triangles for the demo tube).
+* 9 `add_polygon_panel` reverses a clockwise outline to counter-clockwise, as `FL.normalizePiece` does, so edge numbers
+  match the browser.
+* 10 `body_eval` evaluates whenever a grid exists, enabled or not, like `fl_body_eval`.
+* 11 `set_body_motion` reports a size other than the cloth vertex count and ignores it.
+* 12 `reset_velocities()` is removed.
+* 14 `append_array` calls in `walk_demo.gd` use `PackedInt32Array([...])`. (The untyped form was not tested.)
+* 13 Not changed: `set_body_positions` still bakes synchronously; this is a design limit (see the cost note in
+  `walk_demo.gd`).
+
+Run result of `walk_demo.tscn` (headless, 2-core cloud container, 30 frames): no NaN, no line-search failures,
+minimum body clearance 1.6 mm (no penetration), seam gap at most 3.1 mm, about 0.5 s per frame (body bake about 45 ms
+plus 4 substeps). Not tested: a real window and renderer, macOS (no `libfailoring.dylib` built yet), the
+`-march=native` checksum difference, and whether the cloth looks right.
+
 ## Not done
 
-* Nothing executed in Godot: no scene load, no `FailoringSim` call, no `walk_demo.gd` run.
+* Originally nothing was executed in Godot; see "Fixed after this review" for what was run afterwards.
 * The wasm build was not compiled here, so the browser and native solver numbers are not measured on the same host.
-* No wrapper fixes beyond compile fixes (none were needed). The findings above are for the next change.
+* Findings 1 to 12 and 14 were fixed afterwards (see above); 13 remains.

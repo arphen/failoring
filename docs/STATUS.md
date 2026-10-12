@@ -13,7 +13,7 @@ solver "blocker" is resolved: the core default is `tensionStiffness = false` (ct
   body by `app/src/fsimport.js`: tee (teagan), pencil skirt (penelope), chinos (charlie). Pattern tab in
   `app/src/info.js` (cutting list, seams, sewing order). One-click Demo in `app/src/demo.js`.
 * **Native**: `cloth_core` C++ library, GDExtension wrapper in `gdextension/`, Godot project in `godot/` (asset exporter
-  `tools/export_godot_assets.js`, `godot/walk_demo.gd`). Nothing has been run inside Godot.
+  `tools/export_godot_assets.js`, `godot/walk_demo.gd`). Run once in headless Godot 4.3 on Linux only; see "Checked".
 * **Licences**: AGPL-3.0 for the app; third-party material and checks in `THIRD_PARTY.md` (the AGPL text was compared
   word for word with the SPDX copy).
 
@@ -23,10 +23,13 @@ solver "blocker" is resolved: the core default is `tensionStiffness = false` (ct
   the three FreeSewing garments, walking and the photo shoot.
 * ctest 5/5 in Release (`docs/TEST_STATUS.md`), run on an agent branch before the merge, not re-run on merged main.
 
+* Godot 4.3.stable, Linux x86_64, headless: `godot/tests/api_smoke.tscn` passes, and `godot/walk_demo.tscn` ran 30
+  frames (no NaN, no line-search failures, no penetration, seam gap at most 3.1 mm, about 0.5 s per frame).
+
 ## Not verified
 
 * Real GPU, Safari and Firefox (only headless Chromium on a software renderer).
-* Anything in Godot: no scene load, no `FailoringSim` call, no `walk_demo.gd` run.
+* Godot on macOS and with a real window: no `libfailoring.dylib` has been built, and the cloth was never looked at.
 * Timing: all ms/frame figures were measured on a loaded 2-core host. The checkpoint figures in `WIP_HANDOFF.md`
   (legacy pencil about 100-106 ms/frame, A-line about 176; new about 90-110 and 180-200) have not been re-measured.
 * Demo mode with the FreeSewing garments (Next outfit, Next body, stall watchdog).
@@ -39,8 +42,8 @@ solver "blocker" is resolved: the core default is `tensionStiffness = false` (ct
 3. Chinos have no waistband (the band piece comes out about 1.2 m long, cause unknown).
 4. Walking was checked for the tee on the average body only. Skirt and chinos were never walked; the tee was not walked
    on the other five presets.
-5. Godot wrapper: 14 review findings in `docs/NATIVE_NOTES.md` (3 high, 3 medium, 5 minor or unverified, 3 missing
-   features). None fixed.
+5. Godot wrapper: 13 of the 14 review findings in `docs/NATIVE_NOTES.md` are fixed (2026-10-12); only 13 (the
+   synchronous body bake) remains.
 6. Native solver was not faster than wasm in the one comparison; threading is off; a `-march=native` build gives a
    different solver checksum (undiagnosed).
 7. Small gaps: `tools/walk_sim.js` prints NaN/0 averages; the Demo bar overlaps the lower body; `plan.info` is lost on

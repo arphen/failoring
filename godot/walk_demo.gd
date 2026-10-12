@@ -1,8 +1,8 @@
 # Walking-body demo: the call sequence for FailoringSim (gdextension/src/failoring_sim.h) with a mesh body that moves
 # every frame, the same flow as the browser's walking mannequin (app/src/worker.js).
 #
-# NOT RUN. This was written against the FailoringSim API, but the environment that wrote it has no Godot binary, so
-# nothing here has been executed. Open the project in Godot 4.3, check the output, then treat it as a starting point.
+# Run once in headless Godot 4.3 (Linux, 30 frames: no NaN, no penetration, seams closed from frame 0). Not yet looked at
+# in a real window or on macOS. Open godot/walk_demo.tscn (main.tscn runs demo.gd). Treat it as a starting point.
 # The body pose below is a placeholder (a slow sway of the rest mesh); a real walk needs the skinned body's vertices
 # each frame, e.g. from a Skeleton3D's skinned mesh or a precomputed gait sheet.
 #
@@ -17,12 +17,16 @@
 #   8. sim.setup_display()                                            display mesh topology, after the panels exist
 #   9. every physics frame:
 #        sim.set_body_positions(body_pose)                            re-bake the moved body and set its surface motion
-#        sim.step(1)                                                  one solver frame
+#        sim.step(1)                                                  one solver frame (clears the surface motion)
 #        sim.get_display_positions(0.0008)                            draw these with get_display_indices()
 #
+# The surface motion describes ONE frame and step() clears it afterwards, so a moving body is baked before every step,
+# as the browser does. Skipping bakes makes the body jump and leaves the friction without surface motion in between.
+#
 # Cost: set_body_positions bakes the whole grid every call (about 0.2-0.4 s per mannequin in the browser build, less
-# native). At 60 fps that is far too slow; move the body only as often as the picture needs (or on a worker thread,
-# never touching sim from two threads), and accept that the cloth lags the body in between.
+# native), and a solver frame is 0.1-0.3 s for a garment of this size. This demo therefore runs far slower than 60 fps;
+# for real time move the body only as often as the picture needs (or bake on a worker thread, never touching sim from
+# two threads) and accept that the cloth lags the body.
 extends Node3D
 
 const RADII := Vector3(0.17, 0.35, 0.11)  # body: vertical ellipsoid (placeholder for a scanned or parametric mannequin)
@@ -30,7 +34,7 @@ const W := 0.40                            # tube circumference is 2 W
 const H := 0.30
 const Y0 := 0.25
 const BODY_EDGE := 0.007                   # SDF grid spacing (m)
-const BAKE_EVERY := 6                      # frames between body re-bakes (see the cost note above)
+const BAKE_EVERY := 1                      # frames between body re-bakes; keep 1 (see the cost note above)
 
 var sim: FailoringSim
 var body_verts: PackedVector3Array
@@ -88,7 +92,8 @@ func _start() -> void:
 	sim.add_seam(front, 1, back, 3, true)
 	sim.add_seam(front, 3, back, 1, true)
 
-	# 7. start the panels pre-wrapped on a tube of circumference 2 W, so the seams begin closed
+	# 7. start the panels pre-wrapped on a tube of circumference 2 W, so the seams begin closed.
+	# get_panel_vertices_2d returns the pattern (u,v) of each vertex (u in 0..W across, v in 0..H up), before the grain.
 	var pos := sim.get_positions()
 	var rc := W / PI
 	for p in [front, back]:
@@ -114,7 +119,7 @@ func _physics_process(_delta: float) -> void:
 	if sim == null:
 		return
 	frame += 1
-	# 9. body moves; re-bake only every BAKE_EVERY frames (placeholder pose: rest mesh swaying 2 cm)
+	# 9. body moves; re-bake every BAKE_EVERY frames (placeholder pose: rest mesh swaying 2 cm)
 	if frame % BAKE_EVERY == 0:
 		var pose := PackedVector3Array()
 		pose.resize(rest_verts.size())
@@ -150,16 +155,16 @@ func _make_body_ellipsoid(r: Vector3, nu: int, nv: int) -> void:
 	body_verts.append(Vector3(0, -r.y, 0))
 	var south := body_verts.size() - 1
 	for i in range(nu):
-		body_tris.append_array([0, _ring(1, i + 1, nu), _ring(1, i, nu)])
+		body_tris.append_array(PackedInt32Array([0, _ring(1, i + 1, nu), _ring(1, i, nu)]))
 	for j in range(1, nv - 1):
 		for i in range(nu):
 			var a := _ring(j, i, nu)
 			var b := _ring(j, i + 1, nu)
 			var c := _ring(j + 1, i, nu)
 			var d := _ring(j + 1, i + 1, nu)
-			body_tris.append_array([a, b, c, b, d, c])
+			body_tris.append_array(PackedInt32Array([a, b, c, b, d, c]))
 	for i in range(nu):
-		body_tris.append_array([_ring(nv - 1, i, nu), _ring(nv - 1, i + 1, nu), south])
+		body_tris.append_array(PackedInt32Array([_ring(nv - 1, i, nu), _ring(nv - 1, i + 1, nu), south]))
 
 
 func _ring(j: int, i: int, nu: int) -> int:
