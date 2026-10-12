@@ -206,7 +206,7 @@ FL.makeWrap = (piece, body) => {
 //   c.phiAt(s): inverse; c.pt(phi): [x, z]
 FL.sectionCurve = (body, k, clear) => {
   const S = body.sections, cacheKey = k + '|' + clear;
-  const store = S._curves || (S._curves = new Map());
+  let store = S._curves; if (!store) { store = new Map(); Object.defineProperty(S, '_curves', { value: store, enumerable: false, writable: true }); }   // not enumerable: the sections are posted to the worker and Maps of closures cannot be cloned
   let c = store.get(cacheKey); if (c) return c;
   let hull = null;
   for (let d = 0; d < S.ny && !hull; d++) for (const kk of [k - d, k + d]) if (kk >= 0 && kk < S.ny && S.hulls[kk] && S.hulls[kk].length >= 6) { hull = S.hulls[kk]; break; }

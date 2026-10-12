@@ -82,7 +82,7 @@
       if (pc.spec.kind === 'body') pc.wrap = { mode: 'fit', theta: pc.spec.theta, y: (pc.spec.top === 'hps' ? yHps : yWaist) - h, clear: 0.012 };
       else if (pc.spec.kind === 'leg') pc.wrap = { mode: 'leg', side: pc.side, theta: pc.spec.theta, y: pc.spec.top === 'origin' ? yWaist + pc.bb.y0 : yWaist - h, clear: 0.012 };   // 'origin': the design's own y = 0 is the natural waist
       else if (pc.spec.kind === 'band') pc.wrap = { mode: 'fit', theta: 0, y: yWaist - 0.002, clear: 0.012, group: 'band' };
-      else if (pc.spec.kind === 'sleeve') pc.wrap = { mode: 'arm', side: pc.side === 'R' ? 'R' : 'L', sTop: 0.045, clear: 0.02, phiSeam: pc.side === 'R' ? (+process.env.PR || 90) : (+process.env.PL || -90) };   // the R arm's frame is mirrored (its cross product flips handedness), so its underarm is at +90
+      else if (pc.spec.kind === 'sleeve') pc.wrap = { mode: 'arm', side: pc.side === 'R' ? 'R' : 'L', sTop: 0.045, clear: 0.02, phiSeam: pc.side === 'R' ? 90 : -90 };   // the R arm's frame is mirrored (its cross product flips handedness), so its underarm is at +90
       if (pc.wrap.mode === 'fit' && pc.side) pc.wrap.over = pc.bb.x1 > -pc.bb.x0 ? 1 : -1;
       pc.flat = flat;
     }

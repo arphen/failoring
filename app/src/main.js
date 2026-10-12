@@ -251,9 +251,6 @@ App.tickTimeline = (now) => {
 // ------------------------------------------------------------------ FreeSewing patterns (fsimport.js)
 // Each design is drafted by FreeSewing for six presets (embedded as #fsRaw). The preset nearest to the current
 // measurements is planned onto the mannequin with FL.fsimport.plan; plan.info is kept for the sewing-table panel.
-// fsimport.js reads optional tuning knobs from process.env (node-only; sleeve placement, default -90 degrees).
-// The browser has no process object, so provide an empty one: the defaults apply.
-if (typeof process === 'undefined') window.process = { env: {} };
 App.FS_DESIGNS = { teagan: 'T-shirt (FreeSewing Teagan)', penelope: 'Pencil skirt (FreeSewing Penelope)', charlie: 'Chinos (FreeSewing Charlie)' };
 App.fsRaw = null;
 App.fsPreset = () => {
