@@ -18,6 +18,8 @@ if (mm) {   // scale the reference set with the mannequin: girths by their own r
     const gl = /^(chest|bust|underbust|highBust|biceps|neck|shoulderToShoulder|wrist|head)$/i.test(k) ? gU : /^(waist|waistBack)$/.test(k) ? gW : /^(hips|seat|seatBack|upperLeg|knee|ankle|heel)$/.test(k) ? gH : null;
     meas[k] = ref[k] * (k === 'waist' ? gW : k === 'hips' ? gH : (k === 'chest' || k === 'bust') ? gU : gl && k !== 'shoulderToShoulder' ? Math.sqrt(gl) : sl);
   }
+  Object.assign(meas, { seatBack: ref.seatBack * gH, waistBack: ref.waistBack * gW, upperLeg: mm.thigh * 1000, knee: mm.knee * 1000, ankle: mm.ankle * 1000 * 1.0,
+    crossSeam: ref.crossSeam * Math.pow(gH, 0.85) * sl / sl, crossSeamFront: ref.crossSeamFront * Math.pow(gH, 0.85) });
   Object.assign(meas, { height: H, chest: mm.bust * 1000, bust: mm.bust * 1000, waist: mm.waist * 1000, hips: mm.hip * 1000, seat: mm.hip * 1000 * ref.seat / ref.hips,
     waistToFloor: mm.yWaist * 1000, waistToHips: (mm.yWaist - mm.yHip) * 1000, waistToKnee: (mm.yWaist - mm.yKnee) * 1000, inseam: mm.yCrotch * 1000,
     waistToUpperLeg: (mm.yWaist - mm.yCrotch) * 1000, shoulderToShoulder: mm.shoulderToShoulder * 1000,

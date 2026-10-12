@@ -20,7 +20,7 @@
     aaron: { title: 'Aaron a-shirt', fabric: 'cotton_jersey', url: 'https://freesewing.org/docs/designs/aaron',
       parts: { 'aaron.front': { kind: 'body', theta: 0, top: 'hps', role: 'Front' }, 'aaron.back': { kind: 'body', theta: 180, top: 'hps', role: 'Back' } } },
     charlie: { title: 'Charlie chinos', fabric: 'cotton_poplin', url: 'https://freesewing.org/docs/designs/charlie',
-      parts: { 'charlie.front': { kind: 'leg', theta: 0, origSide: 'R', top: 'waist', role: 'Front leg' }, 'charlie.back': { kind: 'leg', theta: 180, origSide: 'L', top: 'waist', role: 'Back leg' } } },
+      parts: { 'charlie.front': { kind: 'leg', theta: 0, origSide: 'R', top: 'origin', role: 'Front leg' }, 'charlie.back': { kind: 'leg', theta: 180, origSide: 'L', top: 'origin', role: 'Back leg' } } },
     penelope: { title: 'Penelope pencil skirt', fabric: 'wool_suiting', url: 'https://freesewing.org/docs/designs/penelope',
       parts: { 'penelope.front': { kind: 'body', theta: 0, top: 'waist', role: 'Front' }, 'penelope.back': { kind: 'body', theta: 180, top: 'waist', role: 'Back half' }, 'penelope.waistband': { kind: 'band', role: 'Waistband' } } },
   };
@@ -80,7 +80,7 @@
       pc.bb = FL.bbox(flat);
       const h = pc.bb.y1 - pc.bb.y0;
       if (pc.spec.kind === 'body') pc.wrap = { mode: 'fit', theta: pc.spec.theta, y: (pc.spec.top === 'hps' ? yHps : yWaist) - h, clear: 0.012 };
-      else if (pc.spec.kind === 'leg') pc.wrap = { mode: 'leg', side: pc.side, theta: pc.spec.theta, y: yWaist - h, clear: 0.012 };
+      else if (pc.spec.kind === 'leg') pc.wrap = { mode: 'leg', side: pc.side, theta: pc.spec.theta, y: pc.spec.top === 'origin' ? yWaist + pc.bb.y0 : yWaist - h, clear: 0.012 };   // 'origin': the design's own y = 0 is the natural waist
       else if (pc.spec.kind === 'band') pc.wrap = { mode: 'fit', theta: 0, y: yWaist - 0.002, clear: 0.012, group: 'band' };
       else if (pc.spec.kind === 'sleeve') pc.wrap = { mode: 'arm', side: pc.side === 'R' ? 'R' : 'L', sTop: 0.045, clear: 0.02, phiSeam: pc.side === 'R' ? (+process.env.PR || -90) : (+process.env.PL || -90) };
       if (pc.wrap.mode === 'fit' && pc.side) pc.wrap.over = pc.bb.x1 > -pc.bb.x0 ? 1 : -1;
