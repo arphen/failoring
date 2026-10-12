@@ -26,7 +26,6 @@ var _ny := 0
 var _yc := 0.0
 var _arms: Dictionary
 var _arc_cache := {}   # key -> {cx, cz, R, cum, pa, pb}
-var _curve_cache := {} # "k|clear" -> {cz, per, r, cum}
 
 
 static func bbox_of(outline: Array) -> Array:
@@ -220,10 +219,14 @@ static func _ysmooth(x: float) -> float:
 	return x * x * (3.0 - 2.0 * x)
 
 
-# Arc-length parametrised trunk section at row k (port of FL.sectionCurve; cached here, not on the data).
+# Arc-length parametrised trunk section at row k (port of FL.sectionCurve). The cache lives
+# on the shared sections Dictionary (like the JS S._curves), so all pieces of one preset share it.
 func _section_curve(k: int, clear: float) -> Dictionary:
 	var key := "%d|%.6f" % [k, clear]
-	var c = _curve_cache.get(key, null)
+	if not _sections.has("_curves"):
+		_sections["_curves"] = {}
+	var store: Dictionary = _sections["_curves"]
+	var c = store.get(key, null)
 	if c != null:
 		return c
 	var hull: Array = []
@@ -278,7 +281,7 @@ func _section_curve(k: int, clear: float) -> Dictionary:
 		cum[i] = cum[i - 1] + sqrt((q[0] - prev[0]) * (q[0] - prev[0]) + (q[1] - prev[1]) * (q[1] - prev[1]))
 		prev = q
 	c = {"cz": cz, "per": cum[NA * 2], "r": r, "cum": cum}
-	_curve_cache[key] = c
+	store[key] = c
 	return c
 
 
