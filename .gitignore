@@ -1,0 +1,5 @@
+build/
+build-gd/
+out/
+__pycache__/
+*.o

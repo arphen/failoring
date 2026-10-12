@@ -1,0 +1,103 @@
+{
+  "_comment": [
+    "STARTER PRESETS - order-of-magnitude values, NOT measured data.",
+    "They were assembled from typical ranges reported for the Kawabata Evaluation System (KES-F) and common textile-science conversions, then rounded:",
+    "  tensile stiffness  k  ~ 2*WT/e^2 from KES tensile energy (N/m)",
+    "  shear stiffness    G  from KES shear rigidity, 1 gf/(cm*deg) = 56.2 N/m/rad",
+    "  bending rigidity   B  from KES bending, 1 gf*cm^2/cm = 9.81e-5 N*m",
+    "Real fabrics vary by 2-5x within one category (weave density, finish, yarn). Calibrate against a cantilever / Cusick drape test of your own cloth (see docs/ARCHITECTURE.md).",
+    "warp = along selvedge / wales, weft = across / courses."
+  ],
+  "fabrics": [
+    {
+      "id": "cotton_poplin", "name": "Cotton poplin (shirting)", "category": "woven",
+      "notes": "~120 g/m2 plain weave. Crisp but light.",
+      "params": {
+        "density_kg_m2": 0.12, "thickness_m": 0.0003,
+        "tensile_warp_N_m": 6000, "tensile_weft_N_m": 4000, "shear_N_m_rad": 45,
+        "bending_warp_Nm": 1.2e-5, "bending_weft_Nm": 9.0e-6,
+        "compression_ratio": 0.3, "friction_static": 0.5, "friction_kinetic": 0.35, "damping_1_s": 0.6
+      }
+    },
+    {
+      "id": "denim_12oz", "name": "Denim 12 oz", "category": "woven",
+      "notes": "~400 g/m2 3x1 twill. Heavy, stiff, higher shear resistance.",
+      "params": {
+        "density_kg_m2": 0.40, "thickness_m": 0.0008,
+        "tensile_warp_N_m": 12000, "tensile_weft_N_m": 8000, "shear_N_m_rad": 150,
+        "bending_warp_Nm": 1.0e-4, "bending_weft_Nm": 7.0e-5,
+        "compression_ratio": 0.3, "friction_static": 0.6, "friction_kinetic": 0.45, "damping_1_s": 0.8
+      }
+    },
+    {
+      "id": "linen_medium", "name": "Linen (medium weight)", "category": "woven",
+      "notes": "~180 g/m2 plain weave. Stiffer and springier than cotton poplin at the same weight.",
+      "params": {
+        "density_kg_m2": 0.18, "thickness_m": 0.0004,
+        "tensile_warp_N_m": 8000, "tensile_weft_N_m": 7000, "shear_N_m_rad": 70,
+        "bending_warp_Nm": 4.0e-5, "bending_weft_Nm": 3.5e-5,
+        "compression_ratio": 0.3, "friction_static": 0.5, "friction_kinetic": 0.35, "damping_1_s": 0.6
+      }
+    },
+    {
+      "id": "wool_suiting", "name": "Wool suiting (worsted)", "category": "woven",
+      "notes": "~250 g/m2 twill. Drapes well, shear-compliant (can be eased/shaped).",
+      "params": {
+        "density_kg_m2": 0.25, "thickness_m": 0.0007,
+        "tensile_warp_N_m": 4000, "tensile_weft_N_m": 3500, "shear_N_m_rad": 30,
+        "bending_warp_Nm": 3.0e-5, "bending_weft_Nm": 2.5e-5,
+        "compression_ratio": 0.4, "friction_static": 0.55, "friction_kinetic": 0.4, "damping_1_s": 0.8
+      }
+    },
+    {
+      "id": "silk_charmeuse", "name": "Silk charmeuse", "category": "woven",
+      "notes": "~70 g/m2 satin weave. Very fluid, slippery.",
+      "params": {
+        "density_kg_m2": 0.07, "thickness_m": 0.0002,
+        "tensile_warp_N_m": 3000, "tensile_weft_N_m": 2500, "shear_N_m_rad": 15,
+        "bending_warp_Nm": 2.0e-6, "bending_weft_Nm": 2.0e-6,
+        "compression_ratio": 0.3, "friction_static": 0.3, "friction_kinetic": 0.2, "damping_1_s": 0.5
+      }
+    },
+    {
+      "id": "polyester_chiffon", "name": "Polyester chiffon", "category": "woven",
+      "notes": "~40 g/m2 sheer plain weave. Extreme-light end of the range.",
+      "params": {
+        "density_kg_m2": 0.04, "thickness_m": 0.0001,
+        "tensile_warp_N_m": 2500, "tensile_weft_N_m": 2000, "shear_N_m_rad": 8,
+        "bending_warp_Nm": 1.0e-6, "bending_weft_Nm": 1.0e-6,
+        "compression_ratio": 0.3, "friction_static": 0.3, "friction_kinetic": 0.2, "damping_1_s": 0.4
+      }
+    },
+    {
+      "id": "canvas_heavy", "name": "Cotton canvas / duck", "category": "woven",
+      "notes": "~340 g/m2 heavy plain weave. Stiff.",
+      "params": {
+        "density_kg_m2": 0.34, "thickness_m": 0.0008,
+        "tensile_warp_N_m": 15000, "tensile_weft_N_m": 12000, "shear_N_m_rad": 200,
+        "bending_warp_Nm": 2.0e-4, "bending_weft_Nm": 1.8e-4,
+        "compression_ratio": 0.3, "friction_static": 0.6, "friction_kinetic": 0.45, "damping_1_s": 0.8
+      }
+    },
+    {
+      "id": "cotton_jersey", "name": "Cotton single jersey (knit)", "category": "knit",
+      "notes": "~150 g/m2. Warp = wales (stiffer), weft = courses (stretchier). Very low shear stiffness, buckles easily under compression.",
+      "params": {
+        "density_kg_m2": 0.15, "thickness_m": 0.0006,
+        "tensile_warp_N_m": 250, "tensile_weft_N_m": 100, "shear_N_m_rad": 3.5,
+        "bending_warp_Nm": 3.0e-6, "bending_weft_Nm": 3.0e-6,
+        "compression_ratio": 0.15, "friction_static": 0.6, "friction_kinetic": 0.45, "damping_1_s": 0.8
+      }
+    },
+    {
+      "id": "lambskin_leather", "name": "Lambskin garment leather", "category": "leather",
+      "notes": "~0.7 mm. Isotropic, thick, resists shear and bending far more than fabrics of similar weight. Real leather also creeps and has a non-linear toe region that is not modelled yet.",
+      "params": {
+        "density_kg_m2": 0.6, "thickness_m": 0.0007,
+        "tensile_warp_N_m": 7000, "tensile_weft_N_m": 7000, "shear_N_m_rad": 250,
+        "bending_warp_Nm": 3.0e-4, "bending_weft_Nm": 3.0e-4,
+        "compression_ratio": 0.3, "friction_static": 0.6, "friction_kinetic": 0.45, "damping_1_s": 1.0
+      }
+    }
+  ]
+}

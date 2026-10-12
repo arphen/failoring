@@ -1,0 +1,32 @@
+cmake_minimum_required(VERSION 3.16)
+project(failoring LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release)
+endif()
+
+add_library(cloth_core STATIC
+  cloth_core/src/cloth.cpp
+  cloth_core/src/cloth_implicit.cpp
+  cloth_core/src/mesher.cpp
+  cloth_core/src/material.cpp
+  cloth_core/src/mesh_sizing.cpp
+  cloth_core/src/sparse_chol.cpp
+  cloth_core/src/metrics.cpp
+  cloth_core/src/sdf_grid.cpp)
+target_include_directories(cloth_core PUBLIC cloth_core/include)
+target_compile_options(cloth_core PRIVATE -Wall -Wextra)
+
+enable_testing()
+set(FL_MATERIALS_PATH "${CMAKE_SOURCE_DIR}/materials/fabrics.json")
+set(FL_OUT_DIR "${CMAKE_SOURCE_DIR}/out")
+
+foreach(t test_basics test_cantilever test_drape test_garment test_sdf_grid)
+  add_executable(${t} cloth_core/tests/${t}.cpp)
+  target_link_libraries(${t} PRIVATE cloth_core)
+  target_compile_definitions(${t} PRIVATE FL_MATERIALS_PATH="${FL_MATERIALS_PATH}" FL_OUT_DIR="${FL_OUT_DIR}")
+  add_test(NAME ${t} COMMAND ${t})
+endforeach()

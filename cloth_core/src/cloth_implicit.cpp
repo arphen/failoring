@@ -1,0 +1,474 @@
+// Implicit-Euler backend of ClothSolver.
+//
+// Each substep minimises the variational form of backward Euler
+//     G(x) = 1/(2h^2) |x - x~|^2_M  +  E(x),      x~ = x_n + h v_n + h^2 g
+// with Newton steps  (M/h^2 + K) dx = -( M (x - x~)/h^2 + grad E ),
+// where K is the Gauss-Newton Hessian of the constraint energies
+//     E = sum_c  1/2 * kappa_c * C_c(x)^2          (kappa = 1/compliance)
+// Because the iteration is stationary exactly where grad G = 0, the converged
+// state is the true static equilibrium of the model no matter how many CG
+// iterations were spent - that is what makes drape/sag/fit predictions
+// trustworthy. Contacts are handled by position projection after the solve.
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <set>
+
+#include "failoring/cloth.hpp"
+
+namespace fl {
+
+int ClothSolver::BlockMatrix::find(int i, int j) const {
+    auto b = col.begin() + rowStart[i], e = col.begin() + rowStart[i + 1];
+    auto it = std::lower_bound(b, e, j);
+    return (it != e && *it == j) ? static_cast<int>(it - col.begin()) : -1;
+}
+
+void ClothSolver::buildBlockPattern() {
+    const int N = vertexCount();
+    std::vector<std::set<int>> nb(N);
+    for (int i = 0; i < N; ++i) nb[i].insert(i);
+    auto couple = [&](const int* idx, int n) {
+        for (int a = 0; a < n; ++a)
+            for (int b = 0; b < n; ++b) nb[idx[a]].insert(idx[b]);
+    };
+    for (const TriC& c : triC_) { const int idx[3] = {c.i0, c.i1, c.i2}; couple(idx, 3); }
+    for (const BendC& b : bendC_) couple(b.i, 4);
+    for (const SeamC& s : seamC_) { const int idx[3] = {s.a, s.b0, s.b1}; couple(idx, 3); }
+
+    K_.rowStart.assign(N + 1, 0);
+    K_.col.clear();
+    K_.diag.assign(N, 0);
+    for (int i = 0; i < N; ++i) {
+        K_.rowStart[i] = static_cast<int>(K_.col.size());
+        for (int j : nb[i]) {
+            if (j == i) K_.diag[i] = static_cast<int>(K_.col.size());
+            K_.col.push_back(j);
+        }
+    }
+    K_.rowStart[N] = static_cast<int>(K_.col.size());
+    K_.val.assign(K_.col.size(), Mat3());
+
+    for (TriC& c : triC_) {
+        const int idx[3] = {c.i0, c.i1, c.i2};
+        for (int a = 0; a < 3; ++a)
+            for (int b = 0; b < 3; ++b) c.slot[a * 3 + b] = K_.find(idx[a], idx[b]);
+    }
+    for (BendC& bc : bendC_)
+        for (int a = 0; a < 4; ++a)
+            for (int b = 0; b < 4; ++b) bc.slot[a * 4 + b] = K_.find(bc.i[a], bc.i[b]);
+    for (SeamC& s : seamC_) {
+        const int idx[3] = {s.a, s.b0, s.b1};
+        for (int a = 0; a < 3; ++a)
+            for (int b = 0; b < 3; ++b) s.slot[a * 3 + b] = K_.find(idx[a], idx[b]);
+    }
+
+    grad_.assign(N, Vec3());
+    rhs_.assign(N, Vec3());
+    dx_.assign(N, Vec3());
+    xTilde_.assign(N, Vec3());
+    cgR_.assign(N, Vec3());
+    cgZ_.assign(N, Vec3());
+    cgP_.assign(N, Vec3());
+    cgAp_.assign(N, Vec3());
+    precond_.assign(N, Mat3());
+    filt_.assign(N, Mat3());
+    ssorY_.assign(N, Vec3());
+    ssorU_.assign(N, Vec3());
+    contactActive_.assign(N, 0);
+
+    // scalar CSR pattern (3x3 blocks expanded) + fill-reducing ordering for the direct solver
+    const int n3 = 3 * N;
+    sRowStart_.assign(n3 + 1, 0);
+    for (int i = 0; i < N; ++i) {
+        const int len = K_.rowStart[i + 1] - K_.rowStart[i];
+        for (int a = 0; a < 3; ++a) sRowStart_[3 * i + a + 1] = sRowStart_[3 * i + a] + 3 * len;
+    }
+    sCol_.assign(sRowStart_[n3], 0);
+    for (int i = 0; i < N; ++i)
+        for (int a = 0; a < 3; ++a) {
+            int pos = sRowStart_[3 * i + a];
+            for (int k = K_.rowStart[i]; k < K_.rowStart[i + 1]; ++k)
+                for (int b = 0; b < 3; ++b) sCol_[pos++] = 3 * K_.col[k] + b;
+        }
+    std::vector<double> xyz(n3);
+    for (int i = 0; i < N; ++i) { xyz[3 * i] = x_[i].x; xyz[3 * i + 1] = x_[i].y; xyz[3 * i + 2] = x_[i].z; }
+    const std::vector<int> vorder = nestedDissectionOrder(N, K_.rowStart, K_.col, xyz);
+    std::vector<int> perm;
+    perm.reserve(n3);
+    for (int v : vorder)
+        for (int a = 0; a < 3; ++a) perm.push_back(3 * v + a);
+    chol_.analyze(n3, sRowStart_, sCol_, perm);
+    cholValid_ = false;
+    sVal_.assign(sCol_.size(), 0.0);
+    sRhs_.assign(n3, 0.0);
+    sSol_.assign(n3, 0.0);
+    contactN_.assign(N, Vec3(0, 1, 0));
+    contactPhi_.assign(N, 1e30);
+}
+
+void ClothSolver::assembleEnergy(Real seamScale) {
+    std::fill(grad_.begin(), grad_.end(), Vec3(0, 0, 0));
+    for (Mat3& m : K_.val) m.setZero();
+
+    auto add = [&](int n, const int* idx, const int* slot, const Vec3* g, Real C, Real kappa) {
+        for (int a = 0; a < n; ++a) grad_[idx[a]] += g[a] * (kappa * C);
+        for (int a = 0; a < n; ++a)
+            for (int b = 0; b < n; ++b) K_.val[slot[a * n + b]].addOuter(g[a], g[b], kappa);
+    };
+
+    // Tension stiffness: the exact Hessian of 1/2 kappa C^2 with C = |w| - 1 also has the term
+    // kappa C / |w| * beta_a beta_b (I - n n^T), positive semi-definite while the yarn direction is stretched
+    // (C > 0) and indefinite-making under compression, where it stays dropped (Gauss-Newton). Without it a taut
+    // waistline or seam corner has no stiffness across the yarn in the Newton model: each step pulls such vertices
+    // centimetres sideways, the line search cuts the step for everyone, and a wedged ring creeps down the body.
+    const bool tension = p_.tensionStiffness;
+    auto addTension = [&](const int* slot, const Real* beta, const Vec3& nrm, Real s) {
+        for (int a = 0; a < 3; ++a)
+            for (int b = 0; b < 3; ++b) {
+                const Real f = s * beta[a] * beta[b];
+                Mat3& B = K_.val[slot[a * 3 + b]];
+                B.addDiag(f);
+                B.addOuter(nrm, nrm, -f);
+            }
+    };
+    for (const TriC& c : triC_) {
+        const int idx[3] = {c.i0, c.i1, c.i2};
+        const Vec3 &x0 = x_[c.i0], &x1 = x_[c.i1], &x2 = x_[c.i2];
+        const Vec3 d1 = x1 - x0, d2 = x2 - x0;
+        const Vec3 wu = d1 * c.a + d2 * c.c;
+        const Vec3 wv = d1 * c.b + d2 * c.d;
+        const Real lu = length(wu), lv = length(wv);
+        if (lu > 1e-12) {
+            const Vec3 nu = wu / lu;
+            const Vec3 g[3] = {-(nu * c.a + nu * c.c), nu * c.a, nu * c.c};
+            const Real C = lu - 1;
+            add(3, idx, c.slot, g, C, (C < 0 ? c.comp : 1.0) / c.alphaU);
+            if (tension && C > 0) { const Real beta[3] = {-(c.a + c.c), c.a, c.c}; addTension(c.slot, beta, nu, C / (c.alphaU * lu)); }
+        }
+        if (lv > 1e-12) {
+            const Vec3 nv = wv / lv;
+            const Vec3 g[3] = {-(nv * c.b + nv * c.d), nv * c.b, nv * c.d};
+            const Real C = lv - 1;
+            add(3, idx, c.slot, g, C, (C < 0 ? c.comp : 1.0) / c.alphaV);
+            if (tension && C > 0) { const Real beta[3] = {-(c.b + c.d), c.b, c.d}; addTension(c.slot, beta, nv, C / (c.alphaV * lv)); }
+        }
+        {
+            const Vec3 g1 = wv * c.a + wu * c.b;
+            const Vec3 g2 = wv * c.c + wu * c.d;
+            const Vec3 g[3] = {-(g1 + g2), g1, g2};
+            add(3, idx, c.slot, g, dot(wu, wv), 1.0 / c.alphaS);
+        }
+    }
+    for (const BendC& b : bendC_) {
+        Vec3 g[4];
+        const Real theta = detail::hingeAngle(x_[b.i[0]], x_[b.i[1]], x_[b.i[2]], x_[b.i[3]], g);
+        if (theta < 0) continue;
+        add(4, b.i, b.slot, g, theta, 1.0 / b.alpha);
+    }
+    for (const SeamC& s : seamC_) {
+        const Vec3 target = x_[s.b0] * (1 - s.t) + x_[s.b1] * s.t;
+        const Vec3 d = x_[s.a] - target;
+        const Real k = seamScale / s.alpha;
+        // energy 0.5*k*|d|^2 is exactly quadratic: gradient k*d*w_a, Hessian k*w_a*w_b*I (no rank-1 approximation)
+        const Real w[3] = {1.0, -(1 - s.t), -s.t};
+        const int idx[3] = {s.a, s.b0, s.b1};
+        for (int a = 0; a < 3; ++a) {
+            grad_[idx[a]] += d * (k * w[a]);
+            for (int b = 0; b < 3; ++b) K_.val[s.slot[a * 3 + b]].addDiag(k * w[a] * w[b]);
+        }
+    }
+}
+
+Real ClothSolver::variationalEnergy(Real invH2, Real seamScale) const {
+    const int N = vertexCount();
+    Real E = 0;
+    for (int i = 0; i < N; ++i)
+        if (w_[i] != 0) E += 0.5 * mass_[i] * invH2 * length2(x_[i] - xTilde_[i]);
+    for (const TriC& c : triC_) {
+        const Vec3 d1 = x_[c.i1] - x_[c.i0], d2 = x_[c.i2] - x_[c.i0];
+        const Vec3 wu = d1 * c.a + d2 * c.c, wv = d1 * c.b + d2 * c.d;
+        const Real Cu = length(wu) - 1, Cv = length(wv) - 1, Cs = dot(wu, wv);
+        E += 0.5 * (Cu < 0 ? c.comp : 1.0) / c.alphaU * Cu * Cu;
+        E += 0.5 * (Cv < 0 ? c.comp : 1.0) / c.alphaV * Cv * Cv;
+        E += 0.5 / c.alphaS * Cs * Cs;
+    }
+    for (const BendC& b : bendC_) {
+        const Real th = detail::hingeAngle(x_[b.i[0]], x_[b.i[1]], x_[b.i[2]], x_[b.i[3]], nullptr);
+        if (th >= 0) E += 0.5 / b.alpha * th * th;
+    }
+    for (const SeamC& s : seamC_) {
+        const Vec3 d = x_[s.a] - (x_[s.b0] * (1 - s.t) + x_[s.b1] * s.t);
+        E += 0.5 * seamScale / s.alpha * length2(d);
+    }
+    return E;
+}
+
+// Solves (diag(m/h^2) + K) dx = rhs with block-Jacobi PCG on the filtered subspace: each vertex's motion
+// is restricted by filt_[i] (identity = free, zero = pinned, I - n n^T = sliding on the body surface).
+int ClothSolver::solveLinear(Real h2inv, const std::vector<Vec3>& b, std::vector<Vec3>& x, bool cholPrec, int maxIt) {
+    const int N = vertexCount();
+    if (!cholPrec)
+        for (int i = 0; i < N; ++i) {
+            Mat3 D = K_.val[K_.diag[i]];
+            D.addDiag(mass_[i] * h2inv);
+            precond_[i] = D.inverse();
+        }
+    // out = P (A P in)
+    auto matvec = [&](const std::vector<Vec3>& in, std::vector<Vec3>& out) {
+        for (int i = 0; i < N; ++i) {
+            Vec3 s = in[i] * (mass_[i] * h2inv);
+            for (int k = K_.rowStart[i]; k < K_.rowStart[i + 1]; ++k) s += K_.val[k] * in[K_.col[k]];
+            out[i] = filt_[i] * s;
+        }
+    };
+    // Symmetric block Gauss-Seidel (SSOR, omega = 1):  z = (D+U)^-1 D (D+L)^-1 r, then filtered.
+    auto applyPrec = [&](const std::vector<Vec3>& r, std::vector<Vec3>& z) {
+        if (cholPrec) {
+            for (int i = 0; i < N; ++i) {
+                const Vec3 f = filt_[i] * r[i];
+                sRhs_[3 * i] = f.x; sRhs_[3 * i + 1] = f.y; sRhs_[3 * i + 2] = f.z;
+            }
+            chol_.solve(sRhs_, sSol_);
+            for (int i = 0; i < N; ++i) z[i] = filt_[i] * Vec3(sSol_[3 * i], sSol_[3 * i + 1], sSol_[3 * i + 2]);
+            return;
+        }
+        for (int i = 0; i < N; ++i) {
+            if (w_[i] == 0) { ssorY_[i] = Vec3(0, 0, 0); continue; }
+            Vec3 acc = r[i];
+            for (int k = K_.rowStart[i]; k < K_.diag[i]; ++k) acc -= K_.val[k] * ssorY_[K_.col[k]];
+            ssorY_[i] = precond_[i] * acc;
+        }
+        for (int i = 0; i < N; ++i)
+            ssorU_[i] = w_[i] == 0 ? Vec3(0, 0, 0) : K_.val[K_.diag[i]] * ssorY_[i] + ssorY_[i] * (mass_[i] * h2inv);
+        for (int i = N - 1; i >= 0; --i) {
+            if (w_[i] == 0) { z[i] = Vec3(0, 0, 0); continue; }
+            Vec3 acc = ssorU_[i];
+            for (int k = K_.diag[i] + 1; k < K_.rowStart[i + 1]; ++k) acc -= K_.val[k] * z[K_.col[k]];
+            z[i] = precond_[i] * acc;
+        }
+        for (int i = 0; i < N; ++i) z[i] = filt_[i] * z[i];
+    };
+    auto dotv = [&](const std::vector<Vec3>& a, const std::vector<Vec3>& c) {
+        Real s = 0;
+        for (int i = 0; i < N; ++i) s += dot(a[i], c[i]);
+        return s;
+    };
+
+    x.assign(N, Vec3(0, 0, 0));
+    for (int i = 0; i < N; ++i) cgR_[i] = filt_[i] * b[i];
+    const Real bnorm = std::sqrt(dotv(cgR_, cgR_));
+    if (bnorm < 1e-30) return 0;
+    applyPrec(cgR_, cgZ_);
+    for (int i = 0; i < N; ++i) cgP_[i] = cgZ_[i];
+    Real rz = dotv(cgR_, cgZ_);
+    int it = 0;
+    const int itLimit = maxIt > 0 ? std::min(maxIt, p_.cgMaxIterations) : p_.cgMaxIterations;
+    for (; it < itLimit; ++it) {
+        matvec(cgP_, cgAp_);
+        const Real pAp = dotv(cgP_, cgAp_);
+        if (pAp <= 0) break;
+        const Real alpha = rz / pAp;
+        for (int i = 0; i < N; ++i) {
+            x[i] += cgP_[i] * alpha;
+            cgR_[i] -= cgAp_[i] * alpha;
+        }
+        if (std::sqrt(dotv(cgR_, cgR_)) <= p_.cgTolerance * bnorm) { ++it; break; }
+        applyPrec(cgR_, cgZ_);
+        const Real rzNew = dotv(cgR_, cgZ_);
+        const Real beta = rzNew / rz;
+        rz = rzNew;
+        for (int i = 0; i < N; ++i) cgP_[i] = cgZ_[i] + cgP_[i] * beta;
+    }
+    return it;
+}
+
+// Assemble the scalar (3N x 3N) matrix of the current Newton iteration and factor it. Stiff penalties stand in
+// for the filters (pins and body contacts) so the factor is a valid preconditioner for the filtered system.
+bool ClothSolver::refactor(Real h2inv) {
+    const int N = vertexCount();
+    for (int i = 0; i < N; ++i) {
+        for (int k = K_.rowStart[i]; k < K_.rowStart[i + 1]; ++k) {
+            const Mat3& B = K_.val[k];
+            for (int a = 0; a < 3; ++a) {
+                const int base = sRowStart_[3 * i + a] + 3 * (k - K_.rowStart[i]);
+                for (int b = 0; b < 3; ++b) sVal_[base + b] = B.m[3 * a + b];
+            }
+        }
+        const int dk = K_.diag[i];
+        const Mat3& D = K_.val[dk];
+        const Real tr = (D.m[0] + D.m[4] + D.m[8]) / 3.0 + mass_[i] * h2inv;
+        const Real kc = 1e5 * tr;
+        for (int a = 0; a < 3; ++a) {
+            const int base = sRowStart_[3 * i + a] + 3 * (dk - K_.rowStart[i]);
+            sVal_[base + a] += mass_[i] * h2inv;
+            if (w_[i] == 0) sVal_[base + a] += kc;
+        }
+        if (w_[i] != 0 && contactActive_[i]) {
+            const Vec3& n = contactN_[i];
+            const Real nn[3] = {n.x, n.y, n.z};
+            for (int a = 0; a < 3; ++a) {
+                const int base = sRowStart_[3 * i + a] + 3 * (dk - K_.rowStart[i]);
+                for (int b = 0; b < 3; ++b) sVal_[base + b] += kc * nn[a] * nn[b];
+            }
+        }
+    }
+    return chol_.factor(sVal_);
+}
+
+int ClothSolver::solveDirect(Real h2inv, const std::vector<Vec3>& rhs, std::vector<Vec3>& dx, bool doRefactor) {
+    const int N = vertexCount();
+    if (doRefactor && !refactor(h2inv)) return -1;
+    for (int i = 0; i < N; ++i) {
+        const Vec3 r = filt_[i] * rhs[i];
+        sRhs_[3 * i] = r.x; sRhs_[3 * i + 1] = r.y; sRhs_[3 * i + 2] = r.z;
+    }
+    chol_.solve(sRhs_, sSol_);
+    for (int i = 0; i < N; ++i) dx[i] = filt_[i] * Vec3(sSol_[3 * i], sSol_[3 * i + 1], sSol_[3 * i + 2]);
+    return 0;
+}
+
+// PCG on the exact current matrix, preconditioned by a Cholesky factor that may be several solves old.
+int ClothSolver::solveCholPcg(Real h2inv, const std::vector<Vec3>& rhs, std::vector<Vec3>& dx) {
+    if (!cholValid_ || cholAge_ >= p_.cholMaxAge) {
+        if (!refactor(h2inv)) { cholValid_ = false; return -1; }
+        cholValid_ = true;
+        cholAge_ = 0;
+    }
+    const bool stale = cholAge_ > 0;
+    int it = solveLinear(h2inv, rhs, dx, true, stale ? 16 : -1);
+    if (stale && it >= 16) {  // stale factor no longer a good preconditioner: refresh and redo
+        if (!refactor(h2inv)) { cholValid_ = false; return -1; }
+        cholAge_ = 0;
+        it += solveLinear(h2inv, rhs, dx, true);
+    }
+    ++cholAge_;
+    return it;
+}
+
+void ClothSolver::stepImplicit() {
+    const int S = std::max(1, p_.substeps);
+    const Real h = p_.dt / S;
+    const Real invH2 = 1.0 / (h * h);
+    const int N = vertexCount();
+    const Real seamScale = p_.seamRampFrames > 0 ? std::min(Real(1), std::max(Real(0.02), (frame_ + 1.0) / p_.seamRampFrames)) : Real(1);
+
+    for (int s = 0; s < S; ++s) {
+        for (int i = 0; i < N; ++i) {
+            xPrev_[i] = x_[i];
+            if (w_[i] == 0) { v_[i] = Vec3(0, 0, 0); xTilde_[i] = x_[i]; continue; }
+            v_[i] *= std::exp(-damp_[i] * h);
+            v_[i] += p_.gravity * h;
+            xTilde_[i] = x_[i] + v_[i] * h;
+            x_[i] = xTilde_[i];
+        }
+        int cg = 0;
+        bool needFactor = true;
+        Real prevMaxDx = 1e30;
+        int nUsed = 0;
+        Real lastDx = 0;
+        for (int n = 0; n < std::max(1, p_.newtonIterations); ++n) {
+            nUsed = n + 1;
+            // Contact inside the solve: lift penetrating vertices onto the body surface first ...
+            for (int i = 0; i < N; ++i) {
+                contactPhi_[i] = 1e30;
+                if (!collider_ || w_[i] == 0) continue;
+                Vec3 nrm;
+                Real phi = collider_->eval(x_[i], nrm) - radius_[i];
+                if (phi < 0) { x_[i] -= nrm * phi; phi = 0; }
+                contactN_[i] = nrm;
+                contactPhi_[i] = phi;
+            }
+            assembleEnergy(seamScale);
+            for (int i = 0; i < N; ++i)
+                rhs_[i] = w_[i] == 0 ? Vec3(0, 0, 0) : -((x_[i] - xTilde_[i]) * (mass_[i] * invH2) + grad_[i]);
+            // ... then forbid motion into the body for vertices resting on it (unless the net force pulls them away).
+            // "Resting" includes a thin band above the surface (contactBand): a vertex that slid tangentially over a
+            // convex part of the body lifts off by a few micrometres, and without the band it would be released,
+            // pulled into the body by the full Newton step and projected back, every iteration.
+            for (int i = 0; i < N; ++i) {
+                Mat3 P;
+                contactActive_[i] = 0;
+                if (w_[i] != 0) {
+                    P.addDiag(1);
+                    if (contactPhi_[i] < p_.contactBand && dot(rhs_[i], contactN_[i]) < 0) {
+                        const Vec3& nn = contactN_[i];
+                        P.addOuter(nn, nn, -1);
+                        contactActive_[i] = 1;
+                    }
+                }
+                filt_[i] = P;
+            }
+            {
+                int used = -1;
+                if (p_.linearSolver == LinearSolver::CholeskyPCG) used = solveCholPcg(invH2, rhs_, dx_);
+                else if (p_.linearSolver == LinearSolver::Cholesky) { used = solveDirect(invH2, rhs_, dx_, needFactor || !p_.reuseFactorization); needFactor = false; }
+                if (used < 0) used = solveLinear(invH2, rhs_, dx_);
+                cg += used;
+            }
+            {   // already converged: the Newton update is below tolerance, nothing to do
+                Real maxStep = 0;
+                for (int i = 0; i < N; ++i) maxStep = std::max(maxStep, length(dx_[i]));
+                lastDx = maxStep;
+                if (maxStep < p_.newtonTolerance) break;
+            }
+            // backtracking line search on the variational energy (keeps Newton from overshooting)
+            const Real E0 = variationalEnergy(invH2, seamScale);
+            xBackup_ = x_;
+            Real step = 1.0;
+            bool accepted = false;
+            for (int ls = 0; ls < 10; ++ls) {
+                for (int i = 0; i < N; ++i) {
+                    x_[i] = xBackup_[i] + dx_[i] * step;
+                    if (collider_ && w_[i] != 0) {  // projected line search: evaluate the energy on the feasible side of the body
+                        Vec3 nrm;
+                        const Real phi = collider_->eval(x_[i], nrm) - radius_[i];
+                        if (phi < 0) x_[i] -= nrm * phi;
+                    }
+                }
+                const Real E1 = variationalEnergy(invH2, seamScale);
+                if (std::isfinite(E1) && E1 <= E0) { accepted = true; break; }
+                step *= 0.5;
+            }
+            if (!accepted) {
+                if (std::getenv("FL_DEBUG") && lineSearchFailures_ < 3) {
+                    Real g2 = 0, d2 = 0, rd = 0;
+                    for (int i = 0; i < N; ++i) { g2 += length2(rhs_[i]); d2 += length2(dx_[i]); rd += dot(rhs_[i], dx_[i]); }
+                    std::fprintf(stderr, "[ls-fail frame %d] E0=%.6e |rhs|=%.3e |dx|=%.3e rhs.dx=%.3e cg=%d\n", frame_, E0, std::sqrt(g2), std::sqrt(d2), rd, cg);
+                    for (Real st : {1.0, 0.1, 1e-2, 1e-3, 1e-4, 1e-6}) {
+                        for (int i = 0; i < N; ++i) x_[i] = xBackup_[i] + dx_[i] * st;
+                        std::fprintf(stderr, "    step %.0e: dE = %.3e\n", st, variationalEnergy(invH2, seamScale) - E0);
+                    }
+                }
+                x_ = xBackup_;
+                ++lineSearchFailures_;
+                break;
+            }
+            Real maxDx = 0;
+            for (int i = 0; i < N; ++i) maxDx = std::max(maxDx, length(x_[i] - xBackup_[i]));
+            if (maxDx < p_.newtonTolerance) break;
+            if (step < 1.0 || maxDx > 0.5 * prevMaxDx) needFactor = true;  // chord stalled: refresh the Hessian
+            prevMaxDx = maxDx;
+        }
+        lastCgIterations_ = cg;
+        newtonIterations_ += nUsed;
+        ++substepsDone_;
+        if (std::getenv("FL_NEWTON")) std::fprintf(stderr, "[newton frame %d] iters=%d lastMaxDx=%.2e\n", frame_, nUsed, lastDx);
+
+        solveBody();
+        if (p_.selfCollision) {
+            solveSelfCollision();
+            solveBody();
+        }
+        for (int i = 0; i < N; ++i) {
+            if (w_[i] == 0) continue;
+            v_[i] = (x_[i] - xPrev_[i]) / h;
+            const Real sp = length(v_[i]);
+            if (sp > 50.0) v_[i] *= 50.0 / sp;
+        }
+    }
+    ++frame_;
+}
+
+}  // namespace fl

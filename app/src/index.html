@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Failoring - pattern studio</title>
+<style>/*CSS*/</style>
+</head>
+<body>
+<header id="top">
+  <div class="brand"><span class="mark">&#9986;</span><b>Failoring</b><span class="sub">pattern studio</span></div>
+  <label class="field">Plan <select id="planSel"></select></label>
+  <button id="btnOpen" title="Load a pattern JSON file">Open&hellip;</button>
+  <button id="btnSave" title="Save the pattern as JSON">Save</button>
+  <input id="fileIn" type="file" accept=".json,application/json" hidden>
+  <span class="grow"></span>
+  <label class="field">Mesh <select id="qualSel"><option value="draft">Draft (fast)</option><option value="standard" selected>Standard</option><option value="fine">Fine (slow)</option></select></label>
+  <span id="status" class="status">starting&hellip;</span>
+</header>
+<main id="main">
+  <section id="tablePane" class="pane">
+    <div class="paneHead"><b>Cutting table</b>
+      <span class="tools">
+        <button id="toolSel" class="tool on" title="Select / move pieces, drag corners (V)">Select</button>
+        <button id="toolSew" class="tool" title="Click two edges to sew them together (S)">Sew</button>
+        <button id="btnFit" class="tool" title="Fit pieces in view (F)">Fit</button>
+        <label class="chk"><input id="snap" type="checkbox" checked> snap 5&nbsp;mm</label>
+      </span></div>
+    <canvas id="c2d"></canvas>
+    <div id="hint2d" class="hint"></div>
+  </section>
+  <section id="viewPane" class="pane">
+    <div class="paneHead"><b>3D preview</b><span class="stageName" id="stageName"></span>
+      <span class="tools"><button id="btnShoot" class="tool accent">&#128247; Photo shoot</button></span></div>
+    <div id="view3d"></div>
+    <div id="simInfo" class="hint right"></div>
+    <div id="shootBusy" class="busy" hidden></div>
+  </section>
+  <aside id="side">
+    <nav class="tabs" id="tabs"><button data-tab="piece" class="on">Piece</button><button data-tab="seams">Seams</button><button data-tab="body">Body</button><button data-tab="fabric">Fabric</button><button data-tab="shoot">Shoot</button></nav>
+    <div id="tab-piece" class="tab on"></div>
+    <div id="tab-seams" class="tab"></div>
+    <div id="tab-body" class="tab"></div>
+    <div id="tab-fabric" class="tab"></div>
+    <div id="tab-shoot" class="tab"></div>
+  </aside>
+</main>
+<footer id="timeline">
+  <div class="tl-buttons">
+    <button id="tlStart" title="Back to the start">&#9198;</button>
+    <button id="tlBack" title="Step back">&#9664;&#9664;</button>
+    <button id="tlPlay" class="play" title="Play / pause (Space)">&#9654;</button>
+    <button id="tlFwd" title="Step forward">&#9654;&#9654;</button>
+    <select id="tlSpeed" title="Playback speed"><option value="0.5">0.5&times;</option><option value="1" selected>1&times;</option><option value="2">2&times;</option></select>
+  </div>
+  <div class="stages" id="stages">
+    <button data-t="0"><i>1</i>Cut pieces</button><button data-t="1"><i>2</i>Move to body</button><button data-t="2"><i>3</i>Sew seams</button><button data-t="3"><i>4</i>Drape</button>
+  </div>
+  <input id="tlRange" type="range" min="0" max="4000" value="0">
+  <div class="tl-sim"><div id="simBar"><div id="simFill"></div></div><button id="tlMore" title="Simulate 60 more frames">+60 frames</button><button id="tlResim" title="Restart the simulation">Restart</button></div>
+</footer>
+<div id="toast"></div>
+<div id="gallery" hidden><div class="gHead"><b>Photo shoot</b><span id="gInfo"></span><button id="gAll">Download all</button><button id="gClose">Close</button></div><div id="gGrid"></div></div>
+<script>/*THREE*/</script>
+<script>/*APP*/</script>
+</body>
+</html>

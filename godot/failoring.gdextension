@@ -1,0 +1,8 @@
+[configuration]
+entry_symbol = "failoring_init"
+compatibility_minimum = "4.3"
+
+[libraries]
+linux.x86_64 = "res://bin/libfailoring.so"
+macos = "res://bin/libfailoring.dylib"
+windows.x86_64 = "res://bin/failoring.dll"
