@@ -63,3 +63,11 @@ table.kv{width:100%;border-collapse:collapse;font-size:12px}.kv td{padding:3px 0
 .shot{background:var(--panel);border:1px solid var(--line);border-radius:8px;overflow:hidden}.shot img{display:block;width:100%}.shot .cap{display:flex;justify-content:space-between;align-items:center;padding:6px 8px;font-size:12px;color:var(--dim)}
 .shot a{color:var(--chalk);text-decoration:none}
 @media (max-width:1100px){#main{grid-template-columns:1fr 1fr}#side{display:none}}
+/* demo mode */
+#btnDemo.demoStart{font-weight:600;font-size:13px;padding:5px 14px;border-color:var(--chalk);color:var(--ink);margin-left:6px}
+#btnDemo[hidden]{display:none}
+.demoBar{position:absolute;left:50%;bottom:44px;transform:translateX(-50%);display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:center;background:#0b0d11e6;border:1px solid var(--line);border-radius:10px;padding:7px 10px;max-width:94%;z-index:2}
+.demoBar[hidden]{display:none}
+.demoBar #demoInfo{font-size:13px;color:var(--ink);padding:0 4px}
+.demoBar button{font-size:13px;padding:5px 12px}
+#btnDemo, #btnDraft, .brand .sub{white-space:nowrap}
