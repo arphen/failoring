@@ -4,27 +4,43 @@ A tailoring tool in the spirit of "KSP + AutoCAD for sewing": cut pattern pieces
 edges are sewn together, and see the exact cut cloth drape on a parametric body with physically based
 fabric behaviour - then use the same pieces as the real pattern.
 
-This repository is the **drape prototype** (milestone 1): pattern pieces + seams + fabric presets +
-body collider -> simulated garment, verified headless and exposed to Godot.
+This repository holds the **drape prototype** (milestone 1: pattern pieces + seams + fabric presets + body
+collider -> simulated garment, verified headless and exposed to Godot) and the **browser demo** built on the same
+core (`failoring.html`). Two builds exist and are kept deliberately separate; see "Two builds" below.
 
 ## Layout
 
 ```
 cloth_core/            C++17 library, no dependencies, no Godot  (the simulator)
-  include/failoring/   math, material, collider, mesher, mesh_sizing, cloth, sparse_chol, metrics
+  include/failoring/   math, material, collider, mesher, mesh_sizing, cloth, sdf_grid, sparse_chol, metrics
   src/
-  tests/               test_basics, test_cantilever, test_drape, test_garment  (ctest)
+  tests/               test_basics, test_cantilever, test_drape, test_garment, test_sdf_grid  (ctest)
 materials/fabrics.json fabric presets (SI units, grain-aware)
 gdextension/           godot-cpp wrapper -> class FailoringSim (GDScript API)
 godot/                 demo project: tube dress on an ellipsoid mannequin, fabric switcher
 third_party/godot-cpp  (cloned, godot-4.3-stable)
 wasm/                  flat C API over the core (wasm_api.cpp) + built failoring.wasm (tools/build_wasm.sh, wasi-sdk 24)
-app/                   the browser application: src/*.js, build.js -> failoring.html (single self-contained file)
-docs/                  this file
+app/src/               the browser application (see below): shared.js, body.js, gait.js, draft.js, fsimport.js,
+                       patterns.js, worker.js, main.js, editor2d.js, view3d.js, shoot.js, state.js, style.css
+app/assets/            body_mh.bin (MakeHuman CC0 mannequin, 308 KB); freesewing/ (pre-drafted FreeSewing outputs, MIT)
+app/build.js           -> failoring.html (single self-contained file)
+tools/                 convert_makehuman.py (MakeHuman -> body_mh.bin); freesewing/ (node export of FreeSewing parts);
+                       fs_plan.js, fs_batch.sh (FreeSewing import, headless); walk_sim.js, verify_body.js, shoot_walk.js
+docs/                  this file, BODY_DESIGN.md (body decision), WIP_HANDOFF.md (handoff notes)
 ```
 
 Build and test: `cmake -S . -B build && cmake --build build -j && ctest --test-dir build`
 Godot module: `cmake -S gdextension -B build-gd && cmake --build build-gd -j` (writes `godot/bin/libfailoring.so`).
+
+## Two builds
+
+* **Browser demo** (`failoring.html`, one offline file). It shows the workflow end to end on any machine with a
+  current browser, and it stays as a demo: it runs the cloth core as WebAssembly in a Web Worker, on one CPU core in
+  the test container, so frame rates are low.
+* **Native Godot build** (`gdextension/`, `godot/`) is the **high-fidelity target**, and the place where the drape and
+  fitting work continues. Today the Godot wrapper binds only analytic colliders
+  (`add_ellipsoid`, `add_sphere`, `add_capsule`, `add_cylinder`, `add_plane`); the mesh collider and the drafted
+  garments are not yet exposed to it (checked in `gdextension/src/failoring_sim.h`).
 
 ## Simulation model
 
@@ -34,7 +50,8 @@ Godot module: `cmake -S gdextension -B build-gd && cmake --build build-gd -j` (w
 | In-plane | Per-triangle warp stretch, weft stretch, shear (Baraff-Witkin style) - independent stiffness per direction (N/m), reduced compression stiffness (`compression_ratio`) so cloth buckles instead of locking |
 | Bending | Dihedral hinge energy, directional rigidity by mixing compliance `1/B(psi) = cos^4/Bu + sin^4/Bv + 2 sin^2 cos^2 / sqrt(Bu Bv)`, mesh factor calibrated against beam theory |
 | Time integration | Implicit Euler written as a variational problem; Newton with Gauss-Newton Hessian, backtracking line search on the variational energy, sparse Cholesky (nested-dissection ordering). CG+SSOR fallback. XPBD kept as `Integrator::XPBD` (too soft for stiff fine meshes) |
-| Contact with body | SDF colliders (sphere, capsule, cylinder, plane, ellipsoid, union). Handled **inside** the solve: per-vertex projection + motion filters, projected line search; Coulomb friction after the solve |
+| Tension term | `SolverParams::tensionStiffness`: adds the (PSD) tension part of the stretch Hessian. **Off in the core by default**; the browser app turns it on (`fl_set_param(7, 1)` in `worker.js`) so taut seams and waistbands do not creep. Changes convergence, not the physics |
+| Contact with body | Signed-distance colliders: analytic primitives (sphere, capsule, cylinder, plane, ellipsoid, union) or a baked distance grid of a closed mesh (the mannequin, see "Mannequin, collider and walking"). Handled **inside** the solve: per-vertex projection + motion filters, projected line search. `contactBand = 1e-4` m: a vertex this close to the body and pushed towards it stays held. Coulomb friction after the solve, measured **relative to the collider's own motion** (a walking body drags the cloth along) |
 | Self contact | Vertex-triangle with spatial hash, thickness `selfThickness` |
 | Seams | Arc-length matched point-to-segment springs (exact quadratic energy). Unequal edge lengths are allowed = **ease**. Optional stiffness ramp (`seamRampFrames`) to pull panels together gently |
 | Units | SI throughout: N/m for in-plane stiffness, N*m for bending, kg/m^2 for density |
@@ -54,6 +71,7 @@ floor. Reproduces the paper's Table 1 to 0.57 % (test_basics). Not yet implement
 | `test_cantilever` | Euler-Bernoulli cantilever deflection `rho g L^4/(8B)` within 1-2 % on fine hex meshes (30 % / 8 % / 8 % tolerance at 7 / 3.5 / 2.5 mm); warp/weft grain contrast | pass |
 | `test_drape` | Cusick-style drape coefficient for all presets: fluid < crisp < stiff, stable, no penetration | see below |
 | `test_garment` | Two panels sewn into a tube, lodging on an ellipsoid mannequin. The hem must stop where the body girth equals the tube circumference (computed independently): predicted 161 mm, simulated 158 mm; seams within 0.2 mm; no penetration | pass |
+| `test_sdf_grid` | The baked distance grid (collider of the mesh mannequin). Not read or re-run for this document update | unverified here |
 
 Drape coefficients (30 cm disc on 18 cm pedestal, 10 mm mesh): silk 36 %, chiffon 38 %, jersey 28 %,
 poplin 64 %, wool 65 %, denim 81 %, linen 82 %, canvas 93 %, leather 91 %. Textile-literature ranges:
@@ -94,53 +112,146 @@ only where wrinkles form), fewer Newton iterations (better contact handling so N
 ~3 instead of up to 12), multithreaded / GPU dense kernels, and a "settle then freeze" preview with a
 low-resolution live mode while editing.
 
-## Known limitations
+## Mannequin, collider and walking
 
-* **Fabric data is a starter set.** Values in `materials/fabrics.json` are KES-style estimates from the
-  literature (conversions documented in the file), not measurements. Replace with measured data
-  (Kawabata/FAST) or fitted data sets (e.g. Wang et al. 2011, Clyde et al. 2017) before trusting absolute
-  numbers.
-* Linear-elastic per direction: no knit/leather non-linearity (J-shaped stress-strain, hysteresis),
-  no stretch-dependent bending, no plastic creasing.
-* Strongly orthotropic bending (> ~1:5 warp/weft) is under-represented by the hinge model.
-* Alternating-diagonal grid meshes are over-stiff on diagonals; the mesher produces hex-ish meshes
-  for that reason. User-drawn polygons with features thinner than the edge length may fail
-  (`boundaryComplete == false`).
-* Seams are springs, not geometry: no seam allowance thickness, no topstitch, no gathers beyond
-  unequal edge lengths.
-* Godot wrapper compiled but **not run inside Godot** in the build environment (no Godot binary);
-  `godot/demo.gd` is untested.
-* A garment wedged on a convex body keeps jittering at ~1e-4 J (about one line-search failure per frame)
-  instead of reaching exactly zero kinetic energy; positions are stable to ~1 mm.
-* Self-collision is vertex-triangle only (no edge-edge) - thin tangles can pass.
+The mannequin is a MakeHuman CC0 mesh with Failoring's own blending, fitting and collision code. The decision and
+the alternatives considered are in `docs/BODY_DESIGN.md`.
+
+### Asset
+
+* `app/assets/body_mh.bin`, 308,183 bytes, written by `tools/convert_makehuman.py` (raw DEFLATE, magic `FLBODY01`,
+  little-endian header). Source: MakeHuman 1.x assets, upstream commit `a8bc2d5` (recorded in `THIRD_PARTY.md`),
+  **CC0 1.0** for the assets. No MakeHuman application code is used.
+* Contents, read from the header: a female young-adult base mesh of **13,676 vertices**, of which **13,380 are the
+  surface** (the rest are joint helper vertices), 13,378 quads; 60 blend-shape targets; 23 bones (MakeHuman's 163
+  merged into a reduced skeleton: pelvis, spine, neck, head, and per side clavicle, shoulder, elbow, hand, upper leg,
+  knee, ankle, toe); **4 skin weights per surface vertex** (8-bit, from MakeHuman's default rig, merged onto the
+  reduced skeleton); 11 part labels (trunk, neck, head, arms, hands, legs, feet); landmark vertex ids; region masks
+  for the finish.
+* In the browser build it is embedded as base64 (about 0.41 MB of the 2.24 MB file, the current build).
+
+### Fitting to measurements (`body.js`)
+
+* Blend shapes: the base mesh plus targets interpolated for the macros (muscle, weight, height, cup, belly, seat)
+  and the **12 measurement modifiers** behind the sliders (`B.CONTROLS`: bust, waist, hips, shoulder distance, neck,
+  thigh, upper arm, upper and lower arm length, upper and lower leg height, nape-to-waist). Weights beyond a target's
+  range are extrapolated linearly (`B.XMAX = 1.6`, `B.WMAX = 1.5`).
+* Sliders: height, bust, waist, hip, shoulder (primary) and arm, inseam, neck, thigh, upper arm, back (secondary, "auto"
+  unless set). A damped Newton loop with a finite-difference Jacobian (cached per body type) solves the target weights
+  until each measured value is within **0.4 mm** of its slider (`0.0004` in the loop), at most 8 iterations.
+  The 0.4 mm figure is the convergence target in code; the residuals of a particular run were not re-measured here
+  (`tools/verify_body.js` reports them).
+* Measurements are hull perimeters of plane sections of the blended mesh (tape-measure girths), and straight or
+  polyline distances between landmarks for shoulder, arm and back length. Height is set by the height macro, then the body is scaled uniformly to the
+  requested height, with the feet on y = 0 and the hip section centred on z = 0.
+* Finish: nipple detail removed with MakeHuman's own corrective targets, and the nipple and crotch regions smoothed
+  (4 feathered Laplacian passes over the mask vertices).
+* The weight macro comes from how full the requested girths are relative to the neutral body of the same height,
+  so limbs and neck stay in proportion; presets (average, petite, tall, curvy, athletic, plus) live in `shared.js`.
+* Regeneration on each slider move: the comment in `main.js` says 10-30 ms; not re-timed here.
+* Section table: every 1 cm of height the convex hull of the trunk slice (legs split below the crotch; arms and
+  hands excluded by their part labels) is kept for wrapping and for the garment drafts.
+
+### Collider (`sdf_grid.hpp`, `wasm/wasm_api.cpp`)
+
+* The worker bakes the mesh into a **signed distance grid**: a fine level (default spacing **h = 7 mm**, sparse 2x2x2
+  bricks in a band of 6 mm around the surface, exact point-triangle distances) and a coarse level (6h, dense over the
+  bounding box plus 8 cm).
+* **Sign: winding numbers** (signed ray crossings along +x), so the sign stays right where the mesh overlaps itself,
+  for example the thighs of a full figure. Magnitude: distance to the nearest triangle. This is not the
+  pseudo-normal method.
+* Lookup: quadratic B-spline over the 3x3x3 = **27 taps**; the fine level where all 27 samples exist (always within
+  the band), the coarse level elsewhere. Value and gradient are C1 within a level, which the projected line search
+  needs. The collider normal is the normalised gradient.
+* Accuracy stated in the header comment (not re-measured here): on the mannequin at h = 7 mm, the collider surface is
+  within 0.15 mm median / 0.7 mm 95th percentile of the polygons on trunk and limbs, and 0.5-0.9 mm / 2 mm on hands,
+  feet and face.
+* Bake cost: a static body is baked once per body key; the app re-bakes when the body changes. `docs/WIP_HANDOFF.md`
+  records **185-390 ms** per bake in wasm. (The single lower figure sometimes quoted, ~180-190 ms, is the bottom of
+  that range; it was not re-timed here.)
+* A floor plane is added to the colliders in mesh mode.
+* The grid is generic: any closed, consistently oriented mesh works (scans, the Inigo test case).
+
+### Display (`worker.js`, `wasm_api.cpp`, `view3d.js`)
+
+* The mannequin is drawn from the same posed mesh the collider uses (`body.pos`), with display-only eyeballs in the
+  sockets. There is no shrink and no lift of the body.
+* The cloth is drawn as a **subdivided mesh**: one midpoint per edge, four display triangles per cloth triangle
+  (`FL.subdivide`, `fl_display_setup`). `fl_display_positions` places the midpoints on the body: a midpoint near the
+  body is pushed out along the body normal until it is as far from the surface as the nearer of its two vertices, so a
+  flat triangle follows the curve of the body instead of cutting across it. Where a display triangle is still closer
+  than 0.8 mm (`DISPLAY_MARGIN`), its vertices are lifted along the normal by the shortfall, at most 4 mm.
+* Contact radius = `contactOffset` (1.5 mm) + half the fabric thickness.
+
+### Walking (`gait.js`, `worker.js`, `main.js`)
+
+* Motion "Walking" in the top bar. `FL.Gait.pose(M, body, phase, opts)` drives the skinned mannequin from keyframe
+  curves for the hip, knee, ankle and toe, plus pelvis rotation and obliquity, counter-rotating spine, opposite-arm
+  swing and elbow flexion. The curves follow typical adult sagittal-plane gait, **plausible, not measured on a person**.
+* Walk in place, as on a treadmill: the lowest foot vertex is put on y = 0 every frame, which gives the pelvis bob.
+  A small lateral sway is added at the root.
+* `main.js`: one gait cycle is **64 frames** (about 1.07 s at 60 Hz); the stride eases in over **24 frames** (smoothstep)
+  after the garment has settled standing; the run is the settle frames plus 1.5 cycles.
+* Each walk frame, the worker poses the body, **re-bakes the collider** (`fl_set_body_mesh`, paying the bake time
+  quoted above on every frame), and gives the cloth the surface displacement at each vertex (nearest body vertex of the previous pose,
+  cell hash, 5 cm search radius), which the solver uses for friction (`setColliderMotion`).
+* The photo shoot (`shoot.js`) spreads its shots over the last gait cycle of a walking run.
+* Not validated against a long run: stability of the walk over many cycles, and the friction behaviour on the
+  real body, were not checked for this update.
+
+### Garment sources
+
+Three ways a pattern reaches the app:
+
+1. **Plans** (`patterns.js`): pencil skirt (2 shaped panels), A-line skirt (4 gores), blank rectangle. Original drafts.
+2. **Hand-drafted from the body** (`draft.js`), redrafted with the **Re-draft** button after a body change:
+   * `draft.pants`: straight trousers, 4 panels (front and back per leg), wrapped with mode `leg`. No waistband,
+     pockets or darts.
+   * `draft.tank`: two panels, unrolled from the body's own section arc lengths plus clearance, wrapped with mode `arc`
+     (arc length = pattern x). `draft.shirt`: the same with sleeves (mode `arm`).
+3. **FreeSewing patterns** (MIT licence, https://freesewing.org): `fsimport.js` takes the real FreeSewing parts for
+   the mannequin's measurements (`tools/freesewing/export.mjs`, pre-drafted outputs in `app/assets/freesewing/`:
+   Teagan tee, Penelope pencil skirt and Charlie chinos for the six presets). It wraps the parts with mode `fit`
+   (body parts), `leg` (chinos) and `arm` (sleeves), and **finds the seams itself**: edges that lie side by side after
+   the starting wrap are sewn (within 5 cm, or 10 cm for sleeve caps), so darts close and sleeves join the armholes.
+   **The importer is not in the browser build**: `app/build.js` does not list it and no UI calls it. It runs headless
+   through `tools/fs_plan.js` (see `tools/fs_batch.sh`), which writes a plan file for `walk_sim.js`.
+
+`makeWrapRows` (`shared.js`) is the row-wise wrap that all of these use. Its `wrap.mode` values:
+
+| mode | Used by | What it does |
+| --- | --- | --- |
+| `torso` | no caller found in the repository | each row laid on the trunk section at its height; the row width spread over `span` degrees of the section by fraction |
+| `leg` | `draft.pants`, FreeSewing chinos | tubes below the crotch, half the pelvis above; blended between the two over a 10 cm band centred on the crotch |
+| `arc` | `draft.tank` | pattern x = arc length on the body section (no stretching) |
+| `arm` | sleeves (`draft.shirt`, FreeSewing sleeves) | tube round the arm axis from the shoulder and elbow joints |
+| `fit` | FreeSewing body parts and band | pattern x = arc length, on a section inflated to the girth the whole garment covers at that height |
+
+Anything without `wrap.mode` uses the envelope wrap (`FL.makeWrap`, the first pattern format).
 
 ## Browser application (failoring.html)
 
-One self-contained file (about 1.6 MB: three.js r149, the 650 KB WebAssembly build of the core, the worker, fabrics). Open it in a
-current Chrome / Edge / Firefox / Safari; no server, no network. Rebuild with `node app/build.js` (needs `wasm/failoring.wasm`,
-`tools/build_wasm.sh` makes it).
+One self-contained file. Open it in a current Chrome / Edge / Firefox / Safari; no server, no network. Rebuild with
+`node app/build.js` (needs `wasm/failoring.wasm`, `tools/build_wasm.sh` makes it). Current build in the worktree:
+**2.24 MB** (three.js r149, the **731 KB** WebAssembly build of the core, the body asset, the worker, fabrics).
 
 ```
 cutting table (2D canvas)  <->  App state (pieces, seams, fabric, body)  ->  Web Worker { wasm cloth core }
-3D view (three.js)         <-  streamed frames { positions } <------------'
+3D view (three.js)         <-  streamed frames { positions, body } <-------'
 ```
 
 * **Cutting table** (`editor2d.js`): pan/zoom, drag pieces, drag corners (5 mm snap), double-click an edge to add a corner,
   Delete removes a corner or piece, Ctrl+Z / Ctrl+Shift+Z undo/redo. **Sew** tool: click an edge, then the edge it joins; the seam
   list shows both lengths and the ease. Grain line and hatch show the warp direction.
-* **3D view** (`view3d.js`): parametric mannequin (the same primitives the solver collides with, drawn 4 mm smaller so cloth resting
-  1.6 mm off the surface never z-fights), cutting-table mat, cloth mesh with per-piece tint, sew-lines between matched seam vertices.
+* **3D view** (`view3d.js`): the mannequin mesh (see "Mannequin, collider and walking"), cutting-table mat, subdivided
+  cloth mesh with per-piece tint, sew-lines between matched seam vertices.
 * **Assembly timeline** (T from 0 to 4; the scrubber, stage buttons, play, step and speed control it):
   1. pieces lie flat on the table; 2. staggered, each piece lifts, rotates *rigidly* (quaternion slerp) and stands upright around the
   body, then bends onto the wrap surface; 3. sew-lines appear and tighten; 4. the recorded drape frames play. Stitch lines are faint guides
   while pieces move and solid during stage 3.
 * **Live editing**: any edit (corner, grain, placement, seam, fabric, body, mesh quality) cancels the running job and starts a new one
-  after a 120-260 ms debounce. The preview follows the newest frame, so it is low frame rate but live. Timing on this container
-  (single core, no SIMD-capable GPU): about 65-200 ms per frame at 400-700 vertices.
-* **Plans** (`patterns.js`): pencil skirt (2 shaped panels), A-line skirt (4 gores), blank. They are original drafts, not copies of
-  commercial patterns. Both are 80 cm at the top edge so they hang from the waist: an unshaped tube bigger than the waist slides over
-  the hips and falls. This is real behaviour (it is why skirts have darts or waistbands); the same happens when you pick the "plus"
-  body for a pattern drafted for the average one - patterns are deliberately not auto-scaled.
+  after a 120-260 ms debounce. The preview follows the newest frame, so it is low frame rate but live. The timing figures
+  (65-200 ms per frame at 400-700 vertices) were measured on this container before the mesh body; they were not re-measured.
 * **Pattern file** (`*.failoring.json`, Save / Open):
 
 ```json
@@ -156,30 +267,56 @@ cutting table (2D canvas)  <->  App state (pieces, seams, fabric, body)  ->  Web
 
   `wrap.theta` is the angle round the body (0 = front), `wrap.y` the height of the piece's bottom edge, `clear` the initial gap to the
   body, `ring` lets a piece wider than the body open up (A-line). Outlines are converted to counter-clockwise on load and seam edge
-  indices are remapped. The wrap is only the *starting pose* of the simulation; the solver finds the final drape.
+  indices are remapped. Drafted pieces also carry `wrap.mode` (see "Garment sources"). The wrap is only the *starting pose* of the
+  simulation; the solver finds the final drape.
 * **Photo shoot** (`shoot.js`): seven curated shots (full length, three-quarter, profile, low-angle hero, waist/seam detail, back
   three-quarter, hem detail) of the latest simulated frame. Long lenses (fov 17-30 degrees), a key light placed relative to each camera,
   fill and two rims, a glossy runway, then a 2D composite: gradient backdrop with bokeh discs, warm/cool grade, vignette, film grain,
-  caption. Output is PNG (800x1000, 1200x1500 or 1600x2000).
+  caption. Output is PNG (800x1000, 1200x1500 or 1600x2000). With Motion set to Walking, the shots catch different moments of the gait cycle.
 
-### Catwalk walk-by (designed, only partly built)
+## Known limitations
 
-The shots currently use the standing pose and only turn the model a few degrees. The walk itself is the part to come back to:
+* **Fabric data is a starter set.** Values in `materials/fabrics.json` are KES-style estimates from the
+  literature (conversions documented in the file), not measurements. Replace with measured data
+  (Kawabata/FAST) or fitted data sets (e.g. Wang et al. 2011, Clyde et al. 2017) before trusting absolute
+  numbers.
+* Linear-elastic per direction: no knit/leather non-linearity (J-shaped stress-strain, hysteresis),
+  no stretch-dependent bending, no plastic creasing.
+* Strongly orthotropic bending (> ~1:5 warp/weft) is under-represented by the hinge model.
+* Alternating-diagonal grid meshes are over-stiff on diagonals; the mesher produces hex-ish meshes
+  for that reason. User-drawn polygons with features thinner than the edge length may fail
+  (`boundaryComplete == false`).
+* Seams are springs, not geometry: no seam allowance thickness, no topstitch, no gathers beyond
+  unequal edge lengths.
+* Godot wrapper compiled but **not run inside Godot** in the build environment (no Godot binary);
+  `godot/demo.gd` is untested. The wrapper binds only analytic colliders, not the mesh collider.
+* A garment wedged on a convex body keeps jittering at ~1e-4 J (about one line-search failure per frame)
+  instead of reaching exactly zero kinetic energy; positions are stable to ~1 mm.
+* Self-collision is vertex-triangle only (no edge-edge) - thin tangles can pass.
 
-* `FL.bodyPrims(meas, phase)` already produces a walk cycle (thigh swing, knee flex, arm swing, bob, sway) and the worker accepts
-  `spec.walk = { settle, cycle }`, which re-sends the collider every frame after `settle` frames. **Not validated**: a body moving at
-  walking speed through an implicit solver needs more substeps or CCD, and the garment must be pre-settled first.
-* Plan: settle the garment standing, then run one walking cycle at a reduced speed (slow cycle = few cloth frames per step), record
-  the frames, and pick curated moments of the recorded cycle for the cameras ("as long as the model isn't so fast").
-* Cheaper fallback that already works: rigid translation of the finished drape along the runway, which is what a different camera
-  position gives you today.
+Browser app and mannequin:
 
-### Performance ideas not yet done (from the 2025-26 papers)
+* **Real GPU and Safari not tested.**
+* **Painter's renderer speckle is not a real intersection.**
+* **Patterns are not graded.** Plans and drafts are not scaled to the chosen body. Plus and curvy are too small for the
+  80 / 104 cm skirts.
+* **FreeSewing import is limited to the tee, the pencil skirt and the chinos** (Teagan, Penelope, Charlie; the Aaron
+  a-shirt recipe exists in `fsimport.js` but has no pre-drafted output). It is not in the browser build.
+* **Chinos have no waistband.**
+* **Tee neckline and sleeve slit have issues.**
+* The walk is gait keyframes, not captured motion, and has not been checked over long runs.
+* Attribution: the FreeSewing files are MIT-licensed and `THIRD_PARTY.md` does not yet list FreeSewing; the
+  MakeHuman row there names `LICENSE.ASSETS.md`, while `convert_makehuman.py` cites `LICENSE.md` section C.
+  Both need checking against the upstream repository before release.
+
+## Performance ideas not yet done (from the 2025-26 papers)
 
 1. Static solve: the preview only needs the settled drape. Ramp gravity in, run Newton to equilibrium, warm-start from the previous
    result after an edit (small edits move the answer little). Expected to replace 36-60 timesteps by a handful of solves. Unmeasured.
-2. Distance-grid collider (mesh or SDF baked to a voxel grid): O(1) lookup per vertex, any body shape (Inigo the dragon, scans).
-   Lipschitz pruning (Barbier et al., CGF 2025) is the way to bake a detailed primitive-based body quickly when a slider moves.
+2. Distance-grid collider: **done for the mannequin** (signed-distance grid of a closed mesh, see "Collider"). Still open:
+   the bake costs 185-390 ms in wasm (`docs/WIP_HANDOFF.md`), which is paid again on every walk frame. Lipschitz pruning
+   (Barbier et al., CGF 2025) is the paper's method for baking a detailed primitive-based body quickly; its use for the
+   mesh grid is not assessed here.
 3. Reduced handle subspace (PhySkin, Srivastava et al. 2026): about 128 skinned handles, Newton in the subspace, full mesh by
    skinning. The paper's trained network is per garment/body family (32 h training) so not usable for arbitrary edits; the subspace
    structure without the network might be.
@@ -193,14 +330,13 @@ The shots currently use the standing pose and only turn the model a few degrees.
 3. **Sewing tools**: seam picking UI with length-mismatch (ease) readout; stitch types (plain, serged,
    topstitched, French seam) mapped to stiffness/thickness/width; gathers/shirring; darts; hems;
    interfacing as a laminated material.
-4. **Pattern import**: SVG/DXF/PDF (AAMA/ASTM-DXF) -> pieces. Free pattern sources and licences must be
+4. **Pattern import**: FreeSewing parts are imported (tee, pencil skirt, chinos), headless only. Next: put the importer
+   in the native build, and add SVG/DXF/PDF (AAMA/ASTM-DXF). Free pattern sources and licences must be
    checked per pattern before bundling anything.
-5. **Bodies**: parametric model with measurement sliders + presets (bust/waist/hip, height, shoulder,
-   arm length...). Candidates and licence notes (**verify before shipping**): MakeHuman (CC0 output
-   assets, AGPL application code), MB-Lab (AGPL), SMPL-X (research / non-commercial licence -
-   likely unusable for a product). Pipeline: mesh -> signed-distance voxel grid -> `Collider`
-   (a mesh collider backend replaces the analytic ellipsoid). Blender for authoring body shapes and
-   exporting measurement-driven morph targets.
+5. **Bodies**: the MakeHuman CC0 mannequin with measurement sliders is built (see "Mannequin, collider and walking").
+   Next: expose the mesh collider to the Godot build, grade patterns to the body, and check the measured residuals and
+   bake times again. MB-Lab (AGPL) and SMPL-X (research / non-commercial licence - likely unusable for a product) were
+   considered and not used. Blender for authoring body shapes and exporting measurement-driven morph targets remains an option.
 6. **Fabric library**: ingest measured data, uncertainty ranges, per-fabric thickness/drag; an editor to
    fit a preset from a hanging-strip + cantilever + drape-coefficient test the user performs on a real
    swatch.
