@@ -13,7 +13,8 @@ solver "blocker" is resolved: the core default is `tensionStiffness = false` (ct
   body by `app/src/fsimport.js`: tee (teagan), pencil skirt (penelope), chinos (charlie). Pattern tab in
   `app/src/info.js` (cutting list, seams, sewing order). One-click Demo in `app/src/demo.js`.
 * **Native**: `cloth_core` C++ library, GDExtension wrapper in `gdextension/`, Godot project in `godot/` (asset exporter
-  `tools/export_godot_assets.js`, `godot/walk_demo.gd`). Run once in headless Godot 4.3 on Linux only; see "Checked".
+  `tools/export_godot_assets.js`, `godot/walk_demo.gd`). Run headless in Godot 4.3 on Linux x86_64 and on macOS arm64
+  (`godot/bin/libfailoring.dylib`); see "Checked".
 * **Licences**: AGPL-3.0 for the app; third-party material and checks in `THIRD_PARTY.md` (the AGPL text was compared
   word for word with the SPDX copy).
 
@@ -22,14 +23,17 @@ solver "blocker" is resolved: the core default is `tensionStiffness = false` (ct
 * `node tools/smoke_browser.js`: 16 pass, 0 fail at commit 35208d2 (headless Chromium, software renderer, 88 s). Covers
   the three FreeSewing garments, walking and the photo shoot.
 * ctest 5/5 in Release (`docs/TEST_STATUS.md`), run on an agent branch before the merge, not re-run on merged main.
-
 * Godot 4.3.stable, Linux x86_64, headless: `godot/tests/api_smoke.tscn` passes, and `godot/walk_demo.tscn` ran 30
   frames (no NaN, no line-search failures, no penetration, seam gap at most 3.1 mm, about 0.5 s per frame).
+* Godot 4.3 on macOS arm64, headless (reported from the Mac session, logs not seen here): `libfailoring.dylib` (1.1 MB,
+  Release, godot-cpp `godot-4.3-stable`) built from `gdextension/`; `api_smoke.tscn` 24 of 24 pass; `walk_demo.tscn`
+  35 frames, exit 0, no errors; body bake 25 ms; about 1.5 to 2 s per frame wall clock. The demo prints no per-frame
+  stats, so clearance and seam gap were not measured on the Mac. The pushed file is a genuine arm64 Mach-O library.
 
 ## Not verified
 
 * Real GPU, Safari and Firefox (only headless Chromium on a software renderer).
-* Godot on macOS and with a real window: no `libfailoring.dylib` has been built, and the cloth was never looked at.
+* Godot with a real window: both Godot runs were headless, so the cloth was never looked at.
 * Timing: all ms/frame figures were measured on a loaded 2-core host. The checkpoint figures in `WIP_HANDOFF.md`
   (legacy pencil about 100-106 ms/frame, A-line about 176; new about 90-110 and 180-200) have not been re-measured.
 * Demo mode with the FreeSewing garments (Next outfit, Next body, stall watchdog).
@@ -45,7 +49,9 @@ solver "blocker" is resolved: the core default is `tensionStiffness = false` (ct
 5. Godot wrapper: 13 of the 14 review findings in `docs/NATIVE_NOTES.md` are fixed (2026-10-12); only 13 (the
    synchronous body bake) remains.
 6. Native solver was not faster than wasm in the one comparison; threading is off; a `-march=native` build gives a
-   different solver checksum (undiagnosed).
+   different solver checksum (undiagnosed). The walk demo takes about 1.5 to 2 s per frame on the Mac against about 0.5 s
+   in the Linux container; unexplained (candidates: dylib build type, scene-load time inside the wall clock, threads).
+   The demo garment and quality differ from the browser's, so this is not a like-for-like comparison with it.
 7. Small gaps: `tools/walk_sim.js` prints NaN/0 averages; the Demo bar overlaps the lower body; `plan.info` is lost on
    save/open; trouser pieces overlap on the cutting table.
 

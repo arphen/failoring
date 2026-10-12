@@ -168,8 +168,15 @@ Godot 4.3.stable (Linux x86_64, headless): `godot/tests/api_smoke.tscn` runs the
 
 Run result of `walk_demo.tscn` (headless, 2-core cloud container, 30 frames): no NaN, no line-search failures,
 minimum body clearance 1.6 mm (no penetration), seam gap at most 3.1 mm, about 0.5 s per frame (body bake about 45 ms
-plus 4 substeps). Not tested: a real window and renderer, macOS (no `libfailoring.dylib` built yet), the
-`-march=native` checksum difference, and whether the cloth looks right.
+plus 4 substeps). Not tested: a real window and renderer, the `-march=native` checksum difference, and whether the
+cloth looks right.
+
+macOS arm64 (the user's Mac, evening of 2026-10-12; reported with the commit, logs not seen here):
+`godot/bin/libfailoring.dylib` (1.1 MB, Release, godot-cpp `godot-4.3-stable`) built from `gdextension/`;
+`api_smoke.tscn` 24 of 24 checks pass; `walk_demo.tscn` ran headless for 35 frames, exit 0, no errors; body bake 25 ms;
+about 1.5 to 2 s per frame wall clock with the bake and 4 substeps every frame. The demo prints no per-frame stats, so
+clearance and seam gap were not measured on the Mac. That frame time is 3 to 4 times the Linux container's 0.5 s and is
+unexplained.
 
 ## Not done
 
