@@ -4,6 +4,7 @@ const R = (...p) => fs.readFileSync(path.join(__dirname, ...p), 'utf8');
 const esc = (s) => s.replace(/<\/script/gi, '<\\/script');
 const appFiles = ['shared.js', 'body.js', 'gait.js', 'draft.js', 'fsimport.js', 'patterns.js', 'state.js', 'editor2d.js', 'view3d.js', 'main.js', 'info.js'];
 if (fs.existsSync(path.join(__dirname, 'src/shoot.js'))) appFiles.push('shoot.js');
+appFiles.push('demo.js');
 const app = appFiles.map((f) => '// ---- ' + f + '\n' + R('src', f)).join('\n');
 const worker = R('src/shared.js') + '\n' + R('src/body.js') + '\n' + R('src/gait.js') + '\n' + R('src/worker.js');
 const wasm = fs.readFileSync(path.join(__dirname, '../wasm/failoring.wasm')).toString('base64');

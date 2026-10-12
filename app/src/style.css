@@ -75,3 +75,11 @@ table.tbl tr.grpHead td{padding-top:10px;border-bottom:0}
 td.ease{color:var(--chalk);font-size:11.5px;padding-top:0}
 ol.order{margin:6px 0 0;padding-left:20px;font-size:12px}ol.order li{margin:6px 0}
 @media (max-width:1100px){#main{grid-template-columns:1fr 1fr}#side{display:none}}
+/* demo mode */
+#btnDemo.demoStart{font-weight:600;font-size:13px;padding:5px 14px;border-color:var(--chalk);color:var(--ink);margin-left:6px}
+#btnDemo[hidden]{display:none}
+.demoBar{position:absolute;left:50%;bottom:44px;transform:translateX(-50%);display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:center;background:#0b0d11e6;border:1px solid var(--line);border-radius:10px;padding:7px 10px;max-width:94%;z-index:2}
+.demoBar[hidden]{display:none}
+.demoBar #demoInfo{font-size:13px;color:var(--ink);padding:0 4px}
+.demoBar button{font-size:13px;padding:5px 12px}
+#btnDemo, #btnDraft, .brand .sub{white-space:nowrap}

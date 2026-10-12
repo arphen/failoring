@@ -9,6 +9,7 @@
 <body>
 <header id="top">
   <div class="brand"><span class="mark">&#9986;</span><b>Failoring</b><span class="sub">pattern studio</span></div>
+  <button id="btnDemo" class="accent demoStart" title="Show the app: a body, a garment, walking, a slow turn around it">&#9654; Demo</button>
   <label class="field">Plan <select id="planSel"></select></label>
   <button id="btnDraft" hidden title="Draft this garment again from the mannequin's current measurements">Re-draft to body</button>
   <button id="btnOpen" title="Load a pattern JSON file">Open&hellip;</button>
@@ -36,6 +37,7 @@
       <span class="tools"><button id="btnShoot" class="tool accent">&#128247; Photo shoot</button></span></div>
     <div id="view3d"></div>
     <div id="simInfo" class="hint right"></div>
+    <div id="demoBar" class="demoBar" hidden><span id="demoInfo"></span><button id="btnNextOutfit">Next outfit</button><button id="btnNextBody">Next body</button><button id="btnStop">Stop</button></div>
     <div id="shootBusy" class="busy" hidden></div>
   </section>
   <aside id="side">
