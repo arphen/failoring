@@ -279,8 +279,11 @@ func _garment_name() -> String:
 
 
 func _render_info() -> void:
-	# Pattern info (cutting list, seams, sewing order) arrives with the info panel commit.
-	info_text.text = "[b]%s[/b]\n%s\n\n%s pieces, %s seams" % [String(plan.get("name", garment)), String(plan.get("notes", "")), (plan.get("pieces", []) as Array).size(), (plan.get("seams", []) as Array).size()]
+	# Pattern info (cutting list, seams, sewing order) from plan.info, like the browser Pattern tab.
+	var fabric_name := fabric_id
+	if fabric_opt.item_count > 0 and fabric_opt.selected >= 0:
+		fabric_name = fabric_opt.get_item_text(fabric_opt.selected)
+	info_text.text = FailoringInfo.format(plan.get("info", {}), plan.get("pieces", []), fabric_name)
 
 
 func _shot(tag: String) -> void:
