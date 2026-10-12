@@ -3,3 +3,4 @@ build-gd/
 out/
 __pycache__/
 *.o
+third_party/
