@@ -45,3 +45,6 @@ if(FL_BENCH)
   target_link_libraries(bench_native PRIVATE cloth_core)
   target_compile_definitions(bench_native PRIVATE FL_MATERIALS_PATH="${FL_MATERIALS_PATH}")
 endif()
+
+# Virtual fabric test bench + swatch fitting tool (tools/fabric_bench). Depends only on cloth_core.
+add_subdirectory(tools/fabric_bench)
