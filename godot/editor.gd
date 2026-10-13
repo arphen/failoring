@@ -118,7 +118,14 @@ var pan_off := Vector3.ZERO
 var view_dist := 2.9          # distance used by the last _update_camera (scales pan)
 var user_cam_until := 0       # ms timestamp: auto-orbit is paused until then
 var pointer_over_view := false
-var view_pane: SubViewportContainer
+
+# UI scale (see _apply_ui_scale). ui_scale_pref 0 means auto, from the window size; otherwise a fixed factor.
+var ui_scale_pref := 0.0
+var _ui_scale := 1.0          # effective factor currently applied to the window
+var _scale_key := ""          # window size + screen the scale was last computed for
+var scale_opt: OptionButton
+var view_pane: Control
+var view_image: TextureRect
 
 var plan_opt: OptionButton
 var quality_opt: OptionButton
@@ -133,6 +140,8 @@ func _ready() -> void:
 	table.ed = self
 	stage = $UI/Root/Main/ViewPane/View/Stage
 	sub_view = $UI/Root/Main/ViewPane/View
+	_load_settings()
+	_apply_ui_scale()
 	Look.apply_ui($UI/Root, sub_view)
 	M = BodyGen.load_data(PlanLoader.load_json("res://assets/body_data.json"))
 	meas = (BodyGen.PRESETS["average"] as Dictionary).duplicate()
@@ -141,6 +150,7 @@ func _ready() -> void:
 	_build_ui()
 	_build_table_bar()
 	_bind_view_input()
+	_show_view_texture()
 	if OS.has_environment("FL_STAND"):
 		motion = "stand"
 	debounce = Timer.new()
@@ -175,6 +185,135 @@ func _apply_auto_env() -> void:
 		if extra is Dictionary:
 			for k in (extra as Dictionary).keys():
 				meas[k] = extra[k]
+
+
+# ------------------------------------------------------------------ UI scale
+# The UI is designed at UI_SCALE_BASE (the 1280x720 layout). The window draws the 2D canvas stretched to fit
+# (canvas_items, expand; see project.godot), and content_scale_factor is set so the total factor is exactly the
+# effective scale E. Fonts, margins, minimum sizes and the theme all scale with E, so text and buttons keep their
+# proportions on a 4K or Retina window. The 3D SubViewport is sized from the container's on-screen pixels, so it is
+# rendered at native resolution and stays sharp at any scale.
+const UI_SCALE_BASE := Vector2i(1280, 720)
+const UI_SCALE_STEPS := [0.75, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5]
+const UI_SCALE_MIN := 0.75
+const UI_SCALE_MAX := 2.5
+const UI_MIN_VIEW := Vector2(1000, 600)   # the panels need this much room in design units; E shrinks below it
+const UI_AUTO_GAIN := 0.6                 # auto: a window twice the base size gets E = 1.6 (not 2.0)
+const SETTINGS_PATH := "user://settings.cfg"
+var scale_values: Array = []              # option index -> stored value (0.0 is auto)
+
+
+func _load_settings() -> void:
+	var cf := ConfigFile.new()
+	if cf.load(SETTINGS_PATH) == OK:
+		ui_scale_pref = clampf(float(cf.get_value("ui", "scale", 0.0)), 0.0, UI_SCALE_MAX)
+	# a missing or unreadable file keeps the default (auto)
+
+
+func _save_settings() -> void:
+	var cf := ConfigFile.new()
+	cf.load(SETTINGS_PATH)  # keep any other sections already in the file
+	cf.set_value("ui", "scale", ui_scale_pref)
+	var err := cf.save(SETTINGS_PATH)
+	if err != OK:
+		push_warning("could not save %s (error %d)" % [SETTINGS_PATH, err])
+
+
+# Effective factor for a window of win physical pixels: the user's fixed choice, or auto from the window size.
+func _scale_for_window(win: Vector2i) -> float:
+	var want := ui_scale_pref
+	if want <= 0.0:
+		var fit := minf(float(win.x) / UI_SCALE_BASE.x, float(win.y) / UI_SCALE_BASE.y)
+		want = 1.0 + (fit - 1.0) * UI_AUTO_GAIN
+	var room := minf(float(win.x) / UI_MIN_VIEW.x, float(win.y) / UI_MIN_VIEW.y)
+	return clampf(want, UI_SCALE_MIN, maxf(UI_SCALE_MIN, minf(UI_SCALE_MAX, room)))
+
+
+func _apply_ui_scale() -> void:
+	var w := get_window()
+	var win := w.size
+	if win.x <= 0 or win.y <= 0:
+		return  # minimised or not laid out yet
+	var stretch := minf(float(win.x) / UI_SCALE_BASE.x, float(win.y) / UI_SCALE_BASE.y)
+	var e := _scale_for_window(win)
+	w.content_scale_mode = Window.CONTENT_SCALE_MODE_CANVAS_ITEMS
+	w.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_EXPAND
+	w.content_scale_size = UI_SCALE_BASE
+	# the canvas stretch already applies the window-size fit; this factor makes the total exactly e
+	w.content_scale_factor = e / maxf(stretch, 0.01)
+	_ui_scale = e
+	_scale_key = "%s@%d" % [win, w.current_screen]
+	_sync_scale_opt()
+
+
+# Called every frame: a resize or a move to another screen (which changes the window's screen) recomputes the scale.
+func _watch_window() -> void:
+	var w := get_window()
+	if "%s@%d" % [w.size, w.current_screen] != _scale_key:
+		_apply_ui_scale()
+	_sync_view_px()
+
+
+# The 3D SubViewport renders at on-screen pixels: the pane's design size times the window's total scale, so the
+# TextureRect shows it 1:1 and the 3D view is not upscaled (blurry) at a scale above 1. Skipped while a shot resizes
+# the viewport (see _shoot).
+func _sync_view_px() -> void:
+	if view_pane == null or shoot_busy:
+		return
+	var k := get_window().get_final_transform().get_scale()
+	var px := Vector2i(maxi(1, roundi(view_pane.size.x * k.x)), maxi(1, roundi(view_pane.size.y * k.y)))
+	if sub_view.size != px:
+		sub_view.size = px
+
+
+func _set_ui_scale_pref(v: float) -> void:
+	ui_scale_pref = v
+	_apply_ui_scale()
+	_save_settings()
+
+
+# Ctrl/Cmd +/- moves to the next fixed step above or below the current scale, Ctrl/Cmd 0 returns to auto.
+func _step_ui_scale(dir: int) -> void:
+	var cur := _ui_scale
+	var pick := -1.0
+	if dir > 0:
+		for s in UI_SCALE_STEPS:
+			if s > cur + 0.01:
+				pick = s
+				break
+	else:
+		for i in range(UI_SCALE_STEPS.size() - 1, -1, -1):
+			if UI_SCALE_STEPS[i] < cur - 0.01:
+				pick = UI_SCALE_STEPS[i]
+				break
+	if pick > 0.0:
+		_set_ui_scale_pref(pick)
+
+
+func _scale_label(v: float) -> String:
+	return "Auto" if v <= 0.0 else "%d%%" % roundi(v * 100.0)
+
+
+func _add_scale_opt(box: VBoxContainer) -> void:
+	scale_values = [0.0] + UI_SCALE_STEPS
+	var labels := []
+	for v in scale_values:
+		labels.append(_scale_label(v))
+	_add_opt(box, "UI size", "ScaleOpt", labels, _scale_label(ui_scale_pref))
+	scale_opt = box.get_node("ScaleOpt")
+	scale_opt.item_selected.connect(func(i: int) -> void: _set_ui_scale_pref(scale_values[i]))
+	_sync_scale_opt()
+
+
+# Shows the stored choice in the option button (the closest entry when the file holds an unlisted value).
+func _sync_scale_opt() -> void:
+	if scale_opt == null or scale_values.is_empty():
+		return
+	var best := 0
+	for i in scale_values.size():
+		if absf(scale_values[i] - ui_scale_pref) < absf(scale_values[best] - ui_scale_pref):
+			best = i
+	scale_opt.select(best)
 
 
 # ------------------------------------------------------------------ scene
@@ -257,6 +396,7 @@ func _build_ui() -> void:
 	plan_opt.item_selected.connect(_on_plan)
 	quality_opt.item_selected.connect(_on_quality)
 	motion_opt.item_selected.connect(_on_motion)
+	_add_scale_opt(box)
 	_build_tabs()
 
 
@@ -1131,6 +1271,7 @@ func changed(kind: String) -> void:
 
 
 func _process(_delta: float) -> void:
+	_watch_window()
 	if table_dirty and table != null:
 		table_dirty = false
 		table.queue_redraw()
@@ -2104,9 +2245,22 @@ func _update_camera() -> void:
 # Trackpad: two-finger scroll pans, pinch zooms. Events come from the viewport container only (gui_input), so a drag
 # that starts in the viewport keeps going, and nothing over the side panels reaches the camera.
 func _bind_view_input() -> void:
-	view_pane = $UI/Root/Main/ViewPane as SubViewportContainer
+	view_pane = $UI/Root/Main/ViewPane as Control
 	view_pane.mouse_filter = Control.MOUSE_FILTER_STOP
 	view_pane.gui_input.connect(_on_view_gui_input)
+
+
+# The 3D SubViewport is drawn by a TextureRect instead of a SubViewportContainer: the container's stretch sizes the
+# viewport in design units and cannot be overridden, and with stretch off its minimum size grows without bound.
+func _show_view_texture() -> void:
+	view_image = TextureRect.new()
+	view_image.name = "Image"
+	view_image.texture = sub_view.get_texture()
+	view_image.stretch_mode = TextureRect.STRETCH_SCALE
+	view_image.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	view_image.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	view_pane.add_child(view_image)
+	view_pane.move_child(view_image, 0)
 
 
 func _on_view_gui_input(e: InputEvent) -> void:
@@ -2121,6 +2275,18 @@ func _input(e: InputEvent) -> void:
 
 
 func _unhandled_key_input(e: InputEvent) -> void:
+	if e is InputEventKey and e.pressed and not e.echo and (e.ctrl_pressed or e.meta_pressed):
+		match e.keycode:
+			KEY_EQUAL, KEY_PLUS, KEY_KP_ADD:
+				_step_ui_scale(1)
+			KEY_MINUS, KEY_KP_SUBTRACT:
+				_step_ui_scale(-1)
+			KEY_0, KEY_KP_0:
+				_set_ui_scale_pref(0.0)
+			_:
+				return
+		get_viewport().set_input_as_handled()
+		return
 	if not pointer_over_view or not (e is InputEventKey) or not e.pressed or e.echo:
 		return
 	if e.keycode == KEY_F or e.keycode == KEY_HOME:
