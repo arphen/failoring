@@ -56,7 +56,14 @@ Reading: the derived angular dependence follows the compliance-mixing model's sh
 the model by about 2 %, 7 % and 8 % of the contrast at 1.4, 5 and 10. The bigger effect is a constant offset of
 10 to 17 % in B at every angle, which is the mesh-level calibration (see the silk mesh-level spread below).
 Conclusion so far: at 10:1 the hinge model does not visibly under-represent the orthotropy beyond that offset.
-This is NOT yet confirmed against mesh level (an n = 6 and n = 16 run is queued).
+Mesh-level check, synthetic 10:1 (denim), B derived / model at 0 deg and 90 deg:
+  n = 6: 0.738 / 0.786 (contrast 9.39);  n = 10: 0.826 / 0.897 (contrast 9.20);  n = 16: 0.903 / 0.972 (contrast 9.29).
+The contrast deficit (about 6 to 8 %) is stable across mesh levels. The absolute offset shrinks as the mesh is
+refined (0.79 -> 0.90 -> 0.97 at 90 deg), so the offset is a discretisation effect, not a fixed calibration error.
+Plain answer: the hinge model under-represents the directional contrast slightly at 5:1 and 10:1 (about 7 % of
+the contrast, robust to mesh level in this check). It does not fail badly at this size, so the 'under-represented
+above 1:5' warning in ARCHITECTURE.md is supported only weakly, and the Bolt-style fallback is not justified by
+this test alone. Limits: one real preset (1.43:1), synthetic 5:1 and 10:1 variants, cantilever only, one solver.
 
 ### Step 3c: bench sweep (fabric_bench, n = 6/10/16 bending levels, drape at 14/10/7 mm, 300-frame cap)
 - Silk charmeuse, first full run (see the sweep table when it finishes):
