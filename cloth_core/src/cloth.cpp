@@ -397,14 +397,9 @@ void ClothSolver::solveBody() {
     if (!collider_) return;
     const int N = vertexCount();
     const bool movingCollider = static_cast<int>(colliderDisp_.size()) == N;
+    const bool skin = skinOn();  // K1 compliant skin: the rigid stop sits skinMaxDepth below the soft layer surface
     const Real invS = Real(1) / std::max(1, p_.substeps);
-    for (int i = 0; i < N; ++i) {
-        if (w_[i] == 0) continue;
-        Vec3 n;
-        const Real phi = collider_->eval(x_[i], n) - radius_[i];
-        if (phi >= 0) continue;
-        x_[i] -= n * phi;  // push out to the surface
-        const Real pen = -phi;
+    auto friction = [&](int i, const Vec3& n, Real pen) {
         Vec3 disp = x_[i] - xPrev_[i];
         if (movingCollider) disp = disp - colliderDisp_[i] * invS;   // motion relative to the surface
         const Vec3 tang = disp - n * dot(disp, n);
@@ -413,6 +408,19 @@ void ClothSolver::solveBody() {
             if (dl < muS_[i] * pen) x_[i] -= tang;                                  // static friction: stick
             else x_[i] -= tang * std::min(muK_[i] * pen / dl, Real(1));              // kinetic friction
         }
+    };
+    for (int i = 0; i < N; ++i) {
+        if (w_[i] == 0) continue;
+        Vec3 n;
+        const Real phiRaw = collider_->eval(x_[i], n) - radius_[i];
+        Real phi = phiRaw;
+        if (skin && phiRaw < 0.05 && collider_->skinScale(x_[i]) > 0) {
+            if (phiRaw < 0 && phiRaw + p_.skinMaxDepth >= 0) { friction(i, n, -phiRaw); continue; }  // inside the soft layer: friction only, no push
+            phi = phiRaw + p_.skinMaxDepth;
+        }
+        if (phi >= 0) continue;
+        x_[i] -= n * phi;  // push out to the surface
+        friction(i, n, -phiRaw);
     }
 }
 

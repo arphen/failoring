@@ -74,6 +74,13 @@ struct SolverParams {
     bool tensionStiffness = false;  // garment option (the app turns it on): exact PSD tension term, see ARCHITECTURE.md  // implicit: include the (PSD) tension part of the stretch Hessian; changes convergence, not the physics
     bool selfCollision = true;
     Real selfThickness = 0.002;    // m, vertex-triangle contact distance
+    // K1 compliant skin (implicit integrator only; see docs/agent_notes/K1_compliant_skin.md). A cloth vertex whose
+    // offset-corrected signed distance to the body is phi < 0 sinks delta = -phi into a Winkler layer; energy per
+    // unit area 0.5 * k * delta^2, k = skinStiffness * Collider::skinScale(x). Beyond skinMaxDepth the rigid
+    // projection takes over. Both must be > 0 to enable the layer; the defaults (0) are the old rigid behaviour.
+    // UNVERIFIED placeholder physics: no tissue stiffness value in this code base is measured.
+    Real skinStiffness = 0.0;      // Pa/m (= N/m^3)
+    Real skinMaxDepth = 0.0;       // m, hard stop of the soft layer
 };
 
 struct SeamSpec {
@@ -231,6 +238,13 @@ private:
     std::vector<Real> contactPhi_;
     int lastCgIterations_ = 0;
     int lineSearchFailures_ = 0;
+    // K1 compliant skin (cloth_skin.cpp). skinArea_: tributary area (m^2, current configuration, frozen per substep);
+    // skinK_: k*area (N/m) per vertex; skinPhi_: offset-corrected signed distance (soft layer surface);
+    // rigidForce_: normal force (N) the rigid hold carried in the last Newton iteration.
+    std::vector<Real> skinArea_, skinK_, skinPhi_, rigidForce_;
+    bool skinOn() const { return p_.skinStiffness > 0 && p_.skinMaxDepth > 0; }
+    void updateSkinAreas();
+    void assembleSkin();
     long long newtonIterations_ = 0;  // Newton iterations used, summed over all substeps
     long long substepsDone_ = 0;
 
@@ -242,6 +256,21 @@ public:
     // Newton iterations used so far, and substeps taken (their ratio is the mean iterations per substep).
     long long newtonIterations() const { return newtonIterations_; }
     long long substepsDone() const { return substepsDone_; }
+
+    // ---- contact pressure (K1) ---------------------------------------------------------------------------------
+    // Per-vertex pressure in Pa at the current state. Soft part: k * delta of the compliant skin (0 when the layer
+    // is off). Rigid part: normal force the rigid hold carried in the last Newton iteration of the last substep,
+    // divided by the vertex's tributary area (an estimate: the force is the net push into the body that the motion
+    // filter cancelled, so it includes inertia and any non-converged residual). Total = soft + rigid.
+    // Tributary area of each vertex (m^2): a third of the area of each adjacent triangle, current configuration.
+    // Vertex pressures are force / area and are noisy on irregular or checkerboard meshes (the cloth force is not
+    // shared in proportion to this area); aggregate with sum(p*A)/sum(A) or use triangleContactPressure().
+    std::vector<Real> vertexAreas() const;
+    std::vector<Real> vertexSoftPressure() const;
+    std::vector<Real> vertexRigidPressure() const;
+    std::vector<Real> vertexContactPressure() const;
+    // Per-triangle mean of the three vertex pressures (total, Pa).
+    std::vector<Real> triangleContactPressure() const;
 };
 
 }  // namespace fl

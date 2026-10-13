@@ -354,7 +354,10 @@ void ClothSolver::stepImplicit() {
     const int N = vertexCount();
     const Real seamScale = p_.seamRampFrames > 0 ? std::min(Real(1), std::max(Real(0.02), (frame_ + 1.0) / p_.seamRampFrames)) : Real(1);
 
+    const bool skin = skinOn() && collider_;
+    if (rigidForce_.size() != static_cast<size_t>(N)) { rigidForce_.assign(N, 0.0); skinK_.assign(N, 0.0); skinPhi_.assign(N, 1e30); }
     for (int s = 0; s < S; ++s) {
+        if (skin) updateSkinAreas();
         for (int i = 0; i < N; ++i) {
             xPrev_[i] = x_[i];
             if (w_[i] == 0) { v_[i] = Vec3(0, 0, 0); xTilde_[i] = x_[i]; continue; }
@@ -373,14 +376,23 @@ void ClothSolver::stepImplicit() {
             // Contact inside the solve: lift penetrating vertices onto the body surface first ...
             for (int i = 0; i < N; ++i) {
                 contactPhi_[i] = 1e30;
+                if (skin) { skinK_[i] = 0; skinPhi_[i] = 1e30; }
                 if (!collider_ || w_[i] == 0) continue;
                 Vec3 nrm;
                 Real phi = collider_->eval(x_[i], nrm) - radius_[i];
-                if (phi < 0) { x_[i] -= nrm * phi; phi = 0; }
+                Real lim = 0;  // K1: depth of the soft layer here (0 = rigid); the rigid stop sits `lim` below the surface
+                if (skin && phi < 0.05) {
+                    const Real sc = collider_->skinScale(x_[i]);
+                    if (sc > 0) { lim = p_.skinMaxDepth; skinK_[i] = p_.skinStiffness * sc * skinArea_[i]; }
+                }
+                Real phiR = phi + lim;
+                if (phiR < 0) { x_[i] -= nrm * phiR; phiR = 0; phi = -lim; }
                 contactN_[i] = nrm;
-                contactPhi_[i] = phi;
+                contactPhi_[i] = phiR;
+                if (skin) skinPhi_[i] = phi;
             }
             assembleEnergy(seamScale);
+            if (skin) assembleSkin();
             for (int i = 0; i < N; ++i)
                 rhs_[i] = w_[i] == 0 ? Vec3(0, 0, 0) : -((x_[i] - xTilde_[i]) * (mass_[i] * invH2) + grad_[i]);
             // ... then forbid motion into the body for vertices resting on it (unless the net force pulls them away).
@@ -399,6 +411,7 @@ void ClothSolver::stepImplicit() {
                     }
                 }
                 filt_[i] = P;
+                rigidForce_[i] = contactActive_[i] ? -dot(rhs_[i], contactN_[i]) : 0.0;
             }
             {
                 int used = -1;
@@ -414,20 +427,27 @@ void ClothSolver::stepImplicit() {
                 if (maxStep < p_.newtonTolerance) break;
             }
             // backtracking line search on the variational energy (keeps Newton from overshooting)
-            const Real E0 = variationalEnergy(invH2, seamScale);
+            Real E0 = variationalEnergy(invH2, seamScale);
+            if (skin)
+                for (int i = 0; i < N; ++i)
+                    if (skinK_[i] > 0 && skinPhi_[i] < 0) E0 += 0.5 * skinK_[i] * skinPhi_[i] * skinPhi_[i];
             xBackup_ = x_;
             Real step = 1.0;
             bool accepted = false;
             for (int ls = 0; ls < 10; ++ls) {
+                Real Eskin = 0;
                 for (int i = 0; i < N; ++i) {
                     x_[i] = xBackup_[i] + dx_[i] * step;
                     if (collider_ && w_[i] != 0) {  // projected line search: evaluate the energy on the feasible side of the body
                         Vec3 nrm;
-                        const Real phi = collider_->eval(x_[i], nrm) - radius_[i];
-                        if (phi < 0) x_[i] -= nrm * phi;
+                        Real phi = collider_->eval(x_[i], nrm) - radius_[i];
+                        const Real lim = (skin && skinK_[i] > 0) ? p_.skinMaxDepth : Real(0);
+                        const Real phiR = phi + lim;
+                        if (phiR < 0) { x_[i] -= nrm * phiR; phi = -lim; }
+                        if (lim > 0 && phi < 0) Eskin += 0.5 * skinK_[i] * phi * phi;
                     }
                 }
-                const Real E1 = variationalEnergy(invH2, seamScale);
+                const Real E1 = variationalEnergy(invH2, seamScale) + Eskin;
                 if (std::isfinite(E1) && E1 <= E0) { accepted = true; break; }
                 step *= 0.5;
             }
