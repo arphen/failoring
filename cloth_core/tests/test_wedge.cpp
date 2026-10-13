@@ -40,6 +40,9 @@ static RunResult run(int scene, bool al, int frames, const char* tag) {
     sp.seamRampFrames = 0;
     sp.contactAL = al;
     sp.contactDiagnostics = true;  // same cost in both modes; the energy-based counters are needed for the table
+    // diagnostic overrides for the AL probes (unset = defaults)
+    if (const char* e = std::getenv("FL_AL_STIFF")) sp.contactALStiffness = std::atof(e);
+    if (const char* e = std::getenv("FL_AL_OUTER")) sp.contactALOuter = std::atoi(e);
     wedge::Scene s = wedge::make(scene, *fab, sp);
     ClothSolver& cs = *s.cs;
 

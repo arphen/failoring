@@ -1,5 +1,5 @@
 // Body contact: diagnostics for the projection path, and the augmented-Lagrangian (AL) contact path
-// (SolverParams::contactAL, idea K2; docs/agent_notes/K2_contact_multipliers.md).
+// (SolverParams::contactAL, idea K2; docs/handoff/K2_PROGRESS.md).
 //
 // AL contact. For every free vertex i with gap g_i(x) = phi(x_i) - r_i (signed distance minus the contact radius)
 // the constraint is g_i >= 0. Each vertex keeps a multiplier lambda_i >= 0 (the normal force, N) that persists across
@@ -179,6 +179,29 @@ void ClothSolver::stepImplicitAL() {
                     rhoSet = true;
                 }
                 alAssemble();
+                static bool gcDone = false;
+                if (!gcDone && frame_ == 3 && std::getenv("FL_AL_GRADCHECK") && std::any_of(contactActive_.begin(), contactActive_.end(), [](char c) { return c != 0; })) {
+                    gcDone = true;
+                    // central finite difference of totalEnergy vs grad_ at vertices in contact (diagnostic only)
+                    const std::vector<Vec3> g = grad_, keepX = x_;
+                    int shown = 0;
+                    for (int i = 0; i < N && shown < 6; ++i) {
+                        if (w_[i] == 0 || !contactActive_[i]) continue;
+                        ++shown;
+                        for (int c = 0; c < 3; ++c) {
+                            const Real e = 1e-7;
+                            Vec3 xp = keepX[i], xm = keepX[i];
+                            Vec3 d(c == 0, c == 1, c == 2);
+                            xp = xp + d * e; xm = xm - d * e;
+                            x_ = keepX; x_[i] = xp; const Real Ep = totalEnergy();
+                            x_ = keepX; x_[i] = xm; const Real Em = totalEnergy();
+                            x_ = keepX;
+                            const Real fd = (Ep - Em) / (2 * e);
+                            std::fprintf(stderr, "[gradcheck v%d c%d] grad=%.6e fd=%.6e lam=%.3e phi=%.3e\n", i, c, (c == 0 ? g[i].x : c == 1 ? g[i].y : g[i].z), fd,
+                                         alLambda_[i], contactPhi_[i]);
+                        }
+                    }
+                }
                 if (diag || n > 0) diagIterationActive(n);
                 else diagIterationActive(0);
                 for (int i = 0; i < N; ++i)

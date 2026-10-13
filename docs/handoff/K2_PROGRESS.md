@@ -39,9 +39,19 @@ This does NOT reproduce the handoff's "~1e-4 J, about one line-search failure pe
 handoff's number may refer to a different case (two bodies, or a different run length). Scene 0 AL-on and scene 1 are
 still to be measured.
 
+## AL probes (scene 0, 8 frames unless stated; FL_AL_* env overrides in test_wedge)
+
+* Default AL (stiffness 1000, outer 3): blows up from frame 3 (first contact). KE 1.05 J at frame 7 vs 2e-2 J off.
+* Outer 1 (FL_AL_OUTER=1): still blows up, KE 3.9e-2 J at frame 8, line-search failure every frame.
+* Stiffness 100 (FL_AL_STIFF=100): still blows up, KE 0.19 J at frame 8, line-search failure every frame.
+* Gradient check (FL_AL_GRADCHECK=1, frame 3, first active contact): analytic gradient of the total AL energy vs central
+  difference (eps 1e-7 m) agrees to about 0.3-0.5 percent at 4 contact vertices (e.g. x: 525.72 vs 524.17). So the sign
+  and scale of the AL term are right. The residual is not yet attributed to finite-difference error or to the elastic
+  or inertia part.
+
 ## Unfinished
 
-* Measurement of the projection baseline (in progress).
+* Scene 1 (two bodies) not yet measured.
 * Comparison off vs on, with the done-criteria in `K2_HANDOFF.md`.
 * `docs/agent_notes/K2_contact_multipliers.md` (referenced from the code, missing).
 

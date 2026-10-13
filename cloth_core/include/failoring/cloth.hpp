@@ -74,7 +74,7 @@ struct SolverParams {
     bool tensionStiffness = false;  // garment option (the app turns it on): exact PSD tension term, see ARCHITECTURE.md  // implicit: include the (PSD) tension part of the stretch Hessian; changes convergence, not the physics
     bool selfCollision = true;
     Real selfThickness = 0.002;    // m, vertex-triangle contact distance
-    // ---- body contact as an augmented Lagrangian (idea K2, docs/agent_notes/K2_contact_multipliers.md) ----
+    // ---- body contact as an augmented Lagrangian (idea K2, docs/handoff/K2_PROGRESS.md) ----
     // Off by default (the projection + motion filter path above is used). On: each vertex keeps a normal-force
     // multiplier lambda (N) across Newton iterations and time steps; the body enters the variational energy as
     // the C1 augmented-Lagrangian term of g = phi - radius >= 0, there is no projection inside the solve, and the
