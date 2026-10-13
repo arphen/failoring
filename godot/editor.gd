@@ -104,6 +104,22 @@ var pitch := -0.12
 var dist := 2.4
 var zoom := 1.0
 
+# 3D view camera (user input). yaw/pitch/zoom are the user's orbit, pan_off moves the orbit target from the
+# auto-framing target. Pitch is negative when the camera is above the pivot (see _update_camera).
+const CAM_YAW0 := 0.3
+const CAM_PITCH0 := -0.12
+const CAM_PITCH_MIN := -1.5   # browser view3d.js clamps elevation to -0.15..1.5, i.e. pitch -1.5..0.15
+const CAM_PITCH_MAX := 0.15
+const CAM_ZOOM_MIN := 0.25
+const CAM_ZOOM_MAX := 3.0
+const CAM_PAN_MAX := 3.0      # metres the target may wander from its framed position
+const CAM_IDLE_MS := 3000     # auto-orbit resumes this long after the last camera input
+var pan_off := Vector3.ZERO
+var view_dist := 2.9          # distance used by the last _update_camera (scales pan)
+var user_cam_until := 0       # ms timestamp: auto-orbit is paused until then
+var pointer_over_view := false
+var view_pane: SubViewportContainer
+
 var plan_opt: OptionButton
 var quality_opt: OptionButton
 var motion_opt: OptionButton
@@ -124,6 +140,7 @@ func _ready() -> void:
 	_apply_auto_env()
 	_build_ui()
 	_build_table_bar()
+	_bind_view_input()
 	if OS.has_environment("FL_STAND"):
 		motion = "stand"
 	debounce = Timer.new()
@@ -492,9 +509,7 @@ func _demo_stop() -> void:
 	_show_demo_bar(false)
 	playing = false
 	tl_t = 0.0
-	yaw = 0.3
-	pitch = -0.12
-	zoom = 1.0
+	_reset_view()
 	motion = "stand"
 	regen_and_rebuild()
 
@@ -502,7 +517,7 @@ func _demo_stop() -> void:
 func _demo_tick() -> void:
 	if not demo_active:
 		return
-	yaw += 0.12 / 60.0
+	_auto_orbit_step()
 	if OS.has_environment("FL_DEMO") and not playing and tl_t >= 4.0 and frames.size() >= target and target > 0:
 		if demo_count >= demo_max:
 			print("EDITOR demo finished %d outfits, quitting" % demo_count)
@@ -2070,26 +2085,116 @@ func _shot(tag: String) -> void:
 
 
 # Auto framing: cutting mat early, body later (browser V.focus/V.updateCamera).
+# The orbit target is the auto-framed point plus pan_off; yaw/pitch/zoom are the user's orbit.
 func _update_camera() -> void:
 	var h: float = float(meas.get("height", 1.68))
 	var s: float = _smooth(tl_t - 0.9)
-	cam_pivot.position = Vector3(0.0, lerpf(0.02, h * 0.52, s), lerpf(1.75, 0.0, s))
+	cam_pivot.position = Vector3(0.0, lerpf(0.02, h * 0.52, s), lerpf(1.75, 0.0, s)) + pan_off
 	# negative pitch looks down (the camera sits above the pivot); the table view (s = 0) looks
 	# further down onto the cutting mat. The sign was flipped, which put the camera under the floor.
 	cam_pivot.rotation = Vector3(pitch - 0.45 * (1.0 - s), yaw, 0.0)
-	cam.position = Vector3(0.0, 0.0, lerpf(2.9, 3.3 * h / 1.68, s) * zoom)
+	view_dist = lerpf(2.9, 3.3 * h / 1.68, s) * zoom
+	cam.position = Vector3(0.0, 0.0, view_dist)
 	cam.look_at(cam_pivot.global_position)
 
 
-func _unhandled_input(e: InputEvent) -> void:
-	var vp_rect: Rect2 = ($UI/Root/Main/ViewPane as SubViewportContainer).get_global_rect()
-	if not vp_rect.has_point(get_viewport().get_mouse_position()):
+# ------------------------------------------------------------------ 3D view camera input
+# Browser behaviour (app/src/view3d.js): left-drag orbits, right/middle-drag or shift+left-drag pans the target in the
+# camera plane, wheel zooms (dolly around the target, clamped), double-click or F / Home resets the view.
+# Trackpad: two-finger scroll pans, pinch zooms. Events come from the viewport container only (gui_input), so a drag
+# that starts in the viewport keeps going, and nothing over the side panels reaches the camera.
+func _bind_view_input() -> void:
+	view_pane = $UI/Root/Main/ViewPane as SubViewportContainer
+	view_pane.mouse_filter = Control.MOUSE_FILTER_STOP
+	view_pane.gui_input.connect(_on_view_gui_input)
+
+
+func _on_view_gui_input(e: InputEvent) -> void:
+	if _camera_input(e):
+		view_pane.accept_event()
+
+
+# Tracks where the pointer is from every mouse event (before GUI routing), for the keyboard shortcuts.
+func _input(e: InputEvent) -> void:
+	if e is InputEventMouse and view_pane != null:
+		pointer_over_view = view_pane.get_global_rect().has_point(e.position)
+
+
+func _unhandled_key_input(e: InputEvent) -> void:
+	if not pointer_over_view or not (e is InputEventKey) or not e.pressed or e.echo:
 		return
-	if e is InputEventMouseMotion and (e.button_mask & MOUSE_BUTTON_MASK_LEFT):
-		yaw -= e.relative.x * 0.005
-		pitch = clampf(pitch - e.relative.y * 0.005, -1.4, 1.4)
-	elif e is InputEventMouseButton and e.pressed:
+	if e.keycode == KEY_F or e.keycode == KEY_HOME:
+		_touch_user_cam()
+		_reset_view()
+		get_viewport().set_input_as_handled()
+
+
+func _camera_input(e: InputEvent) -> bool:
+	if e is InputEventMouseMotion:
+		var mask: int = e.button_mask
+		var pan_mode: bool = (mask & (MOUSE_BUTTON_MASK_RIGHT | MOUSE_BUTTON_MASK_MIDDLE)) != 0 \
+			or ((mask & MOUSE_BUTTON_MASK_LEFT) != 0 and e.shift_pressed)
+		if not pan_mode and (mask & MOUSE_BUTTON_MASK_LEFT) == 0:
+			return false
+		_touch_user_cam()
+		if pan_mode:
+			_pan_by(e.relative)
+		else:
+			yaw -= e.relative.x * 0.005
+			pitch = clampf(pitch - e.relative.y * 0.005, CAM_PITCH_MIN, CAM_PITCH_MAX)
+		return true
+	if e is InputEventMouseButton:
+		if not e.pressed:
+			return false  # wheel notches arrive as press + release: act once
 		if e.button_index == MOUSE_BUTTON_WHEEL_UP:
-			zoom = clampf(zoom * 0.92, 0.25, 3.0)
-		elif e.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			zoom = clampf(zoom * 1.08, 0.25, 3.0)
+			_touch_user_cam()
+			_zoom_by(0.92)
+			return true
+		if e.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			_touch_user_cam()
+			_zoom_by(1.08)
+			return true
+		if e.button_index == MOUSE_BUTTON_LEFT and e.double_click:
+			_touch_user_cam()
+			_reset_view()
+			return true
+		return false
+	if e is InputEventPanGesture:
+		_touch_user_cam()
+		_pan_by(e.delta)
+		return true
+	if e is InputEventMagnifyGesture:
+		_touch_user_cam()
+		_zoom_by(1.0 / maxf(0.01, e.factor))
+		return true
+	return false
+
+
+func _touch_user_cam() -> void:
+	user_cam_until = Time.get_ticks_msec() + CAM_IDLE_MS
+
+
+# Auto-orbit (demo): one step per frame, paused while the user is working the camera.
+func _auto_orbit_step() -> void:
+	if Time.get_ticks_msec() < user_cam_until:
+		return
+	yaw += 0.12 / 60.0
+
+
+func _zoom_by(factor: float) -> void:
+	zoom = clampf(zoom * factor, CAM_ZOOM_MIN, CAM_ZOOM_MAX)
+
+
+# Moves the orbit target so the scene follows the pointer (same sense as the browser: drag down, target goes up).
+func _pan_by(rel: Vector2) -> void:
+	var b := cam.global_transform.basis
+	var k := 0.0015 * view_dist
+	pan_off += (-b.x * rel.x + b.y * rel.y) * k
+	pan_off = pan_off.limit_length(CAM_PAN_MAX)
+
+
+func _reset_view() -> void:
+	yaw = CAM_YAW0
+	pitch = CAM_PITCH0
+	zoom = 1.0
+	pan_off = Vector3.ZERO
