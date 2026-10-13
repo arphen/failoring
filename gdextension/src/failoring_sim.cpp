@@ -282,6 +282,7 @@ real_t FailoringSim::set_body_mesh(const PackedVector3Array& vertices, const Pac
             }
             tris[static_cast<size_t>(i)][k] = v;
         }
+    pending_.reset();  // a prefetched bake belongs to the old mesh
     fl::SdfGridParams p;
     if (edge_length > 0) p.h = edge_length;
     std::vector<fl::Vec3> verts = toFlArray(vertices);
@@ -302,6 +303,15 @@ real_t FailoringSim::set_body_mesh(const PackedVector3Array& vertices, const Pac
     return static_cast<real_t>(grid->stats().msTotal);
 }
 
+// Bakes the body grid of the given vertices (the same call on the main thread or on a background thread).
+static std::shared_ptr<fl::SdfGrid> bakeBody(const std::vector<fl::Vec3>& verts, const std::vector<std::array<int, 3>>& tris, fl::Real h) {
+    fl::SdfGridParams p;
+    p.h = h;
+    auto grid = std::make_shared<fl::SdfGrid>();
+    if (!grid->bake(verts, tris, p)) return nullptr;
+    return grid;
+}
+
 real_t FailoringSim::set_body_positions(const PackedVector3Array& vertices) {
     if (!body_.grid) {
         UtilityFunctions::push_error("FailoringSim: set_body_positions before set_body_mesh");
@@ -312,10 +322,18 @@ real_t FailoringSim::set_body_positions(const PackedVector3Array& vertices) {
         return -1;
     }
     std::vector<fl::Vec3> next = toFlArray(vertices);
-    fl::SdfGridParams p;
-    p.h = body_.h;
-    auto grid = std::make_shared<fl::SdfGrid>();
-    if (!grid->bake(next, body_.tris, p)) {
+    std::shared_ptr<fl::SdfGrid> grid;
+    // the grid depends only on the body vertices: take the one prefetched for exactly these vertices, else bake now
+    if (pending_) {
+        std::unique_ptr<PendingBake> pend = std::move(pending_);
+        bool same = pend->verts.size() == next.size();
+        for (size_t i = 0; same && i < next.size(); ++i)
+            same = pend->verts[i].x == next[i].x && pend->verts[i].y == next[i].y && pend->verts[i].z == next[i].z;
+        if (same) grid = pend->grid.get();  // waits for the background bake
+        else pend->grid.wait();                             // a different pose was prefetched: discard it
+    }
+    if (!grid) grid = bakeBody(next, body_.tris, body_.h);
+    if (!grid) {
         UtilityFunctions::push_error("FailoringSim: set_body_positions: the body could not be baked");
         return -1;
     }
@@ -325,6 +343,15 @@ real_t FailoringSim::set_body_positions(const PackedVector3Array& vertices) {
     body_.grid = grid;
     rebuildColliders();
     return static_cast<real_t>(grid->stats().msTotal);
+}
+
+void FailoringSim::prefetch_body_positions(const PackedVector3Array& vertices) {
+    if (!body_.grid || vertices.size() != static_cast<int64_t>(body_.verts.size())) return;
+    auto pend = std::make_unique<PendingBake>();
+    pend->verts = toFlArray(vertices);
+    // the thread owns its copies of the vertices and triangles; the solver is not touched
+    pend->grid = std::async(std::launch::async, [v = pend->verts, t = body_.tris, h = body_.h]() { return bakeBody(v, t, h); });
+    pending_ = std::move(pend);
 }
 
 void FailoringSim::set_body_motion(const PackedVector3Array& displacement) {
@@ -342,6 +369,7 @@ void FailoringSim::set_body_enabled(bool on) {
 }
 
 void FailoringSim::clear_body() {
+    pending_.reset();
     body_ = Body();
     rebuildColliders();
 }
@@ -467,6 +495,26 @@ PackedVector3Array FailoringSim::get_display_positions(real_t margin) const {
     out.resize(static_cast<int64_t>(nd));
     Vector3* o = out.ptrw();
     for (size_t i = 0; i < nd; ++i) o[i] = toGd(P[i] + N[i] * lift[i]);
+    return out;
+}
+
+PackedVector3Array FailoringSim::get_display_normals(const PackedVector3Array& positions) const {
+    PackedVector3Array out;
+    if (!displayCurrent("get_display_normals")) return out;
+    const int64_t nd = static_cast<int64_t>(dispVertexCount_) + static_cast<int64_t>(dispEdges_.size() / 2);
+    if (positions.size() != nd) return out;  // not the display mesh of this sim: the caller computes them another way
+    const Vector3* p = positions.ptr();
+    std::vector<Vector3> n(static_cast<size_t>(nd), Vector3());
+    for (size_t t = 0; t + 2 < dispTris_.size(); t += 3) {
+        const int a = dispTris_[t], b = dispTris_[t + 1], c = dispTris_[t + 2];
+        const Vector3 fn = (p[b] - p[a]).cross(p[c] - p[a]);
+        n[static_cast<size_t>(a)] += fn;
+        n[static_cast<size_t>(b)] += fn;
+        n[static_cast<size_t>(c)] += fn;
+    }
+    out.resize(nd);
+    Vector3* o = out.ptrw();
+    for (size_t i = 0; i < n.size(); ++i) o[i] = n[i].normalized();
     return out;
 }
 
@@ -608,6 +656,7 @@ void FailoringSim::_bind_methods() {
 
     ClassDB::bind_method(D_METHOD("set_body_mesh", "vertices", "triangles", "edge_length"), &FailoringSim::set_body_mesh, DEFVAL(0.0));
     ClassDB::bind_method(D_METHOD("set_body_positions", "vertices"), &FailoringSim::set_body_positions);
+    ClassDB::bind_method(D_METHOD("prefetch_body_positions", "vertices"), &FailoringSim::prefetch_body_positions);
     ClassDB::bind_method(D_METHOD("set_body_motion", "displacement"), &FailoringSim::set_body_motion);
     ClassDB::bind_method(D_METHOD("set_body_enabled", "on"), &FailoringSim::set_body_enabled);
     ClassDB::bind_method(D_METHOD("clear_body"), &FailoringSim::clear_body);
@@ -617,6 +666,7 @@ void FailoringSim::_bind_methods() {
 
     ClassDB::bind_method(D_METHOD("setup_display"), &FailoringSim::setup_display);
     ClassDB::bind_method(D_METHOD("get_display_indices"), &FailoringSim::get_display_indices);
+    ClassDB::bind_method(D_METHOD("get_display_normals", "positions"), &FailoringSim::get_display_normals);
     ClassDB::bind_method(D_METHOD("get_display_positions", "margin"), &FailoringSim::get_display_positions, DEFVAL(0.0008));
 
     ClassDB::bind_method(D_METHOD("set_param", "name", "value"), &FailoringSim::set_param);

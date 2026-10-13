@@ -72,7 +72,7 @@ static func build(plan: Dictionary, sections: Dictionary, arms: Dictionary, stan
 	sim.set_param("self_collision", 1 if self_collision else 0)
 	sim.set_param("tension_stiffness", 1)  # the browser turns this on for garments
 	sim.add_plane(Vector3.ZERO, Vector3.UP)  # feet stand on y = 0, like the browser floor
-	if sim.set_body_mesh(standing, body_tris, 0.007) < 0.0:
+	if sim.set_body_mesh(standing, body_tris, float(quality.get("body_h", 0.007))) < 0.0:
 		push_error("plan_loader: body bake failed")
 		return {}
 	sim.begin()
