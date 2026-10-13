@@ -15,6 +15,7 @@ const Builtin = preload("res://builtin_plans.gd")
 const Table = preload("res://table.gd")
 const Look = preload("res://look.gd")
 const Library = preload("res://library.gd")
+const Outfit = preload("res://outfit.gd")
 
 const QUALITIES := {
 	"draft": {"label": "Draft (fast)", "edge": 0.060, "sub": 1, "newton": 6, "frames": 36},
@@ -49,6 +50,20 @@ var motion := "walk"
 var seam_stiffness := 20000.0
 var ramp_frames := 20
 var self_collision := false
+
+# Outfit: the garments on the mannequin, inner first (outfit.gd merges the shown ones into one simulation). Entry:
+# {uid, key, redraft, name, notes, fabric, color, visible, locked, fitted, plan, pieces, seams}. The globals above
+# (plan*, fabric_id, pieces, seams) are the ACTIVE garment's working copy: _store_active() copies them back into its
+# entry, and _activate() loads an entry into them. Anything that reads the outfit calls _store_active() first.
+var outfit: Array = []
+var active := -1
+var _next_uid := 0
+var _need_outfit := true       # (re)start the outfit from plan_key on the next regen (boot, demo, FL_AUTO)
+var _sim_pieces: Array = []    # merged pieces/seams of the last build: stage poses, stitches, colours, wraps
+var _sim_seams: Array = []
+var _piece_uid := {}           # merged piece id -> garment uid
+var _active_label: Label
+var _fabric_list: Array = []
 var sel = null
 var sel_v := -1
 var sew_a = null
@@ -295,7 +310,7 @@ func _plan_title(key: String) -> String:
 
 
 func _build_tabs() -> void:
-	for tab in ["Piece", "Seams", "Body", "Fabric", "Pattern", "Shoot"]:
+	for tab in ["Outfit", "Piece", "Seams", "Body", "Fabric", "Pattern", "Shoot"]:
 		var sc := ScrollContainer.new()
 		sc.name = tab
 		sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -314,6 +329,7 @@ func _build_tabs() -> void:
 	_build_piece_tab()
 	_build_seams_tab()
 	_build_shoot_tab()
+	_refresh_outfit_tab()
 
 
 
@@ -383,6 +399,7 @@ func _refresh_seams_tab() -> void:
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	note.text = "Pick the Sew tool on the cutting table, click one edge, then the edge it joins. Edge numbers are shown beside each edge length."
 	vb.add_child(note)
+	_lock_editing(vb)
 
 
 # ------------------------------------------------------------------ demo mode
@@ -467,7 +484,7 @@ func _demo_load() -> bool:
 	demo_outfit = ((demo_outfit % demo_outfits.size()) + demo_outfits.size()) % demo_outfits.size()
 	meas = (BodyGen.PRESETS[demo_bodies[demo_body % demo_bodies.size()]] as Dictionary).duplicate()
 	motion = "walk"
-	plan_key = demo_outfits[demo_outfit % demo_outfits.size()]
+	_set_single_garment(demo_outfits[demo_outfit % demo_outfits.size()])
 	_rebuild_body_tab()
 	demo_start = Time.get_ticks_msec()
 	demo_pause_until = 0
@@ -842,6 +859,7 @@ func _refresh_piece_tab() -> void:
 		b.pressed.connect(func() -> void: push_undo(); Table.add_piece(self, kind[1]); table.fit(); changed("structure"))
 		add_row.add_child(b)
 	vb.add_child(add_row)
+	_lock_editing(vb)
 
 
 func _grain_deg() -> float:
@@ -1010,7 +1028,7 @@ func _build_fabric_tab() -> void:
 		o.add_item(String(f["name"]))
 		o.set_item_metadata(o.item_count - 1, String(f["id"]))
 	vb.add_child(o)
-	o.item_selected.connect(func(i: int) -> void: fabric_id = String(o.get_item_metadata(i)); _schedule())
+	o.item_selected.connect(func(i: int) -> void: _set_garment_fabric(active, String(o.get_item_metadata(i))))
 	vb.add_child(_h4("Seams and solver"))
 	_slider_row(vb, "Seam k", 2.0, 50.0, 1.0,
 		func() -> float: return seam_stiffness / 1000.0,
@@ -1062,6 +1080,7 @@ func _refresh_fabric_tab() -> void:
 
 # ------------------------------------------------------------------ state changes
 func _schedule() -> void:
+	_store_active()
 	debounce.start()
 
 
@@ -1077,7 +1096,7 @@ func push_undo() -> void:
 
 
 func do_undo() -> void:
-	if undo.is_empty():
+	if undo.is_empty() or active_locked():
 		return
 	redo.append(snapshot())
 	var o = JSON.parse_string(undo.pop_back())
@@ -1088,7 +1107,7 @@ func do_undo() -> void:
 
 
 func do_redo() -> void:
-	if redo.is_empty():
+	if redo.is_empty() or active_locked():
 		return
 	undo.append(snapshot())
 	var o = JSON.parse_string(redo.pop_back())
@@ -1109,6 +1128,7 @@ func _fix_selection() -> void:
 # table/table-done (table moved), ui (redraw), body/fabric (regen + rebuild)
 func changed(kind: String) -> void:
 	table_dirty = true
+	_store_active()
 	if kind == "load":
 		_drain()  # the worker may be stepping the old sim: let it finish before the sim is dropped
 		sim = null
@@ -1117,12 +1137,10 @@ func changed(kind: String) -> void:
 		redo.clear()
 		table.fitted = false
 		table.fit()
-		_refresh_piece_tab()
-		_refresh_seams_tab()
+		_refresh_garment_tabs()
 		regen_and_rebuild()
 	elif kind == "structure" or kind == "body" or kind == "fabric":
-		_refresh_piece_tab()
-		_refresh_seams_tab()
+		_refresh_garment_tabs()
 		_schedule()
 	elif kind == "structure-drag":
 		# fires on every drag motion: no tab rebuild here (it frees the controls being dragged).
@@ -1131,8 +1149,358 @@ func changed(kind: String) -> void:
 	elif kind == "table":
 		pass  # piece moved on the mat: table_dirty is enough, tabs refresh on "table-done"
 	elif kind == "table-done" or kind == "ui":
-		_refresh_piece_tab()
-		_refresh_seams_tab()
+		_refresh_garment_tabs()
+
+
+func _refresh_garment_tabs() -> void:
+	_refresh_piece_tab()
+	_refresh_seams_tab()
+	_refresh_outfit_tab()
+
+
+# ------------------------------------------------------------------ outfit
+func active_uid() -> int:
+	return int(outfit[active]["uid"]) if active >= 0 and active < outfit.size() else -1
+
+
+func active_locked() -> bool:
+	return active >= 0 and active < outfit.size() and bool(outfit[active]["locked"])
+
+
+func _index_of_uid(uid: int) -> int:
+	for i in outfit.size():
+		if int(outfit[i]["uid"]) == uid:
+			return i
+	return -1
+
+
+# Copies the working copy (pieces, seams, plan, fabric, name) into the active garment's entry.
+func _store_active() -> void:
+	if active < 0 or active >= outfit.size():
+		return
+	var e: Dictionary = outfit[active]
+	e["key"] = plan_key
+	e["name"] = plan_name
+	e["notes"] = plan_notes
+	e["plan"] = plan
+	e["pieces"] = pieces
+	e["seams"] = seams
+	e["fabric"] = fabric_id
+
+
+static func _redraft_key(key: String, p: Dictionary) -> String:
+	if key in Library.DRAFTED or key.begins_with("fs-"):
+		return key
+	if Library.is_user(key):
+		return String(p.get("from", ""))  # a saved garment remembers what it was drafted from
+	return ""
+
+
+# A new entry (uid not yet set) for plan p, fabric and colour from the plan.
+func _entry_from_plan(key: String, p: Dictionary) -> Dictionary:
+	var fab := String(p.get("fabric", "cotton_poplin"))
+	if fab == "":
+		fab = "cotton_poplin"
+	return {"uid": -1, "key": key, "redraft": _redraft_key(key, p), "name": String(p.get("name", key)),
+		"notes": String(p.get("notes", "")), "fabric": fab, "color": String(Table.FABRIC_COLORS.get(fab, "#9fb7d6")),
+		"visible": true, "locked": false, "fitted": _fs_preset(meas), "plan": p,
+		"pieces": (p.get("pieces", []) as Array).duplicate(true), "seams": (p.get("seams", []) as Array).duplicate(true)}
+
+
+# Appends a garment to the outfit (outermost) and makes it the active one.
+func _add_garment_entry(key: String, p: Dictionary) -> void:
+	_store_active()
+	var e := _entry_from_plan(key, p)
+	_next_uid += 1
+	e["uid"] = _next_uid
+	outfit.append(e)
+	_activate(outfit.size() - 1, false)
+
+
+# Replaces the active garment with plan p (keeps its uid, visibility and lock). Appends when the outfit is empty.
+func _replace_active(key: String, p: Dictionary) -> void:
+	if active < 0 or active >= outfit.size():
+		_add_garment_entry(key, p)
+		return
+	var old: Dictionary = outfit[active]
+	var e := _entry_from_plan(key, p)
+	e["uid"] = old["uid"]
+	e["visible"] = old["visible"]
+	e["locked"] = old["locked"]
+	outfit[active] = e
+	_activate(active, false)
+
+
+# Loads outfit[i] into the working copy. store = false when the working copy is already the entry's (or the entry is
+# being replaced). Index -1 leaves the cutting table empty.
+func _activate(i: int, store: bool = true) -> void:
+	if store:
+		_store_active()
+	active = i if i >= 0 and i < outfit.size() else -1
+	if active < 0:
+		pieces = []
+		seams = []
+		plan = {}
+		plan_key = ""
+		plan_name = ""
+		plan_notes = ""
+	else:
+		var e: Dictionary = outfit[active]
+		pieces = e["pieces"]
+		seams = e["seams"]
+		plan = e["plan"]
+		plan_key = String(e["key"])
+		plan_name = String(e["name"])
+		plan_notes = String(e["notes"])
+		fabric_id = String(e["fabric"])
+	sel = String(pieces[0]["id"]) if not pieces.is_empty() else null
+	sel_v = -1
+	sew_a = null
+	undo.clear()
+	redo.clear()
+	if _active_label != null:
+		_active_label.text = "Editing: %s" % (plan_name if active >= 0 else "nothing")
+	if plan_opt != null:
+		var entries := _plan_entries()
+		for k in entries.size():
+			if String(entries[k][1]) == plan_key:
+				plan_opt.select(k)
+	_refresh_garment_tabs()
+	_refresh_fabric_tab()
+
+
+func _fit_table() -> void:
+	table.fitted = false
+	table.fit()
+
+
+# Starts the outfit with one garment from a plan key (boot, demo, FL_AUTO). Needs the body (drafted garments).
+func _start_outfit(key: String) -> void:
+	var p := _plan_for_key(key)
+	if p.is_empty():
+		key = "fs-teagan"
+		p = _plan_for_key(key)
+	outfit = []
+	active = -1
+	_add_garment_entry(key, p)
+
+
+# Single-garment start from outside the outfit (demo, FL_AUTO): the next regen replaces the outfit with this garment.
+func _set_single_garment(key: String) -> void:
+	plan_key = key
+	outfit = []
+	active = -1
+	_need_outfit = true
+
+
+func _entry_set_plan(i: int, p: Dictionary) -> void:
+	var e: Dictionary = outfit[i]
+	e["plan"] = p
+	e["name"] = String(p.get("name", e["key"]))
+	e["notes"] = String(p.get("notes", ""))
+	e["pieces"] = (p.get("pieces", []) as Array).duplicate(true)
+	e["seams"] = (p.get("seams", []) as Array).duplicate(true)
+	e["fitted"] = _fs_preset(meas)
+
+
+# Draft the garment again for the live body (drafted and FreeSewing garments; keeps fabric, colour and visibility).
+func _redraft_entry(i: int) -> void:
+	if i < 0 or i >= outfit.size() or bool(outfit[i]["locked"]):
+		return
+	_store_active()
+	var key := String(outfit[i]["redraft"])
+	if key == "":
+		return
+	var p := _plan_for_key(key)
+	if p.is_empty():
+		return
+	_entry_set_plan(i, p)
+	if i == active:
+		_activate(i, false)
+	changed("structure")
+
+
+func _set_garment_fabric(i: int, id: String) -> void:
+	if i < 0 or i >= outfit.size() or id == "":
+		return
+	outfit[i]["fabric"] = id
+	outfit[i]["color"] = String(Table.FABRIC_COLORS.get(id, "#9fb7d6"))
+	if i == active:
+		fabric_id = id
+	_schedule()
+
+
+func _outfit_set(i: int, field: String, value: Variant) -> void:
+	if i < 0 or i >= outfit.size():
+		return
+	_store_active()
+	outfit[i][field] = value
+	changed("structure" if field == "visible" else "ui")
+
+
+func _outfit_select(i: int) -> void:
+	if i == active or i < 0 or i >= outfit.size():
+		return
+	_activate(i)
+	_fit_table()
+	table_dirty = true
+
+
+func _outfit_remove(i: int) -> void:
+	if i < 0 or i >= outfit.size():
+		return
+	_store_active()
+	var uid := active_uid()
+	outfit.remove_at(i)
+	var ni := _index_of_uid(uid)
+	if ni < 0:
+		ni = mini(i, outfit.size() - 1)  # the active garment was removed: take its neighbour
+	_activate(ni, false)
+	_fit_table()
+	changed("structure")
+
+
+func _outfit_move(i: int, d: int) -> void:
+	var j := i + d
+	if i < 0 or j < 0 or j >= outfit.size():
+		return
+	_store_active()
+	var uid := active_uid()
+	var t = outfit[i]
+	outfit[i] = outfit[j]
+	outfit[j] = t
+	_activate(_index_of_uid(uid), false)
+	changed("structure")
+
+
+func _fabric_items() -> Array:
+	if _fabric_list.is_empty():
+		_fabric_list = PlanLoader.load_json("res://materials/fabrics.json").get("fabrics", [])
+	return _fabric_list
+
+
+# Locked garments: their pattern cannot change. Disables every editing control under vb (the table checks the lock too).
+func _lock_editing(vb: Node) -> void:
+	if not active_locked():
+		return
+	for c in vb.find_children("*", "", true, false):
+		if c is BaseButton or c is Range or c is ColorPickerButton:
+			(c as Control).disabled = true
+		elif c is LineEdit:
+			(c as LineEdit).editable = false
+
+
+func _refresh_outfit_tab() -> void:
+	var vb := _tab_vbox("Outfit")
+	if vb == null:
+		return
+	for c in vb.get_children():
+		vb.remove_child(c)
+		c.queue_free()
+	var h := Label.new()
+	h.text = "Outfit - %d garment%s" % [outfit.size(), "" if outfit.size() == 1 else "s"]
+	vb.add_child(h)
+	var note := Label.new()
+	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	note.add_theme_font_size_override("font_size", 12)
+	note.text = "Listed inner first. Each garment further out wraps 8 mm wider than the one under it. Shown garments are simulated together and collide with each other. Click a name to edit that garment on the cutting table."
+	vb.add_child(note)
+	if outfit.is_empty():
+		var none := Label.new()
+		none.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		none.text = "No garments on the mannequin. Add one from the Library tab."
+		vb.add_child(none)
+	for i in outfit.size():
+		vb.add_child(_outfit_row(i))
+
+
+func _outfit_row(i: int) -> Control:
+	var e: Dictionary = outfit[i]
+	var card := PanelContainer.new()
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 4)
+	card.add_child(v)
+	var top := HBoxContainer.new()
+	v.add_child(top)
+	var show := CheckBox.new()
+	show.text = "Show"
+	show.button_pressed = bool(e["visible"])
+	show.toggled.connect(func(on: bool) -> void: _outfit_set(i, "visible", on))
+	top.add_child(show)
+	var nm := Button.new()
+	nm.text = String(e["name"])
+	nm.flat = i != active
+	nm.clip_text = true
+	nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	nm.tooltip_text = "Edit this garment on the cutting table"
+	nm.pressed.connect(func() -> void: _outfit_select(i))
+	top.add_child(nm)
+	var mid := HBoxContainer.new()
+	v.add_child(mid)
+	var layer := Label.new()
+	layer.text = "Layer %d" % (i + 1)
+	layer.add_theme_font_size_override("font_size", 12)
+	layer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	mid.add_child(layer)
+	var lock := CheckBox.new()
+	lock.text = "Locked"
+	lock.button_pressed = bool(e["locked"])
+	lock.toggled.connect(func(on: bool) -> void: _outfit_set(i, "locked", on))
+	mid.add_child(lock)
+	var up := Button.new()
+	up.text = "Up"
+	up.disabled = i == 0
+	up.tooltip_text = "Move one layer inward"
+	up.pressed.connect(func() -> void: _outfit_move(i, -1))
+	mid.add_child(up)
+	var down := Button.new()
+	down.text = "Down"
+	down.disabled = i == outfit.size() - 1
+	down.tooltip_text = "Move one layer outward"
+	down.pressed.connect(func() -> void: _outfit_move(i, 1))
+	mid.add_child(down)
+	var rm := Button.new()
+	rm.text = "Remove"
+	rm.pressed.connect(func() -> void: _outfit_remove(i))
+	mid.add_child(rm)
+	var bot := HBoxContainer.new()
+	v.add_child(bot)
+	var fo := OptionButton.new()
+	fo.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var fabs := _fabric_items()
+	for f in fabs:
+		fo.add_item(String(f["name"]))
+		fo.set_item_metadata(fo.item_count - 1, String(f["id"]))
+		if String(f["id"]) == String(e["fabric"]):
+			fo.select(fo.item_count - 1)
+	fo.item_selected.connect(func(k: int) -> void: _set_garment_fabric(i, String(fo.get_item_metadata(k))))
+	bot.add_child(fo)
+	var col := ColorPickerButton.new()
+	col.custom_minimum_size = Vector2(34, 0)
+	col.color = Color(String(e["color"]))
+	col.tooltip_text = "Garment colour"
+	col.color_changed.connect(func(c: Color) -> void: outfit[i]["color"] = "#" + c.to_html(false); _schedule())
+	bot.add_child(col)
+	var fit := HBoxContainer.new()
+	v.add_child(fit)
+	var fl := Label.new()
+	fl.add_theme_font_size_override("font_size", 12)
+	fl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	fl.text = "fitted: %s" % String(e["fitted"])
+	if String(e["redraft"]) != "" and String(e["fitted"]) != _fs_preset(meas):
+		fl.text += " (body is now %s)" % _fs_preset(meas)
+	fl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	fit.add_child(fl)
+	if String(e["redraft"]) != "":
+		var rd := Button.new()
+		rd.text = "Re-draft"
+		rd.tooltip_text = "Draft this garment again for the current body"
+		rd.disabled = bool(e["locked"])
+		rd.pressed.connect(func() -> void: _redraft_entry(i))
+		fit.add_child(rd)
+	if i == active:
+		card.self_modulate = Color(0.62, 0.82, 1.0)
+	return card
 
 
 func _process(_delta: float) -> void:
@@ -1175,6 +1543,10 @@ func _build_table_bar() -> void:
 	fit_btn.text = "Fit"
 	fit_btn.pressed.connect(func() -> void: table.fit())
 	bar.add_child(fit_btn)
+	_active_label = Label.new()
+	_active_label.name = "ActiveLabel"
+	_active_label.add_theme_font_size_override("font_size", 12)
+	bar.add_child(_active_label)
 	var snap_box := CheckBox.new()
 	snap_box.text = "snap 5 mm"
 	snap_box.button_pressed = true
@@ -1196,9 +1568,17 @@ func _on_preset_button(p: String) -> void:
 
 
 func _on_plan(_i: int) -> void:
-	plan_key = _plan_entries()[plan_opt.selected][1]
-	_resolve_plan()
-	_reset_working()
+	# the Plan dropdown swaps the active garment (with one garment in the outfit: the whole outfit)
+	var key: String = _plan_entries()[plan_opt.selected][1]
+	if active_locked():
+		status_label.text = "This garment is locked: unlock it in the Outfit tab to change its plan"
+		plan_opt.select(maxi(0, _plan_entries().map(func(e: Array) -> String: return e[1]).find(plan_key)))
+		return
+	var p := _plan_for_key(key)
+	if p.is_empty():
+		return
+	_replace_active(key, p)
+	_fit_table()
 	changed("load")
 
 
@@ -1213,8 +1593,18 @@ func _on_motion(_i: int) -> void:
 
 
 func _on_redraft() -> void:
-	_resolve_plan()
-	_reset_working()
+	if active < 0 or active_locked():
+		return
+	var e: Dictionary = outfit[active]
+	var key := String(e["redraft"]) if String(e["redraft"]) != "" else String(e["key"])
+	var p: Dictionary = e["plan"] if key == "custom" else _plan_for_key(key)
+	if p.is_empty():
+		return
+	_store_active()
+	var rk := String(e["redraft"])
+	_replace_active(String(e["key"]), p)  # the outline is reset to the draft (edits on the table are dropped)
+	outfit[active]["redraft"] = rk  # a saved garment keeps the key it was drafted from
+	_fit_table()
 	changed("load")
 
 
@@ -1239,17 +1629,16 @@ func _on_open_file(path: String) -> void:
 	if loaded.is_empty() or not loaded.has("pieces"):
 		status_label.text = "could not read that pattern"
 		return
-	plan = PlanLoader.normalize_plan(loaded)
-	plan_key = "custom"
-	plan_name = String(plan.get("name", "Untitled"))
-	plan_notes = String(plan.get("notes", ""))
-	if String(plan.get("fabric", "")) != "":
-		fabric_id = String(plan["fabric"])
+	if active_locked():
+		status_label.text = "This garment is locked: unlock it in the Outfit tab to open a pattern into it"
+		return
+	var p := PlanLoader.normalize_plan(loaded)
 	if loaded.has("meas") and loaded["meas"] is Dictionary:
 		for k in (loaded["meas"] as Dictionary).keys():
 			meas[k] = loaded["meas"][k]
 		_rebuild_body_tab()
-	_reset_working()
+	_replace_active("custom", p)  # the opened pattern becomes the active garment
+	_fit_table()
 	changed("load")
 
 
@@ -1288,9 +1677,13 @@ func library_plan(id: String) -> Dictionary:
 
 
 func _on_library_add(id: String) -> void:
-	plan_key = id
-	_resolve_plan()
-	_reset_working()
+	var p := _plan_for_key(id)
+	if p.is_empty():
+		library_panel.set_status("That garment could not be loaded.")
+		return
+	_add_garment_entry(id, p)  # outermost layer, and the active garment
+	_fit_table()
+	library_panel.set_status("Added %s. Layer %d." % [plan_name, outfit.size()])
 	changed("load")
 
 
@@ -1354,34 +1747,6 @@ func _plan_for_key(key: String) -> Dictionary:
 	return PlanLoader.normalize_plan(p) if not p.is_empty() else {}
 
 
-func _resolve_plan() -> void:
-	var key := plan_key
-	if key != "custom":
-		var p := _plan_for_key(key)
-		if p.is_empty():
-			if key == "fs-teagan":
-				return
-			plan_key = "fs-teagan"
-			p = _plan_for_key(plan_key)
-		plan = p
-	else:
-		plan = PlanLoader.normalize_plan(plan)
-	plan_name = String(plan.get("name", plan_key))
-	if String(plan.get("fabric", "")) != "" and key != "custom":
-		fabric_id = String(plan["fabric"])
-	plan_notes = String(plan.get("notes", ""))
-
-
-func _reset_working() -> void:
-	pieces = (plan.get("pieces", []) as Array).duplicate(true)
-	seams = (plan.get("seams", []) as Array).duplicate(true)
-	undo.clear()
-	redo.clear()
-	sel = String(pieces[0]["id"]) if not pieces.is_empty() else null
-	sel_v = -1
-	sew_a = null
-
-
 func regen_and_rebuild() -> void:
 	_drain()  # body regen and rebuild replace the sim: no step may be running
 	if M.is_empty():
@@ -1389,15 +1754,31 @@ func regen_and_rebuild() -> void:
 	body_rest = BodyGen.generate(M, meas, prev_body)
 	prev_body = {"x": (body_rest as Dictionary)["x"], "keys": (body_rest as Dictionary)["keys"]}
 	body_stand = BodyGen.stand(M, body_rest)
-	if plan_key in ["pants", "tank", "shirt"] or pieces.is_empty():
-		_resolve_plan()
-		_reset_working()
+	_store_active()
+	if _need_outfit:
+		_need_outfit = false
+		_start_outfit(plan_key)
+	else:
+		_redraft_drafted()  # drafted garments follow the live body (their outlines are drafted from it)
 	_refresh_fabric_tab()
 	_refresh_body_note()
-	_refresh_piece_tab()
-	_refresh_seams_tab()
+	_refresh_garment_tabs()
 	library_panel.refresh()  # fitted labels and drafted previews follow the body
 	rebuild()
+
+
+# Drafted garments (pants, tank, shirt) are drafted from the live body: re-draft them on every body change, as the
+# single-garment editor always did. FreeSewing garments keep their outline (re-draft on request, see _redraft_entry).
+func _redraft_drafted() -> void:
+	var was := active
+	for i in outfit.size():
+		var e: Dictionary = outfit[i]
+		if String(e["redraft"]) in Library.DRAFTED and not bool(e["locked"]):
+			var p := _plan_for_key(String(e["redraft"]))
+			if not p.is_empty():
+				_entry_set_plan(i, p)
+	if was >= 0 and was < outfit.size() and String(outfit[was]["redraft"]) in Library.DRAFTED:
+		_activate(was, false)
 
 
 func _refresh_body_note() -> void:
@@ -1433,15 +1814,31 @@ func rebuild() -> void:
 	sim = null
 	frame = 0
 	walk_k = 0.0
-	if plan.is_empty() or body_stand == null:
+	_store_active()
+	# the shown garments, merged into one plan (outfit.gd): ids are garment-prefixed, each piece keeps its fabric
+	var gs := []
+	for e in outfit:
+		if bool(e["visible"]):
+			gs.append({"uid": e["uid"], "fabric": e["fabric"], "pieces": Table.valid_pieces(e["pieces"])["pieces"], "seams": e["seams"]})
+	var merged := Outfit.merge(gs)
+	_sim_pieces = merged["pieces"]
+	_sim_seams = merged["seams"]
+	_piece_uid = {}
+	for p in _sim_pieces:
+		_piece_uid[String(p["id"])] = int(p["garment"])
+	if _sim_pieces.is_empty() or body_stand == null:
+		meta = {}
+		frames.clear()
+		_build_mat()
+		_render_info()
+		status_label.text = "No garment on the mannequin - add one from the Library tab" if body_stand != null else "starting"
 		return
 	_stand_v3 = _to_v3a(body_stand["pos"])
 	var q: Dictionary = QUALITIES[quality]
-	var valid := Table.valid_pieces(pieces)
-	var spec := {"pieces": valid["pieces"], "seams": seams}
-	var built: Dictionary = PlanLoader.build(spec, body_stand["sections"], body_stand["arms"],
-		_stand_v3, _tris(), fabric_id, q, seam_stiffness, ramp_frames,
-		self_collision or bool(q.get("self", false)))
+	# two or more garments need the solver's self collision: it is what keeps them apart (no seams join garments)
+	var collide := self_collision or bool(q.get("self", false)) or gs.size() > 1
+	var built: Dictionary = PlanLoader.build({"pieces": _sim_pieces, "seams": _sim_seams}, body_stand["sections"], body_stand["arms"],
+		_stand_v3, _tris(), fabric_id, q, seam_stiffness, ramp_frames, collide)
 	if built.is_empty():
 		status_label.text = "sim build failed"
 		return
@@ -1452,7 +1849,7 @@ func rebuild() -> void:
 	meta = built
 	wraps.clear()
 	for pid in built["order"]:
-		wraps[pid] = Wrap.new(Table.piece_by_id(pieces, pid), body_stand["sections"], body_stand["arms"])
+		wraps[pid] = Wrap.new(Table.piece_by_id(_sim_pieces, pid), body_stand["sections"], body_stand["arms"])
 	_build_mesh_edges()
 	_col_key = []  # colours depend on the new meta/mesh_edges
 	_build_stitches()
@@ -1752,7 +2149,7 @@ var _col_cache := PackedColorArray()
 
 # Per-vertex colors by piece, selected piece brightened (browser V.recolor). Cached: only fabric or selection change it.
 func _cloth_colors() -> PackedColorArray:
-	var key := [fabric_id, sel]
+	var key := [_merged_sel()]
 	if key == _col_key:
 		return _col_cache
 	_col_key = key
@@ -1760,18 +2157,29 @@ func _cloth_colors() -> PackedColorArray:
 	return _col_cache
 
 
+# Merged id of the selected piece of the active garment ("" if none).
+func _merged_sel() -> String:
+	if sel == null or active < 0 or active >= outfit.size():
+		return ""
+	return Outfit.prefix(active_uid()) + String(sel)
+
+
 func _compute_cloth_colors() -> PackedColorArray:
 	var n: int = meta["n"]
 	var ecount: int = mesh_edges.size() / 2
 	var col := PackedColorArray()
 	col.resize(n + ecount)
-	var base := Look.cloth_base(str(Table.FABRIC_COLORS.get(fabric_id, "#9fb7d6")))
+	var base_of := {}
+	for e in outfit:
+		base_of[int(e["uid"])] = Look.cloth_base(String(e["color"]))
+	var fallback := Look.cloth_base("#9fb7d6")
+	var sel_m := _merged_sel()
 	var order: Array = meta["order"]
 	for i in order.size():
 		var pid := String(order[i])
 		var r: Dictionary = meta["ranges"][pid]
-		var c := base * (0.92 + 0.06 * float(i % 3))
-		if pid == sel:
+		var c: Color = base_of.get(int(_piece_uid.get(pid, -1)), fallback) * (0.92 + 0.06 * float(i % 3))
+		if pid == sel_m:
 			c = c * 1.18
 		for k in int(r["count"]):
 			col[int(r["first"]) + k] = c
@@ -1839,7 +2247,7 @@ func _table_layout() -> Dictionary:
 	var y0 := 1e9
 	var x1 := -1e9
 	var y1 := -1e9
-	for p in pieces:
+	for p in _sim_pieces:
 		var b := Table.bbox_of(p["outline"])
 		var t: Dictionary = p.get("table", {"x": 0.0, "y": 0.0})
 		x0 = minf(x0, b[0] + float(t.get("x", 0.0)))
@@ -1883,7 +2291,7 @@ func _stage_pose() -> void:
 		var r: Dictionary = meta["ranges"][pid]
 		var w = wraps[pid]
 		var uv: PackedVector2Array = meta["uv"][pid]
-		var p = Table.piece_by_id(pieces, pid)
+		var p = Table.piece_by_id(_sim_pieces, pid)
 		var pt: Dictionary = p.get("table", {"x": 0.0, "y": 0.0})
 		var bb := Table.bbox_of(p["outline"])
 		var vm: float = (bb[1] + bb[3]) * 0.5
@@ -1946,9 +2354,9 @@ func _build_stitches() -> void:
 	for i in order.size():
 		index_of[String(order[i])] = i
 	var si := 0
-	for s in seams:
-		var a = Table.piece_by_id(pieces, String(s["a"][0]))
-		var b = Table.piece_by_id(pieces, String(s["b"][0]))
+	for s in _sim_seams:
+		var a = Table.piece_by_id(_sim_pieces, String(s["a"][0]))
+		var b = Table.piece_by_id(_sim_pieces, String(s["b"][0]))
 		si += 1
 		if a == null or b == null:
 			continue

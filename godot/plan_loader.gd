@@ -79,7 +79,8 @@ static func build(plan: Dictionary, sections: Dictionary, arms: Dictionary, stan
 	var order: Array = []
 	var first := {}
 	for pc in plan["pieces"]:
-		var idx := sim.add_polygon_panel(to_outline(pc["outline"]), quality["edge"], fabric_id,
+		# an outfit's merged plan carries each piece's own fabric (outfit.gd); a single garment uses fabric_id
+		var idx := sim.add_polygon_panel(to_outline(pc["outline"]), quality["edge"], String(pc.get("fabric", fabric_id)),
 			Vector3.ZERO, Vector3.RIGHT, Vector3.UP, float(pc.get("grain", 0.0)), String(pc.get("id", "?")))
 		if idx < 0:
 			push_error("plan_loader: panel failed: " + String(pc.get("id", "?")))

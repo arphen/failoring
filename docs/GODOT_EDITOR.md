@@ -12,12 +12,45 @@ the commands in `docs/NATIVE_NOTES.md`. Open `godot/` in Godot 4.3 and run `edit
 (it is the project's main scene). First launch imports assets (`.godot/`, `*.import`;
 untracked, see `godot/.gitignore`).
 
-* Left: plan selector (built-in, drafted, FreeSewing), re-draft, mesh quality, motion,
-  open/save pattern JSON, demo, live sim stats.
+* Left tabs: Library (garment cards with a 2D pattern preview; double-click or Add puts a
+  garment on the mannequin; save the garment on the table, rename, delete) and Controls
+  (plan selector, re-draft, mesh quality, motion, open/save pattern JSON, demo, live sim stats).
+  See "Garment library and outfit" below.
 * Cutting table: Select/Sew tools, Fit, snap 5 mm; drag pieces and corners,
   double-click an edge to add a corner, Del removes, wheel zooms, V/S/F/Esc work.
 * 3D: orbit drag, wheel zoom; timeline scrub through cut, move, sew, drape.
-* Right tabs: Piece, Seams, Body, Fabric, Pattern, Shoot.
+* Right tabs: Outfit, Piece, Seams, Body, Fabric, Pattern, Shoot.
+
+## Garment library and outfit (`godot/library.gd`, `library_panel.gd`, `outfit.gd`)
+
+The library holds the garments the editor can draft or load: built-in plans, FreeSewing
+(tee, pencil skirt, chinos, for the nearest preset), drafted garments (trousers, tank, shirt)
+and saved garments in `user://library/` (JSON, format `failoring-library/1`, category tops,
+bottoms, skirts or custom). Each card shows the pattern outlines and the preset it is fitted for.
+
+The outfit is the list of garments on the mannequin, inner first. Each entry has a fabric, a
+colour, a visibility, a lock, and a layer (its index). The Outfit tab lists them: Show, lock,
+Up/Down, Remove, fabric, colour, and Re-draft when the outfit's body preset changed. Clicking a
+name makes that garment the active one: the cutting table edits only the active garment.
+
+The shown garments are merged into one plan (`outfit.gd`) and simulated together:
+
+* ids get a garment prefix (`g<uid>_<piece>`), seams keep their edge numbers, and each piece keeps
+  its fabric;
+* each layer further out adds 8 mm to the pieces' wrap clearance, so the outer garment starts
+  outside the inner one (tee under chinos: the chinos wrap 8 mm further out);
+* the solver's self collision is turned on when two or more garments are shown. It is a global
+  vertex-triangle test over all cloth triangles (`cloth_core` `solveSelfCollision`), so garments
+  collide with each other; seams never join two garments.
+
+Re-draft: drafted garments follow the live body (as before). FreeSewing and saved garments keep
+their outline until Re-draft is pressed, which drafts them for the current preset. Locking a garment
+freezes its pattern: no table edits, no re-draft, no plan change; its fabric and visibility can still change.
+
+Limitations: no seams across garments; the table shows the active garment only; "Save pattern"
+writes the active garment only; a saved garment's outline is not re-drafted unless it was drafted
+from a FreeSewing or drafted source; collisions rely on the clearance steps and the solver's
+self collision (no garment-specific friction or pressure).
 * Bottom: timeline (|<< < play > >>, speed, stage buttons, scrub, +60 frames, restart).
 
 Environment (checks, shots, matrix runs):
@@ -125,11 +158,22 @@ garbage in any implementation.
   `godot/builtin_plans.gd`: ports above.
 * `godot/scripts/body_loader.gd`: `FailoringBody` mesh node (OBJ + walk sheet player,
   `show_pose`/`use_custom` for live bodies).
+* `godot/library.gd`, `godot/library_panel.gd`, `godot/garment_preview.gd`: garment library
+  (catalogue, saved garments, the Library tab and its 2D previews).
+* `godot/outfit.gd`: merges the shown garments into one plan (ids, fabrics, layer clearance).
 * `godot/tests/`: `api_smoke.tscn` (wrapper), `wrap_check.tscn`, `body_check.tscn`,
-  `draft_check.tscn`.
+  `draft_check.tscn`, `outfit_check.tscn` (tee + chinos merged, stepped, and the editor's outfit
+  actions: add, move, fabric, re-draft, lock, save/rename/delete, remove).
 
 ## Known issues (see also `docs/STATUS.md`)
 
+* The tracked `godot/bin/libfailoring.so` predates the current `FailoringSim` API (`add_seam`
+  returns void there), so the editor does not compile against it: rebuild the extension with
+  `docs/NATIVE_NOTES.md` first. `godot/walk_demo.gd` also fails to parse under Godot 4.3
+  (an untyped `var idx` at line 136); it is not used by the editor.
+* Outfit: the merged sim is checked headless (`tests/outfit_check.tscn`) and the layout was
+  looked at in a virtual display. Dragging, the 3D view and the cards' double-click were
+  not exercised by a script.
 * The pencil skirt twists on tall/curvy/athletic and the chinos waistband comes out
   1.2 m long: upstream pattern issues, visible in the editor as-is. The A-line slides
   down like in the handoff notes.

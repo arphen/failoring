@@ -424,6 +424,16 @@ func _down(spos: Vector2, button: int) -> void:
 	if button == MOUSE_BUTTON_MIDDLE or button == MOUSE_BUTTON_RIGHT or space_down:
 		drag = {"kind": "pan", "sx": sx, "sy": sy, "ox": ox, "oy": oy}
 		return
+	if ed.active_locked():
+		# a locked garment can be looked at, not edited: a click selects its piece, nothing else
+		var hl: Variant = hit_piece(sx, sy)
+		if hl != null:
+			ed.sel = (hl as Dictionary)["id"]
+			ed.sel_v = -1
+			ed.changed("ui")
+		else:
+			drag = {"kind": "pan", "sx": sx, "sy": sy, "ox": ox, "oy": oy}
+		return
 	if ed.tool == "sew":
 		var best: Variant = null
 		for p in ed.pieces:
@@ -548,7 +558,7 @@ func _up() -> void:
 
 
 func _dbl(spos: Vector2) -> void:
-	if ed.tool != "select":
+	if ed.tool != "select" or ed.active_locked():
 		return
 	var p: Variant = null
 	if ed.sel != null:
@@ -601,7 +611,7 @@ func _unhandled_key_input(e: InputEvent) -> void:
 		set_tool("sew")
 	elif k.keycode == KEY_F:
 		fit()
-	elif k.keycode == KEY_DELETE or k.keycode == KEY_BACKSPACE:
+	elif (k.keycode == KEY_DELETE or k.keycode == KEY_BACKSPACE) and not ed.active_locked():
 		var p = null
 		if ed.sel != null:
 			p = piece_by_id(ed.pieces, ed.sel)
