@@ -171,3 +171,14 @@ test alone. One preset, synthetic variants, cantilever only.
 8. Uncertain: the Peirce-style formula in the code (marked UNVERIFIED); the elastica code is checked against
    its own ODE and small-load limit, not against a textbook table. The ISO 139 reference in FABRIC_TESTING.md
    is from memory.
+
+## Final ctest (this branch head, Release, build_t1)
+    1/6 Test #1: test_basics ......................   Passed    0.22 sec
+    2/6 Test #2: test_cantilever ..................   Passed    3.46 sec
+    3/6 Test #3: test_drape .......................   Passed  336.13 sec
+    4/6 Test #4: test_garment .....................   Passed   47.40 sec
+    5/6 Test #5: test_sdf_grid ....................   Passed    9.66 sec
+    6/6 Test #6: test_fabric_bench ................   Passed    0.65 sec
+  100 % tests passed, 0 failed out of 6.
+  Note: test_drape here took 336 s (less contention than the first run, which took 1453 s). Its printed table is hidden
+  by ctest; the checks it makes (DC range, KE, clearance, ordering) all pass.
