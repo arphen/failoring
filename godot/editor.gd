@@ -13,6 +13,7 @@ const Wrap = preload("res://wrap.gd")
 const Info = preload("res://info.gd")
 const Builtin = preload("res://builtin_plans.gd")
 const Table = preload("res://table.gd")
+const Look = preload("res://look.gd")
 
 const QUALITIES := {
 	"draft": {"label": "Draft (fast)", "edge": 0.060, "sub": 1, "newton": 6, "frames": 36},
@@ -100,6 +101,7 @@ func _ready() -> void:
 	table.ed = self
 	stage = $UI/Root/Main/ViewPane/View/Stage
 	sub_view = $UI/Root/Main/ViewPane/View
+	Look.apply_ui($UI/Root, sub_view)
 	M = BodyGen.load_data(PlanLoader.load_json("res://assets/body_data.json"))
 	meas = (BodyGen.PRESETS["average"] as Dictionary).duplicate()
 	_build_scene()
@@ -140,43 +142,35 @@ func _apply_auto_env() -> void:
 func _build_scene() -> void:
 	var env := WorldEnvironment.new()
 	env.environment = Environment.new()
-	env.environment.background_mode = Environment.BG_COLOR
-	env.environment.background_color = Color(0.12, 0.13, 0.15)
-	env.environment.ambient_light_color = Color(0.6, 0.6, 0.65)
-	env.environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	Look.environment(env.environment)
 	stage.add_child(env)
 	var sun := DirectionalLight3D.new()
 	sun.rotation_degrees = Vector3(-50, 30, 0)
-	sun.shadow_enabled = true
+	Look.key_light(sun)
 	stage.add_child(sun)
+	Look.fill_light(stage)
 	var floor_node := MeshInstance3D.new()
 	var disc := CylinderMesh.new()
 	disc.top_radius = 9.0
 	disc.bottom_radius = 9.0
 	disc.height = 0.02
 	floor_node.mesh = disc
-	var fmat := StandardMaterial3D.new()
-	fmat.albedo_color = Color(0.14, 0.16, 0.19)
-	floor_node.material_override = fmat
+	floor_node.material_override = Look.floor_material()
 	floor_node.position = Vector3(0, -0.011, 0)
 	stage.add_child(floor_node)
 	cam_pivot = Node3D.new()
 	cam_pivot.position = Vector3(0, 0.9, 0)
 	stage.add_child(cam_pivot)
 	cam = Camera3D.new()
+	Look.camera(cam)
 	cam.position = Vector3(0, 0, dist)
 	cam_pivot.add_child(cam)
 	body_node = BodyView.new()
-	var skin := StandardMaterial3D.new()
-	skin.albedo_color = Color(0.85, 0.68, 0.58)
-	body_node.material_override = skin
+	body_node.material_override = Look.body_material()
 	stage.add_child(body_node)
 	cloth_node = MeshInstance3D.new()
 	cloth_node.extra_cull_margin = 0.5
-	var cmat := StandardMaterial3D.new()
-	cmat.vertex_color_use_as_albedo = true
-	cmat.cull_mode = BaseMaterial3D.CULL_DISABLED
-	cloth_node.material_override = cmat
+	cloth_node.material_override = Look.cloth_material()
 	stage.add_child(cloth_node)
 
 
@@ -1476,6 +1470,7 @@ func _set_cloth_mesh(disp: PackedVector3Array) -> void:
 	arr[Mesh.ARRAY_VERTEX] = disp
 	arr[Mesh.ARRAY_INDEX] = idx
 	arr[Mesh.ARRAY_COLOR] = _cloth_colors()
+	arr[Mesh.ARRAY_NORMAL] = Look.cloth_normals(disp, idx)
 	var m := ArrayMesh.new()
 	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
 	cloth_node.mesh = m
@@ -1490,7 +1485,7 @@ func _cloth_colors() -> PackedColorArray:
 	var ecount: int = mesh_edges.size() / 2
 	var col := PackedColorArray()
 	col.resize(n + ecount)
-	var base := Color(str(Table.FABRIC_COLORS.get(fabric_id, "#9fb7d6")))
+	var base := Look.cloth_base(str(Table.FABRIC_COLORS.get(fabric_id, "#9fb7d6")))
 	var order: Array = meta["order"]
 	for i in order.size():
 		var pid := String(order[i])
@@ -1583,9 +1578,7 @@ func _table_layout() -> Dictionary:
 func _build_mat() -> void:
 	if mat_node == null:
 		mat_node = MeshInstance3D.new()
-		var mm := StandardMaterial3D.new()
-		mm.albedo_color = Color(0.16, 0.27, 0.25)
-		mat_node.material_override = mm
+		mat_node.material_override = Look.table_material()
 		stage.add_child(mat_node)
 	var l := _table_layout()
 	var w: float = maxf(1.6, l["w"] + 0.6)
