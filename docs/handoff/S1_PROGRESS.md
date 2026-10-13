@@ -32,11 +32,24 @@ time reported by each test is the more reliable figure.
   The DC tolerance of 2 points is FAILED for silk and cotton. This is NOT yet explained. Key suspicion: the dynamic
   reference is not settled. Silk and cotton ran the full 300-frame cap, and the stop test (KE < 1e-8 after frame 100)
   never fired for them, so the reference is an unfinished drape. Not verified yet. The tolerance has not been changed.
-- test_drape: see the final results below.
+- test_drape: pass (RESULT: ok), 40 min wall, 6.4 min CPU on the shared machine. Dynamic reference at h = 10 mm:
+  | fabric | DC % | frames | final KE (J) |
+  |---|---|---|---|
+  | cotton_poplin | 65.0 | 300 (cap) | 3.6e-07 |
+  | denim_12oz | 80.7 | 214 | 9.3e-09 |
+  | linen_medium | 81.2 | 300 (cap) | 8.1e-08 |
+  | wool_suiting | 64.8 | 125 | 8.8e-09 |
+  | silk_charmeuse | 46.6 | 300 (cap) | 2.2e-07 |
+  | polyester_chiffon | 43.1 | 300 (cap) | 1.9e-07 |
+  | canvas_heavy | 92.8 | 179 | 8.4e-09 |
+  | cotton_jersey | 27.6 | 223 | 8.9e-09 |
+  | lambskin_leather | 90.9 | 300 (cap) | 5.9e-08 |
+  Five fabrics hit the 300-frame cap with KE above the 1e-8 J stop threshold, so their dynamic DC is not a converged value.
+  The existing test accepts this; it is not changed.
 - test_garment (pass) took 745 s wall on the shared machine.
 
 ## Still unfinished
 - Explain the silk and cotton drape-coefficient gap: check the dynamic reference's final kinetic energy (is it settled?)
   and whether a longer dynamic run moves its DC toward the static value. Do not relax the tolerance.
-- Commit and push the progress to date; the test_drape result is still pending.
+- Probe (scratch, outside the repo): silk dynamic run to 900 frames, DC every 50 frames, to see whether the dynamic DC drifts.
 - Nothing in this log has been verified for the done-criteria yet.
