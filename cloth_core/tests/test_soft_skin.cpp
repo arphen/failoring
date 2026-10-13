@@ -35,7 +35,7 @@ struct RingSetup {
 };
 
 struct RingResult {
-    Real delta = 0, pSoft = 0, pRigid = 0, pTotal = 0, ke = 0, gap = 0;
+    Real delta = 0, deltaW = 0, pSoft = 0, pRigid = 0, pTotal = 0, ke = 0, gap = 0;
     int n = 0;
     Real Reff = 0;
 };
@@ -145,11 +145,12 @@ static RingResult runRing(const RingSetup& s, int frames = 220, std::vector<Real
         if (std::fabs(q.y) > 0.02) continue;  // middle band only: free hems relax the ring
         const Real rad = std::sqrt(q.x * q.x + q.z * q.z);
         r.delta += Reff - rad;
+        r.deltaW += (Reff - rad) * area[i];  // area-weighted: the pressure average uses the same weights
         r.pSoft += ps[i] * area[i]; r.pRigid += pr[i] * area[i]; r.pTotal += pt[i] * area[i];  // area-weighted: see vertexAreas()
         asum += area[i];
         ++cnt;
     }
-    r.delta /= cnt; r.pSoft /= asum; r.pRigid /= asum; r.pTotal /= asum;
+    r.delta /= cnt; r.deltaW /= asum; r.pSoft /= asum; r.pRigid /= asum; r.pTotal /= asum;
     r.ke = cs.kineticEnergy();
     r.gap = cs.maxSeamGap();
     if (std::getenv("FL_SKIN_DEBUG"))
@@ -179,7 +180,7 @@ static void testRing() {
                 r.delta * 1e3, 100 * (r.delta - dExp) / dExp, r.pSoft, 100 * (r.pSoft - pExp) / pExp, r.pRigid, r.ke, r.gap * 1e3);
     CHECK_MSG(std::fabs(r.delta - dExp) < 0.05 * dExp, "delta %.4f mm vs expected %.4f mm", r.delta * 1e3, dExp * 1e3);
     CHECK_MSG(std::fabs(r.pSoft - pExp) < 0.05 * pExp, "pressure %.1f Pa vs expected %.1f Pa", r.pSoft, pExp);
-    CHECK_MSG(std::fabs(r.pSoft - s.k * r.delta) < 1e-6 * pExp, "pressure is not k*delta");
+    CHECK_MSG(std::fabs(r.pSoft - s.k * r.deltaW) < 1e-6 * pExp, "pressure is not k*delta (area-weighted)");
     CHECK_MSG(r.pRigid < 0.02 * pExp, "rigid hold carries %.1f Pa inside the soft layer", r.pRigid);
     CHECK(r.delta < s.dmax);
     {
