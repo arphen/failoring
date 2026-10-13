@@ -48,8 +48,30 @@ time reported by each test is the more reliable figure.
   The existing test accepts this; it is not changed.
 - test_garment (pass) took 745 s wall on the shared machine.
 
-## Still unfinished
-- Explain the silk and cotton drape-coefficient gap: check the dynamic reference's final kinetic energy (is it settled?)
-  and whether a longer dynamic run moves its DC toward the static value. Do not relax the tolerance.
-- Probe (scratch, outside the repo): silk dynamic run to 900 frames, DC every 50 frames, to see whether the dynamic DC drifts.
-- Nothing in this log has been verified for the done-criteria yet.
+## Diagnosis of the drape mismatch (scratch probes outside the repo, not committed)
+- Dynamic silk settle run to 900 frames: DC stays between 45.5 and 46.7 from frame 100 on (jitter about +-0.6 points),
+  final KE 7.9e-8 J. It never reaches the 1e-8 J stop threshold, but its DC is stable, so 46 is a usable reference.
+  The static 38.0 is therefore a real 7-8 point gap, not a dynamic-settle artefact.
+- Energy comparison (silk, h = 10 mm, same mesh):
+  | route | DC | potential energy (J) | converged |
+  |---|---|---|---|
+  | dynamic, 300 frames | 46.6 | -5.828e-4 | (KE 2.2e-7) |
+  | static, cold start (gravity ramp + pseudo-transient) | 38.0 | -5.034e-4 | yes, residual 7.7e-4, 341 Newton it |
+  | static, warm start from the dynamic shape | 46.5 | -5.847e-4 | residual 1.0e-3, 66 it |
+  The cold static solve stops at a stationary point about 14 % HIGHER in energy than the dynamic settle. It is a
+  different metastable equilibrium, reached by the gravity-ramp path. From the dynamic shape it moves to a slightly lower
+  energy. So the solver is not wrong about being stationary, but the continuation path picks a different equilibrium
+  than the physical settle. This is the multiple-equilibria / path-dependence issue in the handoff. The 2-point DC
+  criterion is the wrong test for it; an energy criterion would show the difference directly.
+- Not tried: friction (the static solve has none; the dynamic path applies position-level friction to penetrating
+  vertices only, probably small); slower gravity ramp; larger initial proximal term. Each is a separate experiment.
+
+## Still unfinished (for the next agent)
+- test_static.cpp implements only the drape-disc case. The garment tube, cantilever, warm-start-after-edit and
+  path-dependence checks listed in its header are NOT written. The CMake entry exists; the file builds.
+- The drape-coefficient check fails for silk and cotton (see the table above). Not fixed. The tolerance was not changed.
+- Warm start works mechanically (66 Newton iterations from the dynamic shape, factorisation pattern reused), but it has
+  not been measured against a cold start after an actual edit.
+- ARCHITECTURE.md and cloth.hpp reference docs/agent_notes/S1_static_settle.md, which does not exist.
+- Done-criteria status: (1) API present and builds: yes. (2) tests: partial (drape only, failing). (3) existing tests
+  pass: yes, all five existing binaries, unchanged tolerances.
