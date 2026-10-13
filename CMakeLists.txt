@@ -19,7 +19,8 @@ add_library(cloth_core STATIC
   cloth_core/src/sdf_grid.cpp
   cloth_core/src/barrier_contact.cpp
   cloth_core/src/barrier_ccd.cpp
-  cloth_core/src/barrier_selfcontact.cpp)
+  cloth_core/src/barrier_selfcontact.cpp
+  cloth_core/src/cloth_barrier.cpp)
 target_include_directories(cloth_core PUBLIC cloth_core/include)
 target_compile_options(cloth_core PRIVATE -Wall -Wextra)
 
