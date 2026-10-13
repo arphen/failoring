@@ -16,7 +16,7 @@
   // top: world height the piece's highest point is hung from ('hps' high point shoulder, 'waist').
   I.RECIPES = {
     teagan: { title: 'Teagan t-shirt', fabric: 'cotton_jersey', url: 'https://freesewing.org/docs/designs/teagan',
-      parts: { 'teagan.front': { kind: 'body', theta: 0, top: 'hps', role: 'Front' }, 'teagan.back': { kind: 'body', theta: 180, top: 'hps', role: 'Back' }, 'teagan.sleeve': { kind: 'sleeve', role: 'Sleeve' } } },
+      parts: { 'teagan.front': { kind: 'body', theta: 0, top: 'hps', role: 'Front', holdTop: 'ext' }, 'teagan.back': { kind: 'body', theta: 180, top: 'hps', role: 'Back', holdTop: 'ext' }, 'teagan.sleeve': { kind: 'sleeve', role: 'Sleeve' } } },
     aaron: { title: 'Aaron a-shirt', fabric: 'cotton_jersey', url: 'https://freesewing.org/docs/designs/aaron',
       parts: { 'aaron.front': { kind: 'body', theta: 0, top: 'hps', role: 'Front' }, 'aaron.back': { kind: 'body', theta: 180, top: 'hps', role: 'Back' } } },
     charlie: { title: 'Charlie chinos', fabric: 'cotton_poplin', url: 'https://freesewing.org/docs/designs/charlie', free: /^(hem|hemBase|bottom)$/,   // the front's waist edge, slant and upper side edge all carry the pocket-bag label; the slant is sewn to the back's upper side edge (no pocket)
@@ -98,7 +98,7 @@
       // girth towards 0 over the last millimetres, stretching the top edge several times round the body (the waistband's top
       // edge wound 3.6 turns on the tall body). The tee relies on the old behaviour (it falls off with the new one), so it is
       // opt-in until the tee's top rows are reworked.
-      const hold = fitters.some((p) => p.spec.holdTop), ext = hold ? dy : 0;
+      const hold = fitters.some((p) => p.spec.holdTop === true) || (fitters.some((p) => p.spec.holdTop) ? 'ext' : false), ext = hold ? dy : 0;
       const rowW = (pc, y) => { let v = y - pc.wrap.y + pc.bb.y0; if (v < pc.bb.y0 - ext - 1e-6 || v > pc.bb.y1 + ext + 1e-6) return 0; v = Math.max(pc.bb.y0 + 1e-5, Math.min(pc.bb.y1 - 1e-5, v)); let lo = 1e9, hi = -1e9;
         for (const ch of pc.chains) for (let i = 0; i + 1 < ch.pts.length; i++) { const a = ch.pts[i], b = ch.pts[i + 1]; if ((a[1] - v) * (b[1] - v) <= 0 && a[1] !== b[1]) { const x = a[0] + (b[0] - a[0]) * (v - a[1]) / (b[1] - a[1]); lo = Math.min(lo, x); hi = Math.max(hi, x); } }
         return hi > lo ? hi - lo : 0; };
@@ -106,7 +106,7 @@
       // The top rows of a piece only cover the highest part of a curved top edge (the waist curve of a skirt, a shoulder slope):
       // the chord there is far narrower than the girth the edge really spans, and kk = per / P would spread the pattern two or
       // three times round the body, so the top corners start on the far side of it. Hold the girth of the first full row.
-      if (hold) { let jt = n - 1; while (jt >= 2 && P[jt] < 0.9 * P[jt - 2]) jt--; for (let k = jt + 1; k < n; k++) P[k] = P[jt]; }
+      if (hold === true) { let jt = n - 1; while (jt >= 2 && P[jt] < 0.9 * P[jt - 2]) jt--; for (let k = jt + 1; k < n; k++) P[k] = P[jt]; }
       for (const pc of fitters) { pc.wrap.P = P; pc.wrap.Py0 = y0; pc.wrap.Pdy = dy; }
     }
     // ---- 3. start geometry of every chain (3D) and seam matching
