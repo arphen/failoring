@@ -42,8 +42,9 @@ const UI_FONT_SIZE := 13
 
 # ---------------------------------------------------------------- 3D
 static func environment(e: Environment) -> void:
-	e.background_mode = Environment.BG_COLOR
-	e.background_color = BG
+	# The 3D viewport is transparent and the BG colour is drawn behind it (see apply_ui). A
+	# BG_COLOR background would go through the ACES tone mapper and come out near-black.
+	e.background_mode = Environment.BG_CLEAR_COLOR
 	e.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	e.ambient_light_color = SKY
 	e.ambient_light_energy = HEMI
@@ -151,6 +152,19 @@ static func apply_ui(root: Control, vp: SubViewport) -> void:
 	vp.msaa_3d = Viewport.MSAA_4X
 	RenderingServer.set_default_clear_color(UI_TABLE_BG)
 	root.theme = make_theme()
+	# 3D backdrop: the SubViewport is transparent, and a flat BG rect behind its container shows
+	# through. The rect is plain 2D colour, so it matches the browser's scene.background exactly
+	# (no tone mapping, no fog).
+	vp.transparent_bg = true
+	var pane := vp.get_parent() as Control
+	if pane != null and pane.get_node_or_null("Backdrop") == null:
+		var bd := ColorRect.new()
+		bd.name = "Backdrop"
+		bd.color = BG
+		bd.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		bd.show_behind_parent = true
+		bd.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		pane.add_child(bd)
 
 
 static func _box(bg: Color, border: Color = Color(0, 0, 0, 0), radius: int = 6, margin_h: float = 10.0, margin_v: float = 5.0, border_w: int = 1) -> StyleBoxFlat:
@@ -217,14 +231,14 @@ static func make_theme() -> Theme:
 
 	# tabs: flat, chalk underline on the selected tab
 	t.set_stylebox("panel", "TabContainer", _box(UI_PANEL, Color(0, 0, 0, 0), 0, 8.0, 8.0, 0))
-	var tab_sel := _box(Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0, 10.0, 8.0, 0)
+	var tab_sel := _box(Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0, 6.0, 8.0, 0)
 	tab_sel.border_width_bottom = 2
 	tab_sel.border_color = UI_CHALK
 	t.set_stylebox("tab_selected", "TabContainer", tab_sel)
-	t.set_stylebox("tab_unselected", "TabContainer", _box(Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0, 10.0, 8.0, 0))
-	t.set_stylebox("tab_hovered", "TabContainer", _box(UI_HOVER, Color(0, 0, 0, 0), 0, 10.0, 8.0, 0))
-	t.set_stylebox("tab_disabled", "TabContainer", _box(Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0, 10.0, 8.0, 0))
-	t.set_stylebox("tab_focus", "TabContainer", _box(Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0, 10.0, 8.0, 0))
+	t.set_stylebox("tab_unselected", "TabContainer", _box(Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0, 6.0, 8.0, 0))
+	t.set_stylebox("tab_hovered", "TabContainer", _box(UI_HOVER, Color(0, 0, 0, 0), 0, 6.0, 8.0, 0))
+	t.set_stylebox("tab_disabled", "TabContainer", _box(Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0, 6.0, 8.0, 0))
+	t.set_stylebox("tab_focus", "TabContainer", _box(Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0, 6.0, 8.0, 0))
 	t.set_color("font_selected_color", "TabContainer", UI_INK)
 	t.set_color("font_unselected_color", "TabContainer", UI_DIM)
 	t.set_color("font_hovered_color", "TabContainer", UI_INK)

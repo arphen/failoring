@@ -93,6 +93,7 @@ var plan_opt: OptionButton
 var quality_opt: OptionButton
 var motion_opt: OptionButton
 var status_label: Label
+var _fold_open := false     # Piece tab "Edges" section, kept across tab rebuilds
 @onready var tabs: TabContainer = $UI/Root/Main/Right/Tabs
 
 
@@ -176,7 +177,7 @@ func _build_scene() -> void:
 
 # ------------------------------------------------------------------ UI
 func _build_ui() -> void:
-	var box: VBoxContainer = $UI/Root/Main/Left/VBox
+	var box: VBoxContainer = $UI/Root/Main/Left/Scroll/VBox
 	for c in box.get_children():
 		c.queue_free()
 	_add_opt(box, "Plan", "PlanOpt", _plan_entries().map(func(e: Array) -> String: return e[0]), _plan_title(plan_key))
@@ -766,8 +767,6 @@ func _refresh_piece_tab() -> void:
 			func() -> float: return float((p.get("wrap", {}) as Dictionary).get("ring", 0.0)),
 			func(v: float) -> void: (p["wrap"] as Dictionary)["ring"] = v; changed("structure-drag"),
 			func(v: float) -> String: return "%.1f" % v)
-		vb.add_child(_h4("Edges"))
-		var edges := Label.new()
 		var lines := []
 		for i in (p["outline"] as Array).size():
 			var mark := ""
@@ -777,8 +776,7 @@ func _refresh_piece_tab() -> void:
 					mark = " (seam %d)" % (si + 1)
 					break
 			lines.append("edge %d%s: %.1f cm" % [i, mark, Table.edge_len(p["outline"], i) * 100.0])
-		edges.text = "\n".join(lines)
-		vb.add_child(edges)
+		vb.add_child(_fold_section("Edges (%d)" % lines.size(), lines))
 		var btns := HBoxContainer.new()
 		var mb := Button.new()
 		mb.text = "Mirror"
@@ -916,6 +914,38 @@ func _h4(text: String) -> Label:
 	var l := Label.new()
 	l.text = text
 	return l
+
+
+# Collapsed-by-default section: a toggle header and a scroll box that shows about six rows when
+# open. Long lists (one row per edge) stay available without stretching the side panel. The
+# open/closed state survives the tab rebuilds that happen on every edit.
+func _fold_section(title: String, rows: Array) -> VBoxContainer:
+	var box := VBoxContainer.new()
+	var head := Button.new()
+	head.toggle_mode = true
+	head.button_pressed = _fold_open
+	head.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	head.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.text = ("[-] " if _fold_open else "[+] ") + title
+	box.add_child(head)
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.visible = _fold_open
+	box.add_child(scroll)
+	var body := Label.new()
+	body.text = "\n".join(rows)
+	body.autowrap_mode = TextServer.AUTOWRAP_OFF
+	scroll.add_child(body)
+	# about six rows tall (the label's measured height per row, plus room for the scrollbar); set
+	# once the label has its theme font, i.e. after this box is in the tree
+	(func() -> void:
+		var per_row := body.get_minimum_size().y / float(maxi(rows.size(), 1))
+		scroll.custom_minimum_size = Vector2(0, per_row * 6.0 + 4.0)).call_deferred()
+	head.toggled.connect(func(on: bool) -> void:
+		_fold_open = on
+		head.text = ("[-] " if on else "[+] ") + title
+		scroll.visible = on)
+	return box
 
 
 func _sync_sec_row(key: String, s: HSlider, o: Label, auto: Button) -> void:
@@ -1927,7 +1957,9 @@ func _update_camera() -> void:
 	var h: float = float(meas.get("height", 1.68))
 	var s: float = _smooth(tl_t - 0.9)
 	cam_pivot.position = Vector3(0.0, lerpf(0.02, h * 0.52, s), lerpf(1.75, 0.0, s))
-	cam_pivot.rotation = Vector3(pitch + 0.45 * (1.0 - s), yaw, 0.0)
+	# negative pitch looks down (the camera sits above the pivot); the table view (s = 0) looks
+	# further down onto the cutting mat. The sign was flipped, which put the camera under the floor.
+	cam_pivot.rotation = Vector3(pitch - 0.45 * (1.0 - s), yaw, 0.0)
 	cam.position = Vector3(0.0, 0.0, lerpf(2.9, 3.3 * h / 1.68, s) * zoom)
 	cam.look_at(cam_pivot.global_position)
 

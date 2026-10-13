@@ -21,7 +21,11 @@ theme_override_constants/separation = 0
 [node name="Left" type="PanelContainer" parent="UI/Root/Main"]
 custom_minimum_size = Vector2(264, 0)
 
-[node name="VBox" type="VBoxContainer" parent="UI/Root/Main/Left"]
+[node name="Scroll" type="ScrollContainer" parent="UI/Root/Main/Left"]
+horizontal_scroll_mode = 0
+
+[node name="VBox" type="VBoxContainer" parent="UI/Root/Main/Left/Scroll"]
+size_flags_horizontal = 3
 theme_override_constants/separation = 4
 
 [node name="TablePane" type="VBoxContainer" parent="UI/Root/Main"]
@@ -49,7 +53,7 @@ size = Vector2i(800, 600)
 [node name="Stage" type="Node3D" parent="UI/Root/Main/ViewPane/View"]
 
 [node name="Right" type="PanelContainer" parent="UI/Root/Main"]
-custom_minimum_size = Vector2(320, 0)
+custom_minimum_size = Vector2(344, 0)
 
 [node name="Tabs" type="TabContainer" parent="UI/Root/Main/Right"]
 tab_alignment = 1
