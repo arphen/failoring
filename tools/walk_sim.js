@@ -3,6 +3,7 @@
 'use strict';
 const vm = require('vm'), fs = require('fs'), path = require('path');
 const root = path.join(__dirname, '..'), R = (...p) => path.join(root, ...p);
+const lib = require('./render_lib.js');
 const FL = require(R('app/src/shared.js')), Body = require(R('app/src/body.js')); require(R('app/src/gait.js')); require(R('app/src/draft.js'));
 const [plan = 'pencil', preset = 'average', nframes = '120', outArg] = process.argv.slice(2);
 const outdir = path.resolve(outArg || R('out/walk')); fs.mkdirSync(outdir, { recursive: true });
@@ -42,7 +43,9 @@ function finish() {
     for (let f = last - k + 1; f <= last; f++) { let s = 0; for (let i = 0; i < nv; i++) s += Math.hypot(frames[f].pos[3 * i] - frames[f - 1].pos[3 * i], frames[f].pos[3 * i + 1] - frames[f - 1].pos[3 * i + 1], frames[f].pos[3 * i + 2] - frames[f - 1].pos[3 * i + 2]); sp.push(s / nv); }
     const fl = frames[last];
     console.log('settle: mean vertex step (mm/frame) over last ' + k + ' frames ' + sp.map((v) => (v * 1000).toFixed(2)).join(' ') + ' | ke ' + (fl.ke == null ? 'n/a' : (+fl.ke).toExponential(2)) + ' gap ' + (fl.gap == null ? 'n/a' : (+fl.gap * 1000).toFixed(1) + 'mm') + ' clear ' + (fl.clear == null ? 'n/a' : (+fl.clear * 1000).toFixed(1) + 'mm')); }
-  if (process.env.DUMP) fs.writeFileSync(process.env.DUMP, JSON.stringify({ pos0: Array.from(frames[0].pos), pos: Array.from(frames[frames.length - 1].pos), n: meta.n, nd: meta.nd, uv: Array.from(meta.uv), ranges: meta.ranges, chains: meta.chains, seams: P.seams, ids: P.pieces.map((p) => p.id) }));
+  { const cl = frames.map((f, i) => [f.clear, i]).filter((x) => x[0] != null), gp = frames.map((f, i) => [f.gap, i]).filter((x) => x[0] != null);   // worst frame of the whole run (a walk can overrun the cloth long before the last frame)
+    if (cl.length) { const m = cl.reduce((a, b) => (b[0] < a[0] ? b : a)), g = gp.reduce((a, b) => (b[0] > a[0] ? b : a)); console.log('worst over the run: clearance ' + (m[0] * 1000).toFixed(1) + ' mm at frame ' + m[1] + ', seam gap ' + (g[0] * 1000).toFixed(1) + ' mm at frame ' + g[1]); } }
+  if (process.env.DUMP) fs.writeFileSync(process.env.DUMP, JSON.stringify({ pos0: Array.from(frames[0].pos), pos: Array.from(frames[frames.length - 1].pos), posPrev: Array.from(frames[Math.max(0, frames.length - 2)].pos), n: meta.n, nd: meta.nd, uv: Array.from(meta.uv), dtris: Array.from(meta.dtris), ranges: meta.ranges, chains: meta.chains, seams: P.seams, ids: P.pieces.map((p) => p.id) }));
   const pick = []; const n = 8, k0 = settle + 1, span = Math.min(cycle, frames.length - k0);
   if (process.env.PICK) process.env.PICK.split(',').forEach((v) => pick.push(Math.min(frames.length - 1, +v)));   // PICK=1,10,30,70: explicit frame indices
   else for (let i = 0; i < n; i++) pick.push(Math.min(frames.length - 1, k0 + Math.round(i * (span - 1) / (n - 1))));
@@ -52,27 +55,7 @@ function finish() {
   const sc = (fh - 40) / (yr[1] - yr[0]), pal = ['#3b5bdb', '#e03131', '#2f9e44', '#f08c00', '#9c36b5', '#0c8599', '#868e96', '#c2255c'];
   let pcOf = null;   // piece index per display triangle (display tris come four per simulation triangle)
   if (process.env.COLORBY === 'piece' && meta.dtris.length === 4 * (meta.tris ? meta.tris.length : meta.dtris.length / 4)) { pcOf = new Int8Array(meta.dtris.length / 3); meta.ranges.forEach((r, k) => { for (let s = r.triFirst; s < r.triFirst + r.triCount; s++) for (let q = 0; q < 4; q++) pcOf[4 * s + q] = k; }); }
-  const html = `<canvas id=c></canvas><script>
-const BT=${JSON.stringify(Array.from(M.tris))}, CT=${JSON.stringify(Array.from(meta.dtris))}, F=${JSON.stringify(sel)}, VIEWS=${JSON.stringify(views)}, PC=${JSON.stringify(pcOf ? Array.from(pcOf) : null)}, PAL=${JSON.stringify(pal)}, SC=${sc}, Y0=${yr[0]};
-const N=F.length, W=${fw}, H=${fh}, c=document.getElementById('c'); c.width=W*N; c.height=H*VIEWS.length; const g=c.getContext('2d');
-g.fillStyle='#e9e6e0'; g.fillRect(0,0,c.width,c.height);
-const hex=(h)=>[parseInt(h.slice(1,3),16),parseInt(h.slice(3,5),16),parseInt(h.slice(5,7),16)];
-function collect(P,T,view,ox,oy,col,out){ const sc=SC; const yy=(i)=>oy+H-20-(P[3*i+1]-Y0)*sc;
-  const pr=(i)=>view==='side'?[ox+W/2-P[3*i+2]*sc,yy(i),P[3*i]]:view==='back'?[ox+W/2+P[3*i]*sc,yy(i),-P[3*i+2]]:[ox+W/2-P[3*i]*sc,yy(i),P[3*i+2]];
-  for(let t=0;t<T.length/3;t++){const a=T[3*t],b=T[3*t+1],d=T[3*t+2];
-    const ax=P[3*a],ay=P[3*a+1],az=P[3*a+2],bx=P[3*b]-ax,by=P[3*b+1]-ay,bz=P[3*b+2]-az,cx=P[3*d]-ax,cy=P[3*d+1]-ay,cz=P[3*d+2]-az;
-    let nx=by*cz-bz*cy,ny=bz*cx-bx*cz,nz=bx*cy-by*cx; const l=Math.hypot(nx,ny,nz)||1; nx/=l;ny/=l;nz/=l;
-    const f=view==='side'?nx:view==='back'?-nz:nz; const pa=pr(a),pb=pr(b),pd=pr(d);
-    const sh=Math.max(0.18,Math.min(1,0.5*Math.abs(nz)+0.4*ny+0.25*Math.abs(nx)+0.3)); if(f<=0 && col!=='cloth') continue;
-    out.push([(pa[2]+pb[2]+pd[2])/3,pa,pb,pd,sh,col,f,col==='cloth'&&PC?PC[t]:-1]);}}
-F.forEach((fr,i)=>{ VIEWS.forEach((view,vi)=>{ g.save(); g.beginPath(); g.rect(i*W,vi*H,W,H); g.clip(); const out=[]; collect(fr.body,BT,view,i*W,vi*H,'body',out); collect(fr.cloth,CT,view,i*W,vi*H,'cloth',out);
-  out.sort((p,q)=>p[0]-q[0]);
-  for(const [d,pa,pb,pd,sh,col,f,pi] of out){ const k=Math.round(sh*225);
-    if(col==='cloth'){ if(pi>=0){ const h=hex(PAL[pi%PAL.length]), s=sh*(f>0?1:0.65); g.fillStyle='rgb('+Math.round(h[0]*s)+','+Math.round(h[1]*s)+','+Math.round(h[2]*s)+')'; } else g.fillStyle='rgb('+Math.round(k*0.35)+','+Math.round(k*0.45)+','+Math.round(k*0.8)+')'; }
-    else g.fillStyle='rgb('+k+','+Math.round(k*0.93)+','+Math.round(k*0.88)+')';
-    g.strokeStyle=g.fillStyle; g.lineWidth=0.6; g.beginPath(); g.moveTo(pa[0],pa[1]); g.lineTo(pb[0],pb[1]); g.lineTo(pd[0],pd[1]); g.closePath(); g.fill(); g.stroke(); }
-  g.fillStyle='#000'; g.font='16px sans-serif'; g.fillText(view+' frame '+fr.i,i*W+8,vi*H+20); g.restore(); }); });
-</script>`;
+  const html = lib.page({ BT: Array.from(M.tris), CT: Array.from(meta.dtris), F: sel, views, PC: pcOf ? Array.from(pcOf) : null, PAL: pal, sc, y0: yr[0], ss: +(process.env.SS || 2), W: fw, H: fh });
   fs.writeFileSync(path.join(outdir, `walk_${plan}_${preset}.html`), html);
   const { chromium } = require('/opt/npm-tools/node_modules/playwright');
   (async () => {

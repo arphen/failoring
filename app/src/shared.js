@@ -246,8 +246,24 @@ FL.makeWrapRows = (piece, body) => {
   const S = body.sections, w = piece.wrap, bb = FL.bbox(piece.outline), uc = (bb.x0 + bb.x1) / 2, o = piece.outline;
   const D = Math.PI / 180, NA = 180, clear = w.clear == null ? 0.012 : w.clear, vc = (bb.y0 + bb.y1) / 2;
   const theta = w.theta * D, yc = S.yCrotch || 0, zb = 0.05;
+  // wrap.lift (trousers, leg mode): { H, x0, dx, y: [] }. A drafted waist edge slopes (the back dips towards the side seam, the front
+  // towards the centre front); on the body the waistband is one ring. y[] is the world height of the piece's top edge per column
+  // (dx apart from x0), H the ring height. liftAt(u, y) stretches the column above the crotch so its top reaches H.
+  const yc0 = S.yCrotch || 0;
+  const liftAt = (u, y) => {
+    const L = w.lift; if (!L || !(y > yc0)) return y;
+    const f = Math.max(0, Math.min(L.y.length - 1, (u - L.x0) / L.dx)), i0 = Math.min(L.y.length - 2, Math.floor(f)), top = L.y[i0] + (L.y[i0 + 1] - L.y[i0]) * (f - i0);
+    return top > yc0 + 0.02 ? yc0 + (y - yc0) * (L.H - yc0) / (top - yc0) : y;
+  };
+  // The rows are measured on the lifted outline: its top edge is level, so the points of the sloping edge keep their place along the
+  // row. (Measured on the flat outline every point of the sloping part is the last point of its row, t = 1: a 19 cm top edge piled
+  // up on a 4 cm stretch of the body and the dart legs ran from the side seam to the middle of the back.)
+  let oE = o;
+  if (w.lift) { oE = []; for (let i = 0; i < o.length; i++) { const a = o[i], b = o[(i + 1) % o.length], n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / 0.004));
+    for (let j = 0; j < n; j++) { const u = a[0] + (b[0] - a[0]) * j / n, v = a[1] + (b[1] - a[1]) * j / n, y = w.y + (v - bb.y0); oE.push([u, v + liftAt(u, y) - y]); } } }
+  const vcap = w.lift ? bb.y0 + (w.lift.H - w.y) - 0.03 : w.vcap;   // rows above vcap share its extents (the lifted top rows are the waist edge, a few cm of it)
   const rowExt = (v) => { let lo = 1e9, hi = -1e9;
-    for (let i = 0; i < o.length; i++) { const a = o[i], b = o[(i + 1) % o.length]; if ((a[1] - v) * (b[1] - v) <= 0 && a[1] !== b[1]) { const x = a[0] + (b[0] - a[0]) * (v - a[1]) / (b[1] - a[1]); lo = Math.min(lo, x); hi = Math.max(hi, x); } }
+    for (let i = 0; i < oE.length; i++) { const a = oE[i], b = oE[(i + 1) % oE.length]; if ((a[1] - v) * (b[1] - v) <= 0 && a[1] !== b[1]) { const x = a[0] + (b[0] - a[0]) * (v - a[1]) / (b[1] - a[1]); lo = Math.min(lo, x); hi = Math.max(hi, x); } }
     return hi > lo ? [lo, hi] : [uc - 1e-4, uc + 1e-4]; };
   const nearest = (list, k) => { for (let d = 0; d < S.ny; d++) { if (k - d >= 0 && list[k - d] && list[k - d].length >= 6) return list[k - d]; if (k + d < S.ny && list[k + d] && list[k + d].length >= 6) return list[k + d]; } return null; };
   // polar description of a convex polygon around its area centroid (x centre optional)
@@ -305,7 +321,9 @@ FL.makeWrapRows = (piece, body) => {
   };
   const posAt = (u, v) => {
     if (w.mode === 'arm') return armPos(u, v);
-    const y = w.y + (v - bb.y0), k = Math.max(0, Math.min(S.ny - 1, Math.round(y / S.dy))), [x0, x1] = rowExt(w.vcap == null ? v : Math.min(v, w.vcap)), t = (u - x0) / (x1 - x0);   // vcap: rows above it share its extents (a slanted top edge would otherwise squeeze to nothing)
+    let y = w.y + (v - bb.y0), vv = v;
+    if (w.lift) { const yl = liftAt(u, y); vv = v + (yl - y); }   // the stretched column only gives the row extents; the height on the body stays the unstretched one
+    const k = Math.max(0, Math.min(S.ny - 1, Math.round(y / S.dy))), [x0, x1] = rowExt(vcap == null ? vv : Math.min(vv, vcap)), t = (u - x0) / (x1 - x0);
     let p;
     if (w.mode === 'leg') {
       const wt = ySmooth((y - (yc - zb)) / (2 * zb));
@@ -316,11 +334,19 @@ FL.makeWrapRows = (piece, body) => {
       // pattern x = distance along the section from the piece's centre line, on a section inflated until its girth equals
       // what all pieces of the garment cover at this height (w.P: total width per row), or compressed if the garment is smaller
       const Pi = (y - w.Py0) / w.Pdy, i0 = Math.max(0, Math.min(w.P.length - 1, Math.floor(Pi))), i1 = Math.min(w.P.length - 1, i0 + 1), Pw = w.P[i0] + (w.P[i1] - w.P[i0]) * Math.max(0, Math.min(1, Pi - i0));
-      const c0 = FL.sectionCurve(body, k, clear), d = Pw > c0.per ? Math.min(0.06, Math.round((Pw - c0.per) / (2 * Math.PI) * 1000) / 1000) : 0;
-      const c = d > 0 ? FL.sectionCurve(body, k, clear + d) : c0, kk = c.per / Pw;
-      // an underlap that crosses the centre line (back-skirt vent): lifted off the body so it lies over the other half, not in it
-      const cc = (w.over && u * w.over < 0) ? FL.sectionCurve(body, k, clear + d + 0.014) : c;
-      p = cc.pt(cc.phiAt(cc.cum(theta < 0 ? theta + 2 * Math.PI : theta) + u * kk * (cc.per / c.per)));
+      // w.tilt (a waistband on trousers): the ring's height offset per polar-angle bin, so its lower edge follows the sloping top edge of the trousers
+      const tiltAt = (phi) => { const T = w.tilt, n = T.length, f = ((((phi / (2 * Math.PI)) % 1) + 1) % 1) * n - 0.5, j = Math.floor(f), a = f - j; return T[((j % n) + n) % n] * (1 - a) + T[(((j + 1) % n) + n) % n] * a; };
+      const fitAt = (yy) => {
+        const kf = Math.max(0, Math.min(S.ny - 1, Math.round(yy / S.dy))), c0 = FL.sectionCurve(body, kf, clear), d = Pw > c0.per ? Math.min(0.06, Math.round((Pw - c0.per) / (2 * Math.PI) * 1000) / 1000) : 0;
+        const c = d > 0 ? FL.sectionCurve(body, kf, clear + d) : c0, kk = c.per / Pw;
+        // an underlap that crosses the centre line (back-skirt vent): lifted off the body so it lies over the other half, not in it
+        const cc = (w.over && u * w.over < 0) ? FL.sectionCurve(body, kf, clear + d + 0.014) : c;
+        const phi = cc.phiAt(cc.cum(theta < 0 ? theta + 2 * Math.PI : theta) + u * kk * (cc.per / c.per));
+        return { p: cc.pt(phi), phi };
+      };
+      let fr = fitAt(y);
+      if (w.tilt) { y += tiltAt(fr.phi); fr = fitAt(y); }
+      p = fr.p;
     } else if (w.mode === 'arc') {
       const c = FL.sectionCurve(body, k, clear), q = c.pt(c.phiAt(c.cum(theta < 0 ? theta + 2 * Math.PI : theta) + u));
       p = q;

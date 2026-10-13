@@ -8,6 +8,8 @@ import { Charlie } from '@freesewing/charlie';
 import { Aaron } from '@freesewing/aaron';
 const DESIGNS = { teagan: Teagan, penelope: Penelope, charlie: Charlie, aaron: Aaron };
 const [design, mfile, outFile, onlyArg] = process.argv.slice(2);
+// charlie: waistHeight 1 puts the trousers' top edge on the natural waist and no more: the default (-4%) is a hip-hugger that slides below the crotch, and tuning it
+// to make the finished band land exactly on the waist line (an earlier calibration) makes the top edge 10-13% longer than the waist, so the trousers slide down
 const DESIGN_OPTS = { charlie: { waistHeight: 1 } };
 const ref = { ...models.cisFemaleAdult34 };
 const mm = mfile && mfile !== '-' ? JSON.parse(fs.readFileSync(mfile, 'utf8')) : null;
@@ -26,13 +28,17 @@ if (mm) {   // scale the reference set with the mannequin: girths by their own r
     waistToUpperLeg: (mm.yWaist - mm.yCrotch) * 1000, shoulderToShoulder: mm.shoulderToShoulder * 1000,
     hpsToWaistBack: (mm.yNeck + 0.02 - mm.yWaist) * 1000 * 1.03, shoulderToElbow: mm.upperArmLen * 1000 * 1.03, shoulderToWrist: (mm.upperArmLen + mm.foreArmLen) * 1000 * 1.03 });
 }
+if (mm && mm.seat) Object.assign(meas, {   // read off the mannequin like a tape would (the reference ratios above overstate the seat of this body by ~8%)
+  seat: mm.seat * 1000, seatBack: mm.seatBack * 1000, waistBack: mm.waistBack * 1000, waistToSeat: (mm.yWaist - mm.ySeat) * 1000,
+  crossSeam: mm.crossSeam * 1000, crossSeamFront: mm.crossSeamFront * 1000 });
 if (process.env.OVR) Object.assign(meas, JSON.parse(process.env.OVR));   // debugging: override single measurements, e.g. OVR='{"waistBack":187}'
 const settings = {};
 if (onlyArg) settings.only = onlyArg.split(',');
-if (DESIGN_OPTS[design]) settings.options = { ...DESIGN_OPTS[design] };   // charlie: waistHeight 1 puts the top at the natural waist (the default -4% is a hip-hugger that slides below the crotch)
+if (DESIGN_OPTS[design]) settings.options = { ...DESIGN_OPTS[design] };
 if (process.env.OPTS) settings.options = { ...(settings.options || {}), ...JSON.parse(process.env.OPTS) };   // design options, e.g. OPTS='{"waistHeight":0.8}'
 const D = DESIGNS[design];
-const pat = new D({ measurements: meas, ...settings }); pat.draft();
+const pat = new D({ measurements: meas, ...settings });
+pat.draft();
 const S = pat.setStores[0];
 if (process.env.DBGSTORE) console.log('STORE', process.env.DBGSTORE.split(',').map((k) => k + '=' + (S.get(k, 'n/a'))).join(' '));
 const sample = (op, from, n) => {   // polyline of one path op (mm)
@@ -43,7 +49,7 @@ const sample = (op, from, n) => {   // polyline of one path op (mm)
     return pts; }
   return [];
 };
-const errs = (S.logs && S.logs.error) || []; if (errs.length) console.log('ERRORS', JSON.stringify(errs).slice(0, 500));
+const errs = (S.logs && S.logs.error) || []; if (process.env.WARN) console.log('WARN', JSON.stringify((S.logs && S.logs.warn) || []).slice(0, 1500)); if (errs.length) console.log('ERRORS', JSON.stringify(errs).slice(0, 500));
 const out = { design, measurements: meas, pieces: [] };
 const polyOf = (path) => { const pts = []; let cur = null;
   for (const op of path.ops) { if (op.type === 'move') { cur = { x: op.to.x, y: op.to.y }; pts.push([cur.x, cur.y]); } else if (op.type === 'line') { cur = { x: op.to.x, y: op.to.y }; pts.push([cur.x, cur.y]); } else if (op.type === 'curve') { for (const q of sample(op, cur, 40)) pts.push(q); cur = { x: op.to.x, y: op.to.y }; } }

@@ -8,6 +8,19 @@
   const draft = {};
   FL.draft = draft;
 
+  // back arc of a convex section polygon [x, z, ...]: from its widest point on one side to the other, through the back (low z)
+  const backArc = (h) => {
+    const n = h.length >> 1; if (n < 3) return 0;
+    let iMax = 0, iMin = 0; for (let i = 1; i < n; i++) { if (h[2 * i] > h[2 * iMax]) iMax = i; if (h[2 * i] < h[2 * iMin]) iMin = i; }
+    const walk = (a, b) => { let len = 0, zs = 0, c = 0, i = a; while (i !== b) { const j = (i + 1) % n; len += Math.hypot(h[2 * i] - h[2 * j], h[2 * i + 1] - h[2 * j + 1]); zs += h[2 * i + 1]; c++; i = j; } return [len, zs / Math.max(1, c)]; };
+    const A = walk(iMax, iMin), B = walk(iMin, iMax); return A[1] < B[1] ? A[0] : B[0];
+  };
+  // where the plane x = 0 cuts a convex section: [front z, back z]
+  const midZ = (h) => {
+    const n = h.length >> 1; let zf = -9, zb = 9;
+    for (let i = 0; i < n; i++) { const j = (i + 1) % n, x0 = h[2 * i], x1 = h[2 * j]; if (x0 * x1 <= 0 && x0 !== x1) { const z = h[2 * i + 1] + (h[2 * j + 1] - h[2 * i + 1]) * (0 - x0) / (x1 - x0); zf = Math.max(zf, z); zb = Math.min(zb, z); } }
+    return zf > -9 ? [zf, zb] : null;
+  };
   draft.measures = (body) => {
     const S = body.sections, at = (list, y) => list[Math.max(0, Math.min(S.ny - 1, Math.round(y / S.dy)))];
     const per = (h) => (h && h.length >= 6 ? FL.perimeter2(h) : 0);
@@ -18,6 +31,14 @@
       hip: per(at(S.hulls, L.hip[1])), waist: per(at(S.hulls, L.waist[1])), bust: per(at(S.hulls, L['bust.L'][1])),
       thigh: per(at(S.legs.L, yc - 0.035)), knee: per(at(S.legs.L, J['l-knee'][1])), ankle: per(at(S.legs.L, J['l-ankle'][1] + 0.04)),
     };
+    // seat: the fullest girth 3-16 cm above the crotch (the buttocks; at the crotch itself the section is just both thighs)
+    let ks = Math.ceil((yc + 0.03) / S.dy); const k1 = Math.floor(Math.min(L.waist[1] - 0.06, yc + 0.16) / S.dy);
+    for (let k = ks; k <= k1; k++) if (S.girth[k] > S.girth[ks]) ks = k;
+    m.ySeat = ks * S.dy; m.seat = S.girth[ks]; m.seatBack = backArc(S.hulls[ks]); m.waistBack = backArc(at(S.hulls, L.waist[1]));
+    // crotch seam: a taut tape from the centre front waist down the front, round the crotch point, up the back to the centre back waist
+    const cp = L.crotch, kc = Math.ceil(yc / S.dy), kw = Math.round(L.waist[1] / S.dy); let lf = 0, lb = 0, pf = null, pb = null;
+    for (let k = kw; k >= kc; k--) { const r = midZ(S.hulls[k]); if (!r) continue; const y = k * S.dy; if (pf) { lf += Math.hypot(pf[0] - y, pf[1] - r[0]); lb += Math.hypot(pb[0] - y, pb[1] - r[1]); } pf = [y, r[0]]; pb = [y, r[1]]; }
+    if (pf) { lf += Math.hypot(pf[0] - cp[1], pf[1] - cp[2]); lb += Math.hypot(pb[0] - cp[1], pb[1] - cp[2]); m.crossSeam = lf + lb; m.crossSeamFront = lf; }
     return m;
   };
 

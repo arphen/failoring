@@ -20,7 +20,7 @@
     aaron: { title: 'Aaron a-shirt', fabric: 'cotton_jersey', url: 'https://freesewing.org/docs/designs/aaron',
       parts: { 'aaron.front': { kind: 'body', theta: 0, top: 'hps', role: 'Front' }, 'aaron.back': { kind: 'body', theta: 180, top: 'hps', role: 'Back' } } },
     charlie: { title: 'Charlie chinos', fabric: 'cotton_poplin', url: 'https://freesewing.org/docs/designs/charlie', free: /^(hem|hemBase|bottom)$/,   // the front's waist edge, slant and upper side edge all carry the pocket-bag label; the slant is sewn to the back's upper side edge (no pocket)
-      parts: { 'charlie.front': { kind: 'leg', theta: 0, origSide: 'R', top: 'origin', role: 'Front leg' }, 'charlie.back': { kind: 'leg', theta: 180, origSide: 'L', top: 'origin', role: 'Back leg' }, 'charlie.waistband': { kind: 'band', role: 'Waistband', holdTop: true } } },
+      parts: { 'charlie.front': { kind: 'leg', theta: 0, origSide: 'R', top: 'origin', role: 'Front leg' }, 'charlie.back': { kind: 'leg', theta: 180, origSide: 'R', top: 'origin', role: 'Back leg' }, 'charlie.waistband': { kind: 'band', role: 'Waistband', holdTop: true, folded: true } } },
     penelope: { title: 'Penelope pencil skirt', fabric: 'wool_suiting', url: 'https://freesewing.org/docs/designs/penelope',
       parts: { 'penelope.front': { kind: 'body', theta: 0, top: 'waist', role: 'Front', holdTop: true }, 'penelope.back': { kind: 'body', theta: 180, top: 'waist', role: 'Back half', holdTop: true }, 'penelope.waistband': { kind: 'band', role: 'Waistband', holdTop: true } } },
   };
@@ -64,7 +64,8 @@
     for (const rp of raw.pieces) {
       const spec = rec.parts[rp.id]; if (!spec) continue;
       let chains = rp.chains.map((c) => ({ label: c.label, pts: c.pts.map(([x, y]) => [x / 1000, -y / 1000]) }));
-      if (spec.kind === 'band') chains = chains.map((c) => ({ label: c.label, pts: c.pts.map(([x, y]) => [-y, x]) }));   // long axis horizontal
+      // long axis horizontal. A cut-on-the-fold waistband is twice its finished width (it folds along its middle line, one half inside): one layer of the finished band is modelled
+      if (spec.kind === 'band') chains = chains.map((c) => ({ label: c.label, pts: c.pts.map(([x, y]) => [-y, x * (spec.folded ? 0.5 : 1)]) }));
       const flat = [].concat(...chains.map((c) => c.pts));
       if (area(flat) < 0) chains = chains.slice().reverse().map((c) => ({ label: c.label, pts: c.pts.slice().reverse() }));
       const o = spec.origSide || 'L', copies = rp.cut >= 2 && !rp.onFold ? [o, o === 'L' ? 'R' : 'L'] : [null];
@@ -88,7 +89,25 @@
     }
     // a waistband sits on the top edge of the garment it belongs to (the skirt's top is the natural waist, the chinos' top is where the pattern puts it)
     { const others = inst.filter((p) => p.wrap.mode !== 'arm' && p.spec.kind !== 'band');
-      if (others.length) { const top = Math.max(...others.map((p) => p.wrap.y + (p.bb.y1 - p.bb.y0))); for (const pc of inst) if (pc.spec.kind === 'band') pc.wrap.y = top - 0.002; } }
+      if (others.length) { const top = Math.max(...others.map((p) => p.wrap.y + (p.bb.y1 - p.bb.y0))); for (const pc of inst) if (pc.spec.kind === 'band') pc.wrap.y = top - 0.002;
+        // A flat trouser pattern's top edge slopes (the front dips to the centre front, the back to the centre back, by 2-6 cm) because the
+        // pattern is drawn for a body that is not a cylinder; on the body the waistband is a level ring and drags the top edge up to it.
+        // makeWrapRows takes that in the start shape: every column of a leg piece above the crotch is stretched so its top edge reaches the
+        // ring height (the highest top). Without it the band could not be sewn to the lower parts of the edge (seam tolerance 5 cm).
+        if (others.some((p) => p.wrap.mode === 'leg')) for (const pc of others) if (pc.wrap.mode === 'leg') {
+          const x0 = pc.bb.x0, dx = 0.005, nx = Math.max(2, Math.ceil((pc.bb.x1 - x0) / dx) + 1), env = new Array(nx).fill(-1e9);
+          for (let i = 0; i < pc.flat.length; i++) { const a = pc.flat[i], b = pc.flat[(i + 1) % pc.flat.length]; if (a[0] === b[0]) { const k = Math.round((a[0] - x0) / dx); if (k >= 0 && k < nx) env[k] = Math.max(env[k], a[1], b[1]); continue; }
+            const k0 = Math.max(0, Math.ceil((Math.min(a[0], b[0]) - x0) / dx)), k1 = Math.min(nx - 1, Math.floor((Math.max(a[0], b[0]) - x0) / dx));
+            for (let k = k0; k <= k1; k++) { const x = x0 + k * dx, y = a[1] + (b[1] - a[1]) * (x - a[0]) / (b[0] - a[0]); if (y > env[k]) env[k] = y; } }
+          for (let k = 0; k < nx; k++) if (env[k] < -1e8) env[k] = k ? env[k - 1] : pc.bb.y0;
+          // the waist edge is the level part of the top within 8 cm of the piece's highest point; beside it (the centre seam and the side seam
+          // curve away downwards) the profile keeps the end value, so the stretch fades with height there instead of blowing up
+          const emax = Math.max(...env), ok = (k) => env[k] >= emax - 0.08 && Math.abs(env[Math.min(nx - 1, k + 1)] - env[Math.max(0, k - 1)]) / (2 * dx) < 0.7;   // level enough: the centre and side seams are steep walls
+          let ka = 0, kb = nx - 1; while (ka < nx - 1 && !ok(ka)) ka++; while (kb > 0 && !ok(kb)) kb--;
+          const flatEnv = env.map((e, k) => (k < ka ? env[ka] : k > kb ? env[kb] : e));
+          const win = 3, prof = flatEnv.map((_, k) => { let m = -1e9; for (let j = Math.max(0, k - win); j <= Math.min(nx - 1, k + win); j++) m = Math.max(m, flatEnv[j]); return +(pc.wrap.y + m - pc.bb.y0).toFixed(5); });   // running max over +-1.5 cm: darts cut notches into the edge that must not be followed
+          pc.wrap.lift = { H: top, x0, dx, y: prof, ka, kb };   // only the row extents come from the stretched column: the cloth itself stays unstretched and the band tilts (below)
+        } } }
     // sleeves: a cut-2 part; the left copy is the original; wrap sides assigned above (L/R)
     for (const grp of [...new Set(inst.filter((p) => p.wrap.mode === 'fit').map((p) => p.wrap.group || 'main'))]) {
       const fitters = inst.filter((p) => p.wrap.mode === 'fit' && (p.wrap.group || 'main') === grp);
@@ -111,11 +130,22 @@
     }
     // ---- 3. start geometry of every chain (3D) and seam matching
     const chainList = [];
-    for (const pc of inst) {
-      const stub = FL.normalizePiece({ outline: pc.flat.slice(), wrap: Object.assign({}, pc.wrap) });
-      pc.wrapObj = FL.makeWrap(stub, body);
-      pc.chains.forEach((c, k) => { const cv = mkCurve(c.pts); chainList.push({ pc, k, c, cv, M: Math.max(8, Math.min(60, Math.ceil(cv.L / 0.01))) }); });
+    const mkObj = (pc) => { const stub = FL.normalizePiece({ outline: pc.flat.slice(), wrap: Object.assign({}, pc.wrap) }); pc.wrapObj = FL.makeWrap(stub, body); };
+    for (const pc of inst) if (pc.spec.kind !== 'band') mkObj(pc);
+    // a waistband follows the top edge of the trousers it is sewn to: its lower edge at the world height of that edge at every polar angle
+    // around the body (the upper envelope of the edge, so the darts' notches are bridged)
+    for (const pc of inst) if (pc.spec.kind === 'band') {
+      const NB = 72, ys = new Array(NB).fill(null);
+      for (const lp of inst) { const lf = lp.wrap.lift; if (!lf) continue;
+        for (let k = lf.ka; k <= lf.kb; k++) { const q = lp.wrapObj.point(lf.x0 + k * lf.dx, lf.y[k] - lp.wrap.y + lp.bb.y0), cz = FL.sectionCurve(body, Math.round(q[1] / S.dy), 0.012).cz, phi = Math.atan2(q[0], q[2] - cz), b = Math.floor(((phi / (2 * Math.PI)) % 1 + 1) % 1 * NB) % NB;
+          ys[b] = ys[b] == null ? q[1] : Math.max(ys[b], q[1]); } }
+      if (ys.some((v) => v != null)) {
+        for (let b = 0; b < NB; b++) if (ys[b] == null) { let l = 1, r = 1; while (ys[(b - l + NB) % NB] == null) l++; while (ys[(b + r) % NB] == null) r++; const yl = ys[(b - l + NB) % NB], yr = ys[(b + r) % NB]; ys[b] = yl + (yr - yl) * l / (l + r); }
+        pc.wrap.tilt = ys.map((v) => +(v - 0.002 - pc.wrap.y).toFixed(5));
+      }
+      mkObj(pc);
     }
+    for (const pc of inst) pc.chains.forEach((c, k) => { const cv = mkCurve(c.pts); chainList.push({ pc, k, c, cv, M: Math.max(8, Math.min(60, Math.ceil(cv.L / 0.01))) }); });
     const M = 40;
     for (const e of chainList) { e.P3 = []; for (let i = 0; i <= M; i++) { const q = e.cv.at(i / M); e.P3.push(e.pc.wrapObj.point(q[0], q[1])); } }
     for (const e of chainList) { e.T3 = e.P3.map((q, i) => { const a = e.P3[Math.max(0, i - 1)], b = e.P3[Math.min(M, i + 1)], t = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], l = Math.hypot(...t) || 1; return t.map((x) => x / l); }); }
@@ -144,15 +174,20 @@
       return runs.filter((r) => r.i1 - r.i0 >= 3 && (r.i1 - r.i0) / M * a.cv.L >= 0.012).map((r) => ({ f: [r.i0 / M, r.i1 / M], js: ok.slice(r.i0, r.i1 + 1).filter((x) => x >= 0) }));
     };
     const cand = [];
+    // a waistband's upper long edge is the visible top (the fold): never sewn to the garment below
+    const bandTop = (e) => e.pc.spec.kind === 'band' && e.cv.L > 0.2 && e.c.pts.reduce((t, q) => t + q[1], 0) / e.c.pts.length > (e.pc.bb.y0 + e.pc.bb.y1) / 2;
     const FREE = rec.free || /^(pocketBag|hem|hemBase|bottom)$/;   // pocket openings and hems are never sewn to another piece
     for (let x = 0; x < chainList.length; x++) for (let y = x + 1; y < chainList.length; y++) {
-      const a = chainList[x], b = chainList[y]; if (FREE.test(a.c.label || '') || FREE.test(b.c.label || '')) continue;
+      const a = chainList[x], b = chainList[y]; if (FREE.test(a.c.label || '') || FREE.test(b.c.label || '') || bandTop(a) || bandTop(b)) continue;
+      if (a.pc === b.pc && Math.min(a.cv.L, b.cv.L) > 0.2) continue;   // within one piece only darts are sewn (short legs); a narrow band's two long edges are not a tube
       const ra = runsOn(a, b), rb = runsOn(b, a);
       for (const p of ra) for (const q of rb) {
         const ja = [Math.min(...p.js) / M, Math.max(...p.js) / M];   // where on b the a-run points to
         const ov = Math.min(ja[1], q.f[1]) - Math.max(ja[0], q.f[0]);
         const la = (p.f[1] - p.f[0]) * a.cv.L, lb = (q.f[1] - q.f[0]) * b.cv.L;
-        if (ov > 0.5 * Math.min(ja[1] - ja[0], q.f[1] - q.f[0]) && Math.max(la, lb) <= 1.7 * Math.min(la, lb)) cand.push({ a, b, fa: p.f, fb: q.f, score: Math.min(la, lb) });
+        const good = ov > 0.5 * Math.min(ja[1] - ja[0], q.f[1] - q.f[0]) && Math.max(la, lb) <= 1.7 * Math.min(la, lb);
+        if (opt.debugCand) console.log('cand', a.pc.id + '#' + a.k, b.pc.id + '#' + b.k, 'fa', p.f.map((v) => v.toFixed(2)), 'fb', q.f.map((v) => v.toFixed(2)), 'ja', ja.map((v) => v.toFixed(2)), 'la', (la * 100).toFixed(1), 'lb', (lb * 100).toFixed(1), good ? 'OK' : 'REJECT ov=' + ov.toFixed(2));
+        if (good) cand.push({ a, b, fa: p.f, fb: q.f, score: Math.min(la, lb) });
       }
     }
     // Sleeves: the cap is sewn to the armholes by construction (the front half to one armhole, the back half to the other),
@@ -186,6 +221,23 @@
           forced.push({ a: cap, b: e, fa: [Math.min(c0, c1), Math.max(c0, c1)], fb: [0, 1] }); });
         void ord;
       });
+    }
+    // A waistband: the trousers' top-edge chains (the chains that run alongside the band's lower long edge in the start pose) are sewn to it
+    // end to end in the order they meet it, each taking the stretch of the band that is as long as it is in the pattern (the band is drafted as
+    // long as the edges together). The start pose only decides which chains and in which order; a seam never joins 14 cm of trousers to 11 cm of band
+    // because the two lay out of step.
+    for (const bc of chainList.filter((e) => e.pc.spec.kind === 'band' && e.cv.L > 0.2 && !bandTop(e))) {
+      const tops = [];
+      for (const e of chainList) {
+        if (e.pc.spec.kind === 'band' || FREE.test(e.c.label || '') || e.cv.L < 0.08) continue;
+        let n = 0, sum = 0; for (let i = 0; i <= M; i++) { const r = nearOn(e.P3[i], e.T3[i], bc); if (r[0] < 0.05 && r[2]) { n++; sum += r[1] / M; } }
+        if (n >= 0.7 * (M + 1)) tops.push({ e, pos: sum / n });
+      }
+      if (tops.length < 2) continue;
+      tops.sort((p, q) => p.pos - q.pos);
+      const tot = tops.reduce((t, q) => t + q.e.cv.L, 0); let acc = 0;
+      for (const t of tops) { forced.push({ a: t.e, b: bc, fa: [0, 1], fb: [acc / tot, (acc + t.e.cv.L) / tot] }); acc += t.e.cv.L; }
+      if (opt.debugCand) console.log('band', bc.pc.id + '#' + bc.k, 'L', (bc.cv.L * 100).toFixed(1), 'edges', (tot * 100).toFixed(1), tops.map((t) => t.e.pc.id + '#' + t.e.k + '@' + t.pos.toFixed(2)).join(' '));
     }
     cand.sort((p, q) => q.score - p.score);
     const used0 = [];
