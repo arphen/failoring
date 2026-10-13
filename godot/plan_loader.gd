@@ -5,6 +5,8 @@
 class_name FailoringPlanLoader
 extends RefCounted
 
+const Wrap = preload("res://wrap.gd")
+
 const QUALITY := {"edge": 0.040, "sub": 2, "newton": 8, "frames": 48}
 const SEAM_STIFFNESS := 20000.0
 const RAMP_FRAMES := 20
@@ -71,7 +73,7 @@ static func build(plan: Dictionary, sections: Dictionary, arms: Dictionary, stan
 	var pos := sim.get_positions()
 	for pc in plan["pieces"]:
 		var pid := String(pc["id"])
-		var wrap := FailoringWrap.new(pc, sections, arms)
+		var wrap := Wrap.new(pc, sections, arms)
 		var uv := sim.get_panel_vertices_2d(index_of[pid])
 		var f0: int = first[pid]
 		for i in uv.size():

@@ -5,6 +5,10 @@
 # godot/docs-shots/<preset>_<garment>.png and quits (needs a real window for pixels).
 extends Node3D
 
+const PlanLoader = preload("res://plan_loader.gd")
+const BodyView = preload("res://scripts/body_loader.gd")
+const Info = preload("res://info.gd")
+
 const PRESETS := ["petite", "average", "tall", "curvy", "athletic", "plus"]
 const GARMENTS := [["Tee", "teagan"], ["Pencil skirt", "penelope"], ["Chinos", "charlie"]]
 const SETTLE := 48        # standing frames before the walk starts (browser Standard quality frames)
@@ -13,7 +17,7 @@ const RAMP := 24.0        # stride ease-in frames (browser WALK.ramp)
 const STAND_FRAMES := 96  # standing mode stops after this many frames
 
 var sim: FailoringSim
-var body_node: FailoringBody
+var body_node: BodyView
 var cloth_node: MeshInstance3D
 var cam_pivot: Node3D
 var cam: Camera3D
@@ -87,7 +91,7 @@ func _build_scene() -> void:
 	cam = Camera3D.new()
 	cam.position = Vector3(0, 0, dist)
 	cam_pivot.add_child(cam)
-	body_node = FailoringBody.new()
+	body_node = BodyView.new()
 	var skin := StandardMaterial3D.new()
 	skin.albedo_color = Color(0.85, 0.68, 0.58)
 	body_node.material_override = skin
@@ -108,7 +112,7 @@ func _fill_ui() -> void:
 	for g in GARMENTS:
 		garment_opt.add_item(g[0], GARMENTS.find(g))
 	garment_opt.select(0)
-	var fab: Dictionary = FailoringPlanLoader.load_json("res://materials/fabrics.json")
+	var fab: Dictionary = PlanLoader.load_json("res://materials/fabrics.json")
 	for f in fab.get("fabrics", []):
 		fabric_opt.add_item(String(f["name"]), fabric_opt.item_count)
 		fabric_opt.set_item_metadata(fabric_opt.item_count - 1, String(f["id"]))
@@ -130,13 +134,13 @@ func rebuild() -> void:
 	frame = 0
 	walk_k = 0.0
 	var dir := "res://assets/%s" % preset
-	var obj: Dictionary = FailoringBody.parse_obj(_asset(preset, "body.obj"))
+	var obj: Dictionary = BodyView.parse_obj(_asset(preset, "body.obj"))
 	if obj.is_empty():
 		status_label.text = "no body.obj for " + preset
 		return
 	standing = obj["vertices"]
 	body_tris = obj["indices"]
-	var w: Dictionary = FailoringBody.parse_walk(_asset(preset, "walk.bin"), standing)
+	var w: Dictionary = BodyView.parse_walk(_asset(preset, "walk.bin"), standing)
 	walk_frames = w.get("frames", [])
 	walk_nf = walk_frames.size()
 	body_node.assets_dir = "res://assets"
@@ -144,18 +148,18 @@ func rebuild() -> void:
 		status_label.text = "cannot load " + preset
 		return
 	body_node.show_pose(standing)
-	plan = FailoringPlanLoader.load_json(_asset(preset, "plan_%s.json" % garment))
+	plan = PlanLoader.load_json(_asset(preset, "plan_%s.json" % garment))
 	if plan.is_empty():
 		status_label.text = "no plan for %s on %s" % [garment, preset]
 		return
-	var sections: Dictionary = FailoringPlanLoader.load_json(_asset(preset, "sections.json"))
+	var sections: Dictionary = PlanLoader.load_json(_asset(preset, "sections.json"))
 	if sections.is_empty():
 		status_label.text = "no sections for " + preset
 		return
 	if fabric_id == "":
 		fabric_id = String(plan.get("fabric", "cotton_poplin"))
 		_sync_fabric_ui()
-	var built: Dictionary = FailoringPlanLoader.build(plan, sections["sections"], sections["arms"], standing, body_tris, fabric_id)
+	var built: Dictionary = PlanLoader.build(plan, sections["sections"], sections["arms"], standing, body_tris, fabric_id)
 	if built.is_empty():
 		status_label.text = "sim build failed"
 		return
@@ -283,12 +287,15 @@ func _render_info() -> void:
 	var fabric_name := fabric_id
 	if fabric_opt.item_count > 0 and fabric_opt.selected >= 0:
 		fabric_name = fabric_opt.get_item_text(fabric_opt.selected)
-	info_text.text = FailoringInfo.format(plan.get("info", {}), plan.get("pieces", []), fabric_name)
+	info_text.text = Info.format(plan.get("info", {}), plan.get("pieces", []), fabric_name)
 
 
 func _shot(tag: String) -> void:
 	DirAccess.make_dir_recursive_absolute("res://docs-shots")
 	var img := get_viewport().get_texture().get_image()
+	if img == null or img.is_empty():
+		get_tree().quit()  # headless: nothing to save, the run itself is the check
+		return
 	if img.save_png("res://docs-shots/%s.png" % tag) == OK:
 		print("SHOT saved ", tag)
 	else:

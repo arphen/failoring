@@ -14,6 +14,7 @@ extends RefCounted
 
 const NA := 180        # polar samples (shared.js NA)
 const MS := 48         # arc samples (shared.js MS)
+const ARC_N := 720     # arc-length table samples (shared.js N)
 
 var _piece: Dictionary
 var _wrap: Dictionary
@@ -105,7 +106,7 @@ func _nearest(list: Array, k: int) -> Array:
 
 
 # Polar description of a convex polygon around its area centroid (x fixed when given).
-func _polar(hull: Array, fix_x: Variant) -> Dictionary:
+static func _polar(hull: Array, fix_x: Variant) -> Dictionary:
 	var n: int = hull.size() / 2
 	var a := 0.0
 	var cx := 0.0
@@ -149,7 +150,7 @@ func _polar(hull: Array, fix_x: Variant) -> Dictionary:
 	return {"cx": cx, "cz": cz, "R": r}
 
 
-func _rad(r: PackedFloat64Array, phi: float) -> float:
+static func _rad(r: PackedFloat64Array, phi: float) -> float:
 	var f := fposmod(phi / TAU, 1.0) * float(NA)
 	var i := mini(NA - 1, int(floor(f)))
 	return r[i] + (r[i + 1] - r[i]) * (f - float(i))
@@ -220,21 +221,22 @@ static func _ysmooth(x: float) -> float:
 
 
 # Arc-length parametrised trunk section at row k (port of FL.sectionCurve). The cache lives
-# on the shared sections Dictionary (like the JS S._curves), so all pieces of one preset share it.
-func _section_curve(k: int, clear: float) -> Dictionary:
+# on the shared sections Dictionary (like the JS S._curves), so all pieces of one body share it.
+static func section_curve_at(sections: Dictionary, k: int, clear: float) -> Dictionary:
+	var ny: int = sections["ny"]
 	var key := "%d|%.6f" % [k, clear]
-	if not _sections.has("_curves"):
-		_sections["_curves"] = {}
-	var store: Dictionary = _sections["_curves"]
+	if not sections.has("_curves"):
+		sections["_curves"] = {}
+	var store: Dictionary = sections["_curves"]
 	var c = store.get(key, null)
 	if c != null:
 		return c
 	var hull: Array = []
-	for d in _ny:
+	for d in ny:
 		var found := false
 		for kk in [k - d, k + d]:
-			if kk >= 0 and kk < _ny and kk < _sections["hulls"].size():
-				var h = _sections["hulls"][kk]
+			if kk >= 0 and kk < ny and kk < sections["hulls"].size():
+				var h = sections["hulls"][kk]
 				if h != null and (h as Array).size() >= 6:
 					hull = h
 					found = true
@@ -273,16 +275,33 @@ func _section_curve(k: int, clear: float) -> Dictionary:
 		r[x] = best + clear
 	r[NA * 2] = r[0]
 	var cum := PackedFloat64Array()
-	cum.resize(NA * 2 + 1)
-	var prev := [r[0] * sin(0.0), cz + r[0] * cos(0.0)]
-	for i in range(1, NA * 2 + 1):
-		var p := TAU * float(i) / float(NA * 2)
-		var q := [r[i] * sin(p), cz + r[i] * cos(p)]
+	cum.resize(ARC_N + 1)
+	# like the JS pt(): the radius at angle p is interpolated from the R table
+	var rad_at := func(p: float) -> float:
+		var f := fposmod(p / TAU, 1.0) * float(NA * 2)
+		var ii := mini(NA * 2 - 1, int(floor(f)))
+		return r[ii] + (r[ii + 1] - r[ii]) * (f - float(ii))
+	var prev := [rad_at.call(0.0) * sin(0.0), cz + rad_at.call(0.0) * cos(0.0)]
+	for i in range(1, ARC_N + 1):
+		var p := TAU * float(i) / float(ARC_N)
+		var rr: float = rad_at.call(p)
+		var q := [rr * sin(p), cz + rr * cos(p)]
 		cum[i] = cum[i - 1] + sqrt((q[0] - prev[0]) * (q[0] - prev[0]) + (q[1] - prev[1]) * (q[1] - prev[1]))
 		prev = q
-	c = {"cz": cz, "per": cum[NA * 2], "r": r, "cum": cum}
+	c = {"cz": cz, "per": cum[ARC_N], "r": r, "cum": cum}
 	store[key] = c
 	return c
+
+
+func _section_curve(k: int, clear: float) -> Dictionary:
+	return section_curve_at(_sections, k, clear)
+
+
+# Section curve at height y, for draft.gd (row from y, same cache).
+func section_curve_for(y: float, sections: Dictionary, clear: float) -> Dictionary:
+	var dy: float = sections["dy"]
+	var ny: int = sections["ny"]
+	return section_curve_at(sections, clampi(int(round(y / dy)), 0, ny - 1), clear)
 
 
 func _curve_rad(c: Dictionary, phi: float) -> float:
@@ -301,8 +320,8 @@ func _curve_cum(c: Dictionary, phi: float) -> float:
 	var w: float = floor(phi / TAU)
 	var ph: float = phi - w * TAU
 	var cum: PackedFloat64Array = c["cum"]
-	var f := ph / TAU * float(NA * 2)
-	var i := mini(NA * 2 - 1, int(floor(f)))
+	var f := ph / TAU * float(ARC_N)
+	var i := mini(ARC_N - 1, int(floor(f)))
 	return w * float(c["per"]) + cum[i] + (cum[i + 1] - cum[i]) * (f - float(i))
 
 
@@ -312,14 +331,14 @@ func _curve_phi_at(c: Dictionary, s: float) -> float:
 	var w: float = floor(s / per)
 	var rest: float = s - w * per
 	var lo := 0
-	var hi := NA * 2
+	var hi := ARC_N
 	while hi - lo > 1:
 		var mid := (lo + hi) >> 1
 		if cum[mid] <= rest:
 			lo = mid
 		else:
 			hi = mid
-	return w * TAU + (float(lo) + (rest - cum[lo]) / (cum[lo + 1] - cum[lo])) / float(NA * 2) * TAU
+	return w * TAU + (float(lo) + (rest - cum[lo]) / (cum[lo + 1] - cum[lo])) / float(ARC_N) * TAU
 
 
 # Sleeve: tube around the arm axis (port of armPos). Returns [x, y, z].
