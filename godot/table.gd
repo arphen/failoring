@@ -77,6 +77,42 @@ static func self_intersects(o: Array) -> bool:
 	return false
 
 
+# Even-odd point in polygon (poly as [x, y] pairs). Static, so the static checks below can use it.
+static func poly_contains(poly: Array, x: float, y: float) -> bool:
+	var c := false
+	var j: int = poly.size() - 1
+	for i in poly.size():
+		var a: Array = poly[i]
+		var b: Array = poly[j]
+		if (float(a[1]) > y) != (float(b[1]) > y) and x < (float(b[0]) - float(a[0])) * (y - float(a[1])) / (float(b[1]) - float(a[1])) + float(a[0]):
+			c = not c
+		j = i
+	return c
+
+
+# Holes of a piece sit inside its outline and do not overlap each other: every hole corner is inside the outline and
+# outside the other holes, and no outline corner is inside a hole. A hole that crosses an edge is caught by the corner
+# tests for the usual shapes; the rule is the table's (the mesher then drops the cloth inside the hole).
+static func holes_ok(o: Array, holes: Array) -> bool:
+	for hi in holes.size():
+		var h: Array = holes[hi]
+		if h.size() < 3:
+			return false
+		for q in h:
+			if not poly_contains(o, float(q[0]), float(q[1])):
+				return false
+		for hj in holes.size():
+			if hj == hi:
+				continue
+			for q in h:
+				if poly_contains(holes[hj], float(q[0]), float(q[1])):
+					return false
+		for q in o:
+			if poly_contains(h, float(q[0]), float(q[1])):
+				return false
+	return true
+
+
 static func bbox_of(o: Array) -> Array:
 	var x0 := 1e9
 	var y0 := 1e9
@@ -115,6 +151,8 @@ static func valid_pieces(pieces: Array) -> Dictionary:
 				if edge_len(o, i) < MIN_SIM_EDGE:
 					why = "edge shorter than 2 mm"
 					break
+		if why == null and not holes_ok(o, p.get("holes", [])):
+			why = "a hole is not inside the piece"
 		if why != null:
 			bad[String(p["id"])] = why
 		else:
@@ -141,6 +179,11 @@ func _ensure_geo() -> void:
 		for q in p["outline"]:
 			sig.append(float(q[0]))
 			sig.append(float(q[1]))
+		for h in p.get("holes", []):
+			sig.append("#hole")
+			for q in h:
+				sig.append(float(q[0]))
+				sig.append(float(q[1]))
 	sig.append("#seams")
 	for s in ed.seams:
 		sig.append(String(s["a"][0]))
@@ -203,9 +246,15 @@ func _ensure_geo() -> void:
 		var bad_w := 0.0
 		if why != null:
 			bad_w = fnt.get_string_size(String(why), HORIZONTAL_ALIGNMENT_LEFT, -1, LABEL_FS).x
+		var hls := []  # holes in piece-local coordinates, for drawing and hit tests
+		for h in p.get("holes", []):
+			var hp := PackedVector2Array()
+			for q in h:
+				hp.append(Vector2(float(q[0]), float(q[1])))
+			hls.append(hp)
 		index[pid] = i
 		_geo_pieces.append({"id": pid, "name": pname, "nw": fnt.get_string_size(pname, HORIZONTAL_ALIGNMENT_LEFT, -1, LABEL_FS).x,
-			"bad": why, "bad_w": bad_w, "pts": pts, "lc": lc, "gc": gc,
+			"bad": why, "bad_w": bad_w, "pts": pts, "lc": lc, "gc": gc, "holes": hls,
 			"bb": Rect2(Vector2(bx0, by0), Vector2(bx1 - bx0, by1 - by0)), "edges": edges,
 			"grain": float(p.get("grain", 1.5708))})
 	_geo_seams = []
@@ -287,6 +336,7 @@ static func sync_twin(edref, p: Dictionary) -> void:
 		var q: Array = o[n - 1 - k]
 		out.append([2.0 * ax - float(q[0]) + dx, float(q[1])])
 	tw["outline"] = out
+	tw["holes"] = mirror_holes(p.get("holes", []), func(x: float) -> float: return 2.0 * ax - x + dx)
 	tw["grain"] = PI - float(p.get("grain", 0.0))
 	tw["table"] = (p.get("table", {"x": 0.0, "y": 0.0}) as Dictionary).duplicate()
 	var w: Dictionary = (p.get("wrap", {}) as Dictionary).duplicate()
@@ -429,9 +479,19 @@ func hit_piece(sx: float, sy: float):
 	var ps: Array = ed.pieces
 	for i in range(ps.size() - 1, -1, -1):
 		var t: Dictionary = (ps[i] as Dictionary).get("table", {"x": 0.0, "y": 0.0})
-		if point_in(ps[i]["outline"], w.x - float(t.get("x", 0.0)), w.y - float(t.get("y", 0.0))):
+		var lx: float = w.x - float(t.get("x", 0.0))
+		var ly: float = w.y - float(t.get("y", 0.0))
+		if point_in(ps[i]["outline"], lx, ly) and not _in_any_hole(ps[i], lx, ly):
 			return ps[i]
 	return null
+
+
+# True when the piece-local point (x, y) is inside one of the piece's holes (a click there is not the piece).
+static func _in_any_hole(p: Dictionary, x: float, y: float) -> bool:
+	for h in p.get("holes", []):
+		if poly_contains(h, x, y):
+			return true
+	return false
 
 
 # index into ed.seams of the seam drawn nearest the point (within 7 px), or -1
@@ -480,6 +540,8 @@ func update_hint() -> void:
 		elif _sew_note != "":
 			text = _sew_note + "  |  " + text
 		hint_label.text = text
+	elif ed.tool == "hole":
+		hint_label.text = "Hole: press inside a piece and drag. " + ("A circle, centred on the press point." if ed.hole_shape == "circle" else "A rectangle, corner to corner.") + " Esc cancels."
 	else:
 		hint_label.text = "Drag pieces and corners to reshape them"
 
@@ -535,6 +597,9 @@ func _down(spos: Vector2, button: int) -> void:
 			ed.changed("ui")
 		else:
 			drag = {"kind": "pan", "sx": sx, "sy": sy, "ox": ox, "oy": oy}
+		return
+	if ed.tool == "hole":
+		_hole_down(spos)
 		return
 	if ed.tool == "sew":
 		var best: Variant = null
@@ -654,6 +719,58 @@ func _move(spos: Vector2) -> void:
 		sync_twin(ed, p2)
 		ed.table_dirty = true
 		ed.changed("structure-drag")
+	elif String(d["kind"]) == "hole":
+		var wh := to_world(sx, sy)
+		var th: Vector2 = _off(d["p"])
+		d["b"] = Vector2(wh.x - th.x, wh.y - th.y)
+		ed.table_dirty = true
+
+
+# Hole tool: a press inside a piece starts a hole there (its centre for a circle, a corner for a rectangle).
+func _hole_down(spos: Vector2) -> void:
+	var hit: Variant = hit_piece(spos.x, spos.y)
+	if hit == null:
+		ed.notify("Hole: press inside a piece, then drag to size the hole.")
+		return
+	var hp: Dictionary = hit
+	var w := to_world(spos.x, spos.y)
+	var t: Vector2 = _off(hp)
+	var start := Vector2(w.x - t.x, w.y - t.y)
+	drag = {"kind": "hole", "p": hp, "a": start, "b": start}
+	ed.sel = hp["id"]
+	ed.sel_v = -1
+	ed.table_dirty = true
+
+
+# The hole a Hole-tool drag describes, in the piece's own metres: a circle centred on the press point with its edge
+# at the pointer, or a rectangle with the press point and the pointer as opposite corners.
+func _drag_hole(d: Dictionary) -> Array:
+	var a: Vector2 = d["a"]
+	var b: Vector2 = d["b"]
+	if ed.hole_shape == "circle":
+		return circle_hole(a.x, a.y, 2.0 * a.distance_to(b))
+	return rect_hole(minf(a.x, b.x), minf(a.y, b.y), absf(b.x - a.x), absf(b.y - a.y))
+
+
+# Adds the drawn hole when it is big enough (2 cm) and fits in the piece; otherwise says why.
+func _finish_hole(d: Dictionary) -> void:
+	var a: Vector2 = d["a"]
+	var b: Vector2 = d["b"]
+	var big := 2.0 * a.distance_to(b) >= 0.02 if ed.hole_shape == "circle" else (absf(b.x - a.x) >= 0.02 and absf(b.y - a.y) >= 0.02)
+	if not big:
+		ed.notify("A hole needs at least 2 cm in each direction.")
+		return
+	var p: Dictionary = d["p"]
+	var hole := _drag_hole(d)
+	if not hole_fits(p, hole):
+		ed.notify("That hole does not fit: it must lie inside the piece and clear of its other holes.")
+		return
+	ed.push_undo("Add %s hole" % ("circle" if ed.hole_shape == "circle" else "rectangle"))
+	var holes: Array = p.get("holes", [])
+	holes.append(hole)
+	p["holes"] = holes
+	ed._sym_sync(p)
+	ed.changed("structure")
 
 
 func _up() -> void:
@@ -665,6 +782,8 @@ func _up() -> void:
 		ed.changed("table-done")
 	elif d != null and String(d.get("kind", "")) == "piece":
 		ed.discard_pending()  # a click on a piece without a move is not an action
+	elif d != null and String(d.get("kind", "")) == "hole":
+		_finish_hole(d)
 
 
 func _dbl(spos: Vector2) -> void:
@@ -720,6 +839,8 @@ func _unhandled_key_input(e: InputEvent) -> void:
 		accept_event()
 		return
 	if k.keycode == KEY_ESCAPE:
+		if drag != null and String(drag.get("kind", "")) == "hole":
+			drag = null  # Esc cancels a hole being drawn
 		ed.sew_a = null
 		ed.selection.clear_kind("seam")
 		update_hint()
@@ -844,6 +965,42 @@ static func add_piece(edref, kind: String) -> Dictionary:
 	return p
 
 
+# Adds a shape from shapes.gd (its outline and holes in metres) with its bounding box centred on `at` (table metres).
+# The shape may carry a "wrap" dictionary for its placement on the body; otherwise it starts at the front, mid height.
+static func add_shape(edref, label: String, shape: Dictionary, at: Vector2) -> Dictionary:
+	var pid := new_id(edref.pieces, "p")
+	var ol: Array = (shape["outline"] as Array).duplicate(true)
+	var b := bbox_of(ol)
+	var wrap: Dictionary = shape.get("wrap", {"theta": 0.0, "y": 0.6, "clear": 0.012, "ring": 0.0})
+	var p := {"id": pid, "name": "%s %d" % [label, edref.pieces.size() + 1], "outline": ol, "grain": 1.5708,
+		"table": {"x": at.x - (b[0] + b[2]) * 0.5, "y": at.y - (b[1] + b[3]) * 0.5},
+		"wrap": (wrap as Dictionary).duplicate(true), "holes": (shape.get("holes", []) as Array).duplicate(true)}
+	normalize_in_place(p)
+	(edref.pieces as Array).append(p)
+	edref.sel = pid
+	return p
+
+
+# A circle (n points) or a rectangle as a hole, in the piece's own metres.
+static func circle_hole(cx: float, cy: float, d: float, n: int = 24) -> Array:
+	var out := []
+	for i in n:
+		var t := TAU * float(i) / float(n)
+		out.append([cx + d * 0.5 * cos(t), cy + d * 0.5 * sin(t)])
+	return out
+
+
+static func rect_hole(x0: float, y0: float, w: float, h: float) -> Array:
+	return [[x0, y0], [x0 + w, y0], [x0 + w, y0 + h], [x0, y0 + h]]
+
+
+# Whether `hole` can be added to p: inside the outline, clear of the other holes (see holes_ok).
+static func hole_fits(p: Dictionary, hole: Array) -> bool:
+	var hs: Array = (p.get("holes", []) as Array).duplicate()
+	hs.append(hole)
+	return holes_ok(p["outline"], hs)
+
+
 static func normalize_in_place(p: Dictionary) -> void:
 	if signed_area(p["outline"]) < 0.0:
 		(p["outline"] as Array).reverse()
@@ -864,6 +1021,8 @@ static func mirror_piece(p: Dictionary, seams: Array) -> void:
 		o.append([2.0 * cx - float(q[0]), float(q[1])])
 	o.reverse()
 	p["outline"] = o
+	if p.has("holes"):
+		p["holes"] = mirror_holes(p["holes"], func(x: float) -> float: return 2.0 * cx - x)
 	for s in seams:
 		for side in ["a", "b"]:
 			if String(s[side][0]) == String(p["id"]):
@@ -871,6 +1030,17 @@ static func mirror_piece(p: Dictionary, seams: Array) -> void:
 				s["reverse"] = not bool(s.get("reverse", false))
 	p["grain"] = PI - float(p.get("grain", 0.0))
 	p["wrap"]["theta"] = fposmod(360.0 - float((p.get("wrap", {}) as Dictionary).get("theta", 0.0)), 360.0)
+
+
+# Holes mirrored with the same x map as the outline. A hole's own corner order does not matter for the mesher.
+static func mirror_holes(holes: Array, map_x: Callable) -> Array:
+	var out := []
+	for h in holes:
+		var hh := []
+		for q in h:
+			hh.append([map_x.call(float(q[0])), float(q[1])])
+		out.append(hh)
+	return out
 
 
 static func duplicate_piece(edref, p: Dictionary) -> Dictionary:
@@ -932,6 +1102,17 @@ func _draw() -> void:
 		var hot: bool = ed.health_hot.has(String(p["id"]))  # a garment check flagged this piece (editor.gd)
 		draw_polyline(poly, Color("#ff3b3b") if hot else (Color("#ff6b6b") if bad != null else (Color("#ff9d4d") if is_sel else Color("#6e674f"))), 4.0 if hot else (2.5 if is_sel else 1.6))
 		draw_colored_polygon(pts, Color(fcol, 0.22))
+		# holes: drawn over the fill in the table's dark colour, outlined, so the cloth reads as open there
+		for hp in g["holes"]:
+			if hp.size() < 3:
+				continue
+			var hpts := PackedVector2Array()
+			for q in hp:
+				hpts.append(to_screen(q.x + off.x, q.y + off.y))
+			draw_colored_polygon(hpts, Color("#11151b"))
+			var hpoly := PackedVector2Array(hpts)
+			hpoly.append(hpts[0])
+			draw_polyline(hpoly, Color("#ff9d4d") if is_sel else Color("#6e674f"), 1.6)
 		# grain arrow at the vertex centroid
 		var gc: Vector2 = g["gc"]
 		var gang: float = float(g["grain"])
@@ -1022,6 +1203,15 @@ func _draw() -> void:
 			var erect := Rect2(Vector2(pp.x, pp.y - asc), Vector2(tw, lh))
 			if view.intersects(erect) and _claim(taken, erect):
 				draw_string(font, pp, String(e["txt"]), HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color("#ffb877") if is_sel else Color("#8f98a6"))
+	# the hole a Hole-tool drag is drawing, in its piece's place
+	if drag != null and String(drag.get("kind", "")) == "hole":
+		var hpre: Array = _drag_hole(drag)
+		var ht: Vector2 = _off(drag["p"])
+		var hpts := PackedVector2Array()
+		for q in hpre:
+			hpts.append(to_screen(float(q[0]) + ht.x, float(q[1]) + ht.y))
+		hpts.append(hpts[0])
+		draw_polyline(hpts, Color("#ff9d4d"), 2.0)
 	# scale bar
 	var bx := 14.0
 	var by := size.y - 18.0

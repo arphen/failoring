@@ -54,6 +54,35 @@ int main() {
         CHECK(r.edgeChains.size() == 4 && r.edgeChains[0].size() == 16 && r.edgeChains[1].size() == 11);
     }
     {
+        // a 14 cm square with a 24-point hole of radius 3 cm at its centre: the mesh covers the square minus the hole, every
+        // hole segment is a triangle edge, and no triangle centroid lies inside the hole
+        std::vector<Vec2> sq = {{0, 0}, {0.14, 0}, {0.14, 0.14}, {0, 0.14}};
+        std::vector<Vec2> hole;
+        const int nh = 24;
+        const Real r = 0.03;
+        for (int i = 0; i < nh; ++i) hole.push_back({0.07 + r * std::cos(2 * kPi * i / nh), 0.07 + r * std::sin(2 * kPi * i / nh)});
+        PanelMesh hm = meshPolygon(sq, {hole}, 0.01);
+        const Real holeArea = 0.5 * nh * r * r * std::sin(2 * kPi / nh);
+        const Real want = 0.14 * 0.14 - holeArea;
+        std::printf("  square with hole: %zu verts %zu tris, area err %.4f%%, boundary complete=%d\n", hm.verts.size(), hm.tris.size(),
+                    100 * (meshArea(hm) - want) / want, (int)hm.boundaryComplete);
+        CHECK(hm.boundaryComplete);
+        CHECK(std::fabs(meshArea(hm) - want) < 2e-3 * want);
+        bool inside = false;
+        for (auto& t : hm.tris) {
+            Vec2 c = (hm.verts[t[0]] + hm.verts[t[1]] + hm.verts[t[2]]) / 3.0;
+            bool in = false;
+            for (int i = 0, j = nh - 1; i < nh; j = i++) {
+                if ((hole[i].y > c.y) != (hole[j].y > c.y) && c.x < (hole[j].x - hole[i].x) * (c.y - hole[i].y) / (hole[j].y - hole[i].y) + hole[i].x) in = !in;
+            }
+            inside = inside || in;
+        }
+        CHECK(!inside);
+        // no holes: the overload is the plain mesher
+        PanelMesh plain = meshPolygon(sq, {}, 0.01);
+        CHECK(plain.tris.size() == meshPolygon(sq, 0.01).tris.size());
+    }
+    {
         PanelMesh d = meshDisc(0.15, 0.01);
         Real ex = kPi * 0.15 * 0.15;
         std::printf("  disc: %zu verts %zu tris, area err %.3f%%, min angle %.1f deg, boundary complete=%d\n", d.verts.size(), d.tris.size(),

@@ -80,8 +80,19 @@ static func build(plan: Dictionary, sections: Dictionary, arms: Dictionary, stan
 	var first := {}
 	for pc in plan["pieces"]:
 		# an outfit's merged plan carries each piece's own fabric (outfit.gd); a single garment uses fabric_id
-		var idx := sim.add_polygon_panel(to_outline(pc["outline"]), quality["edge"], String(pc.get("fabric", fabric_id)),
-			Vector3.ZERO, Vector3.RIGHT, Vector3.UP, float(pc.get("grain", 0.0)), String(pc.get("id", "?")))
+		var fab := String(pc.get("fabric", fabric_id))
+		var holes: Array = pc.get("holes", [])
+		var idx := -1
+		if holes.is_empty():
+			idx = sim.add_polygon_panel(to_outline(pc["outline"]), quality["edge"], fab,
+				Vector3.ZERO, Vector3.RIGHT, Vector3.UP, float(pc.get("grain", 0.0)), String(pc.get("id", "?")))
+		else:
+			# holes (a neck hole, a vent): the mesh has no cloth inside them and their edges are free
+			var hole_outlines := []
+			for h in holes:
+				hole_outlines.append(to_outline(h))
+			idx = sim.add_polygon_panel_with_holes(to_outline(pc["outline"]), hole_outlines, quality["edge"], fab,
+				Vector3.ZERO, Vector3.RIGHT, Vector3.UP, float(pc.get("grain", 0.0)), String(pc.get("id", "?")))
 		if idx < 0:
 			push_error("plan_loader: panel failed: " + String(pc.get("id", "?")))
 			return {}

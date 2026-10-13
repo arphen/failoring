@@ -2,9 +2,13 @@
 # Drafted for the default body; the wrap is re-evaluated on the live body at load.
 class_name FailoringBuiltinPlans
 
+const Shapes = preload("res://shapes.gd")
+const PONCHO_Y := 0.80  # m: the height of the square's lowest edge. The neck hole (24 cm, at the square's centre) then settles at the neck base, near the shoulders (tested in godot/tests/poncho_check.gd); at 1.00 m it slides down the arms.
+
 
 static func all() -> Dictionary:
 	return {
+		"poncho": _poncho(),
 		"pencil": {
 			"name": "Pencil skirt - 2 shaped panels", "fabric": "cotton_poplin",
 			"notes": "Front and back panels, 104 cm round the hip but only 80 cm at the top edge, so the skirt hangs from the waist. A real pattern would use darts for this shaping.",
@@ -30,6 +34,17 @@ static func all() -> Dictionary:
 			"seams": [],
 		},
 	}
+
+
+# One 140 cm square with a 24 cm neck hole at its centre: the head goes through the hole and the square falls over the
+# shoulders. No seams (a poncho is one piece). Light cotton poplin.
+static func _poncho() -> Dictionary:
+	var s: Dictionary = Shapes.poncho(1.4, 0.24)
+	return {"name": "Poncho - 140 cm square, 24 cm neck hole", "fabric": "cotton_poplin",
+		"notes": "One square with a neck hole. Pull it over the head: the square hangs over the shoulders. No seams.",
+		"pieces": [{"id": "poncho", "name": "Poncho", "outline": s["outline"], "holes": s["holes"], "grain": 1.5708,
+			"table": {"x": 0.0, "y": 0.0}, "wrap": {"theta": 0.0, "y": PONCHO_Y, "clear": 0.012, "ring": 0.0}}],
+		"seams": []}
 
 
 static func _gores() -> Array:

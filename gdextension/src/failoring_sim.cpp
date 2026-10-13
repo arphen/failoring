@@ -138,7 +138,7 @@ real_t FailoringSim::get_recommended_edge_length(const String& id) const {
 }
 
 int FailoringSim::addOutlinePanel(std::vector<fl::Vec2> poly, real_t edge_length, const String& material_id, Vector3 origin, Vector3 ex,
-                                  Vector3 ey, real_t grain_angle, const String& name) {
+                                  Vector3 ey, real_t grain_angle, const String& name, const std::vector<std::vector<fl::Vec2>>& holes) {
     const fl::FabricMaterial* m = material(material_id);
     if (!m) {
         UtilityFunctions::push_error("FailoringSim: unknown material ", material_id);
@@ -151,7 +151,7 @@ int FailoringSim::addOutlinePanel(std::vector<fl::Vec2> poly, real_t edge_length
     // counter-clockwise outlines, as the browser's FL.normalizePiece: seam edge numbers refer to this order
     if (fl::polygonSignedArea(poly) < 0) std::reverse(poly.begin(), poly.end());
     try {
-        fl::PanelMesh mesh = fl::meshPolygon(poly, panelEdgeLength(*m, edge_length));
+        fl::PanelMesh mesh = fl::meshPolygon(poly, holes, panelEdgeLength(*m, edge_length));
         if (!mesh.boundaryComplete) {
             warnings_ |= 1;
             UtilityFunctions::push_warning("FailoringSim: panel '", name, "' has features thinner than the edge length; use a smaller edge_length");
@@ -184,6 +184,21 @@ int FailoringSim::add_polygon_panel(const PackedVector2Array& outline, real_t ed
     std::vector<fl::Vec2> poly;
     for (int i = 0; i < outline.size(); ++i) poly.push_back(fl::Vec2(outline[i].x, outline[i].y));
     return addOutlinePanel(std::move(poly), edge_length, material_id, origin, ex, ey, grain_angle, name);
+}
+
+int FailoringSim::add_polygon_panel_with_holes(const PackedVector2Array& outline, const Array& holes, real_t edge_length,
+                                               const String& material_id, Vector3 origin, Vector3 ex, Vector3 ey, real_t grain_angle,
+                                               const String& name) {
+    std::vector<fl::Vec2> poly;
+    for (int i = 0; i < outline.size(); ++i) poly.push_back(fl::Vec2(outline[i].x, outline[i].y));
+    std::vector<std::vector<fl::Vec2>> hs;
+    for (int h = 0; h < holes.size(); ++h) {
+        PackedVector2Array hp = holes[h];
+        std::vector<fl::Vec2> hole;
+        for (int i = 0; i < hp.size(); ++i) hole.push_back(fl::Vec2(hp[i].x, hp[i].y));
+        hs.push_back(std::move(hole));
+    }
+    return addOutlinePanel(std::move(poly), edge_length, material_id, origin, ex, ey, grain_angle, name, hs);
 }
 
 bool FailoringSim::validPanel(int panel, const char* who) const {
@@ -634,6 +649,7 @@ void FailoringSim::_bind_methods() {
     ClassDB::bind_method(D_METHOD("begin"), &FailoringSim::begin);
     ClassDB::bind_method(D_METHOD("add_rect_panel", "width", "height", "edge_length", "material_id", "origin", "ex", "ey", "grain_angle", "name"), &FailoringSim::add_rect_panel);
     ClassDB::bind_method(D_METHOD("add_polygon_panel", "outline", "edge_length", "material_id", "origin", "ex", "ey", "grain_angle", "name"), &FailoringSim::add_polygon_panel);
+    ClassDB::bind_method(D_METHOD("add_polygon_panel_with_holes", "outline", "holes", "edge_length", "material_id", "origin", "ex", "ey", "grain_angle", "name"), &FailoringSim::add_polygon_panel_with_holes);
     ClassDB::bind_method(D_METHOD("add_seam", "panel_a", "edge_a", "panel_b", "edge_b", "reverse"), &FailoringSim::add_seam);
     ClassDB::bind_method(D_METHOD("pin_vertex", "vertex", "pinned"), &FailoringSim::pin_vertex);
     ClassDB::bind_method(D_METHOD("set_vertex_position", "vertex", "position"), &FailoringSim::set_vertex_position);

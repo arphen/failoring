@@ -23,6 +23,12 @@ struct PanelMesh {
 // hexagonal lattice; Delaunay triangulation, clipped to the polygon.
 PanelMesh meshPolygon(const std::vector<Vec2>& outline, Real h);
 
+// The same with holes: each hole is a simple polygon (any winding) inside the outline and not touching another hole.
+// Hole boundaries get exact boundary points like the outline's, and triangles inside a hole are dropped, so the hole
+// edges are free edges of the cloth (they have no chains: seams only join outline edges). boundaryComplete also
+// checks the hole segments. Holes are an empty list for a plain polygon.
+PanelMesh meshPolygon(const std::vector<Vec2>& outline, const std::vector<std::vector<Vec2>>& holes, Real h);
+
 // Convenience: rectangle with corners (0,0)-(w,height). Outline edges: bottom, right, top, left.
 PanelMesh meshRect(Real w, Real height, Real h);
 

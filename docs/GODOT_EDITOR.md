@@ -84,6 +84,43 @@ fill with selection and validity tint, fabric tint, grain arrow, name and edge l
 (index + cm), vertex handles, seam edge pairs with match ticks, scale bar, hover and
 sew-edge highlights. Snap 5 mm, keyboard as in the browser (undo and redo: see below).
 
+## Shapes, holes and the Poncho (`godot/shapes.gd`, `godot/table.gd`)
+
+**Add shape** (table bar menu, or the Piece tab's buttons) opens a size dialog in cm: Rectangle (width, height),
+Square, Circle or ellipse (width, height; a 24-point outline), Triangle (base, height), Trapezoid (top and bottom
+width, height) and Poncho (side 140 cm, neck hole 24 cm). OK adds the piece centred on the middle of the table view,
+as one action ("Add rectangle" and so on). Shapes come from `shapes.gd` and are in metres, counter-clockwise, with the
+bounding box at the origin.
+
+**Holes.** A piece has `holes: [outline, ...]` (see docs/GODOT_ASSETS.md). Three ways to add one:
+* the piece's **Add hole...** dialog: a circle (diameter) or a rectangle (width, height) at a centre typed in cm from
+  the piece's bottom-left corner;
+* the **Hole** tool (table bar; the shape list next to it picks circle or rectangle): press inside a piece and drag.
+  A circle is centred on the press point with its edge at the pointer; a rectangle has the press point and the pointer
+  as opposite corners. Esc cancels;
+* nothing else creates holes. Each hole has a Delete button in the Piece tab.
+
+A hole is refused, with a message in the status line, when it does not lie inside the piece or touches another hole.
+A click inside a hole does not pick the piece. The table draws holes dark with an outline. The simulator cuts the
+cloth out of each hole (`cloth_core` `meshPolygon` with holes, `FailoringSim.add_polygon_panel_with_holes`), and its
+edges are free: holes take no seams. Mirror and symmetric twins mirror holes with the piece.
+
+**Poncho** (library, Plan dropdown): one 140 cm square, 24 cm neck hole at its centre, no seams, cotton poplin. Its
+wrap height is 0.80 m, so the neck hole sits at neck height: on the average mannequin the neck ring settles at 1.46 m
+(the neck base is at 1.43 m, the shoulders at 1.39 m), the hem at 0.71 m, and the poncho stays off the arms. At 1.00 m
+the neck ring slid down the arms, which is why the height is 0.80 m. `godot/tests/poncho_check.tscn` checks these.
+
+**Known limitation, not fixed:** the upper half of the square does not fall forward and back over the shoulders. The
+wrap places the whole square as one band around the body, so the upper half of the square stays above the neck and
+lies over the head like a hood (`FL_AUTO=average,poncho,60` under a virtual display shows it). The neck hole is at the
+neck and nothing falls off, but the look is a hood, not a poncho over the shoulders. A real poncho needs a front and
+a back panel (or a cape wrap mode) in the wrap model; that is a wrap change, not done here.
+
+Tests: `godot/tests/shapes_check.tscn` (the generators, the holes rule, placement, mirroring, the mesher through the
+simulator), `godot/tests/poncho_check.tscn` (drape on the average mannequin), `godot/tests/cut_tools_check.tscn` (the
+editor's Add shape, Add hole, Delete hole and the Hole tool, each one undoable). The C++ mesher test is in
+`cloth_core/tests/test_basics.cpp` (a 14 cm square with a 24-point hole: area, boundary, no cloth inside the hole).
+
 ## Actions, history and selection (`godot/history.gd`, `godot/selection.gd`)
 
 Every pattern edit is a named action. The edit calls `ed.push_undo("Move corner")` before it

@@ -61,6 +61,9 @@ public:
                        real_t grain_angle, const String& name);
     int add_polygon_panel(const PackedVector2Array& outline, real_t edge_length, const String& material_id, Vector3 origin, Vector3 ex,
                           Vector3 ey, real_t grain_angle, const String& name);
+    // The same with holes: `holes` is an Array of PackedVector2Array, each a hole inside the outline (a neck hole, a vent).
+    int add_polygon_panel_with_holes(const PackedVector2Array& outline, const Array& holes, real_t edge_length, const String& material_id,
+                                     Vector3 origin, Vector3 ex, Vector3 ey, real_t grain_angle, const String& name);
     // Sews outline edge edge_a of panel_a to edge_b of panel_b. reverse = false: the start of A's chain meets the start of
     // B's chain. Returns false (and reports an error) for an invalid panel or edge index.
     bool add_seam(int panel_a, int edge_a, int panel_b, int edge_b, bool reverse);
@@ -160,7 +163,8 @@ private:
     void resetSolver();
     bool validPanel(int panel, const char* who) const;
     int addOutlinePanel(std::vector<fl::Vec2> outline, real_t edge_length, const String& material_id, Vector3 origin, Vector3 ex,
-                        Vector3 ey, real_t grain_angle, const String& name);
+                        Vector3 ey, real_t grain_angle, const String& name,
+                        const std::vector<std::vector<fl::Vec2>>& holes = {});
     bool displayCurrent(const char* who) const;
     const fl::FabricMaterial* material(const String& id) const;
 

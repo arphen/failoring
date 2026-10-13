@@ -19,6 +19,7 @@ const Library = preload("res://library.gd")
 const Outfit = preload("res://outfit.gd")
 const History = preload("res://history.gd")
 const CutSelection = preload("res://selection.gd")
+const Shapes = preload("res://shapes.gd")
 
 # body_h: spacing (m) of the body's signed-distance grid, baked for every walking frame. 7 mm is the reference (the
 # numbers in docs/PERF_NOTES.md are measured with it). Draft and Preview use 10 mm: the bake takes about 1.8x less CPU,
@@ -87,7 +88,8 @@ var health_hot: Array = []                  # piece ids the cutting table tints 
 var sew_a = null
 var pieces: Array = []
 var seams: Array = []
-var tool := "select"
+var tool := "select"      # select, sew or hole (the Hole tool draws a hole inside a piece; see table.gd)
+var hole_shape := "circle"  # the Hole tool's shape: circle or rect
 var snap := true
 var history = null   # the active garment's action history (history.gd); set by _activate
 var _pending = null  # {name, before}: the edit in progress, recorded by its ending changed() (see push_undo)
@@ -497,7 +499,7 @@ func _add_opt(box: VBoxContainer, label_text: String, opt_name: String, items: A
 
 func _plan_entries() -> Array:
 	var out := [["Pencil skirt", "pencil"], ["A-line skirt", "aline"], ["Blank rectangle", "blank"],
-		["Trousers (drafted)", "pants"], ["Tank (drafted)", "tank"], ["T-shirt (drafted)", "shirt"]]
+		["Poncho (square, neck hole)", "poncho"], ["Trousers (drafted)", "pants"], ["Tank (drafted)", "tank"], ["T-shirt (drafted)", "shirt"]]
 	for g in FS_GARMENTS:
 		out.append(["%s (FreeSewing)" % g[0], "fs-" + g[1]])
 	return out
@@ -1034,14 +1036,16 @@ func _refresh_piece_tab() -> void:
 		vb.add_child(none)
 	else:
 		_piece_rows(vb, p)
+		_piece_holes_section(vb, p)
 	var add_h := Label.new()
-	add_h.text = "Add a piece"
+	add_h.text = "Add a shape (sized in cm, placed at the view centre)"
 	vb.add_child(add_h)
-	var add_row := HBoxContainer.new()
-	for kind in [["Rectangle", "rect"], ["Trapezoid", "trap"], ["Triangle", "tri"]]:
+	var add_row := GridContainer.new()
+	add_row.columns = 2
+	for k in Shapes.kinds():
 		var b := Button.new()
-		b.text = kind[0]
-		b.pressed.connect(func() -> void: push_undo("Add piece: %s" % kind[0]); Table.add_piece(self, kind[1]); table.fit(); changed("structure"))
+		b.text = String(k["label"])
+		b.pressed.connect(func() -> void: _open_shape_dialog(String(k["id"])))
 		add_row.add_child(b)
 	vb.add_child(add_row)
 	_lock_editing(vb)
@@ -1176,6 +1180,143 @@ func _piece_rows(vb: VBoxContainer, p: Dictionary) -> void:
 	pa.pressed.connect(func() -> void: paste_piece())
 	cbtns.add_child(pa)
 	vb.add_child(cbtns)
+
+
+# ------------------------------------------------------------------ shapes and holes
+# The Add shape dialog: one SpinBox per size (cm). OK adds the shape centred on the table's view centre.
+func _open_shape_dialog(kind: String) -> void:
+	var label := Shapes.label_of(kind)
+	var dlg := AcceptDialog.new()
+	dlg.title = "Add %s" % label
+	dlg.ok_button_text = "Add"
+	var grid := GridContainer.new()
+	grid.columns = 2
+	var spins := {}
+	for prm in Shapes.params_of(kind):
+		var l := Label.new()
+		l.text = "%s (cm)" % String(prm[1])
+		grid.add_child(l)
+		var sp := SpinBox.new()
+		sp.min_value = float(prm[3])
+		sp.max_value = 400.0
+		sp.step = 1.0
+		sp.value = float(prm[2])
+		sp.custom_minimum_size = Vector2(120, 0)
+		grid.add_child(sp)
+		spins[String(prm[0])] = sp
+	dlg.add_child(grid)
+	$UI.add_child(dlg)
+	dlg.confirmed.connect(func() -> void:
+		var cm := {}
+		for k in spins:
+			cm[k] = float(spins[k].value)
+		_add_shape_now(kind, cm)
+		dlg.queue_free())
+	dlg.canceled.connect(func() -> void: dlg.queue_free())
+	dlg.popup_centered()
+
+
+func _add_shape_now(kind: String, cm: Dictionary) -> void:
+	var label := Shapes.label_of(kind)
+	var tbl: Table = table
+	var at: Vector2 = tbl.to_world(table.size.x * 0.5, table.size.y * 0.5)  # the new piece goes where the table is looking
+	push_undo("Add %s" % label.to_lower())
+	Table.add_shape(self, label, Shapes.make(kind, cm), at)
+	changed("structure")
+
+
+# The Holes list of a piece: each hole with its size and a Delete button, and Add hole.
+func _piece_holes_section(vb: VBoxContainer, p: Dictionary) -> void:
+	var holes: Array = p.get("holes", [])
+	vb.add_child(_h4("Holes (%d)" % holes.size()))
+	for i in holes.size():
+		var hb := Table.bbox_of(holes[i])
+		var row := HBoxContainer.new()
+		var lab := Label.new()
+		lab.text = "Hole %d: %.1f x %.1f cm" % [i + 1, (hb[2] - hb[0]) * 100.0, (hb[3] - hb[1]) * 100.0]
+		lab.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(lab)
+		var del := Button.new()
+		del.text = "Delete"
+		del.tooltip_text = "Removes this hole. Ctrl+Z restores it."
+		del.pressed.connect(func() -> void: _delete_hole(p, i))
+		row.add_child(del)
+		vb.add_child(row)
+	var add := Button.new()
+	add.name = "AddHoleBtn"
+	add.text = "Add hole..."
+	add.tooltip_text = "A circle or a rectangle inside this piece, at a size and place you type. The Hole tool draws one on the table."
+	add.pressed.connect(func() -> void: _open_hole_dialog(p))
+	vb.add_child(add)
+
+
+func _delete_hole(p: Dictionary, i: int) -> void:
+	var holes: Array = p.get("holes", [])
+	if i < 0 or i >= holes.size():
+		return
+	push_undo("Delete hole %d" % (i + 1))
+	holes.remove_at(i)
+	p["holes"] = holes
+	_sym_sync(p)
+	changed("structure")
+
+
+# The Add hole dialog: a circle or a rectangle, sized and placed in cm from the piece's bottom-left corner.
+func _open_hole_dialog(p: Dictionary) -> void:
+	var b := Table.bbox_of(p["outline"])
+	var dlg := AcceptDialog.new()
+	dlg.title = "Add a hole to %s" % String(p.get("name", p["id"]))
+	dlg.ok_button_text = "Add hole"
+	var grid := GridContainer.new()
+	grid.columns = 2
+	var shape_l := Label.new()
+	shape_l.text = "Shape"
+	grid.add_child(shape_l)
+	var shape_opt := OptionButton.new()
+	shape_opt.add_item("Circle", 0)
+	shape_opt.add_item("Rectangle", 1)
+	shape_opt.select(0 if hole_shape == "circle" else 1)
+	grid.add_child(shape_opt)
+	var fields := {}
+	var rows := [["d", "Diameter, or width for a rectangle (cm)", 10.0], ["h", "Height, rectangle only (cm)", 10.0],
+		["x", "Centre across, from the left edge (cm)", (float(b[2]) - float(b[0])) * 50.0],
+		["y", "Centre up, from the bottom edge (cm)", (float(b[3]) - float(b[1])) * 50.0]]
+	for r in rows:
+		var l := Label.new()
+		l.text = String(r[1])
+		grid.add_child(l)
+		var sp := SpinBox.new()
+		sp.min_value = 0.0 if String(r[0]) in ["x", "y"] else 1.0
+		sp.max_value = 400.0
+		sp.step = 0.5
+		sp.value = float(r[2])
+		sp.custom_minimum_size = Vector2(120, 0)
+		grid.add_child(sp)
+		fields[String(r[0])] = sp
+	dlg.add_child(grid)
+	$UI.add_child(dlg)
+	dlg.confirmed.connect(func() -> void:
+		_add_hole_now(p, shape_opt.selected == 0, float(fields["d"].value) / 100.0, float(fields["h"].value) / 100.0,
+			Vector2(float(fields["x"].value) / 100.0 + float(b[0]), float(fields["y"].value) / 100.0 + float(b[1])))
+		dlg.queue_free())
+	dlg.canceled.connect(func() -> void: dlg.queue_free())
+	dlg.popup_centered()
+
+
+# Adds a circle (circle true, d = diameter) or a rectangle (width d, height h) centred on c (piece-local metres).
+# Refused with a message when it does not fit inside the piece clear of the other holes.
+func _add_hole_now(p: Dictionary, circle: bool, d: float, h: float, c: Vector2) -> bool:
+	var hole: Array = Table.circle_hole(c.x, c.y, d) if circle else Table.rect_hole(c.x - d * 0.5, c.y - h * 0.5, d, h)
+	if not Table.hole_fits(p, hole):
+		notify("That hole does not fit: it must lie inside the piece and clear of its other holes.")
+		return false
+	push_undo("Add %s hole" % ("circle" if circle else "rectangle"))
+	var holes: Array = p.get("holes", [])
+	holes.append(hole)
+	p["holes"] = holes
+	_sym_sync(p)
+	changed("structure")
+	return true
 
 
 func _caption(text: String) -> Label:
@@ -2335,6 +2476,28 @@ func _build_table_bar() -> void:
 	fit_btn.text = "Fit"
 	fit_btn.pressed.connect(func() -> void: table.fit())
 	bar.add_child(fit_btn)
+	var shape_btn := MenuButton.new()
+	shape_btn.name = "AddShapeBtn"
+	shape_btn.text = "Add shape"
+	shape_btn.tooltip_text = "Add a rectangle, square, circle or ellipse, triangle, trapezoid or poncho, sized in cm"
+	var kinds: Array = Shapes.kinds()
+	var pm := shape_btn.get_popup()
+	for i in kinds.size():
+		pm.add_item(String(kinds[i]["label"]), i)
+	pm.id_pressed.connect(func(i: int) -> void: _open_shape_dialog(String(kinds[i]["id"])))
+	bar.add_child(shape_btn)
+	var hole_btn := Button.new()
+	hole_btn.name = "HoleToolBtn"
+	hole_btn.text = "Hole"
+	hole_btn.tooltip_text = "Hole tool: drag inside a piece to draw a hole (a circle from its centre, or a rectangle corner to corner)"
+	hole_btn.pressed.connect(func() -> void: table.set_tool("hole"))
+	bar.add_child(hole_btn)
+	var hole_opt := OptionButton.new()
+	hole_opt.name = "HoleShapeOpt"
+	hole_opt.add_item("circle", 0)
+	hole_opt.add_item("rectangle", 1)
+	hole_opt.item_selected.connect(func(i: int) -> void: hole_shape = "circle" if i == 0 else "rect")
+	bar.add_child(hole_opt)
 	_active_label = Label.new()
 	_active_label.name = "ActiveLabel"
 	_active_label.add_theme_font_size_override("font_size", 12)

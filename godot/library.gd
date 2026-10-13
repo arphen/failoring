@@ -26,6 +26,7 @@ static func static_items(preset: String) -> Array:
 		_item("pencil", "Pencil skirt (2 panels)", "skirts", "builtin", "", false),
 		_item("aline", "A-line skirt (4 gores)", "skirts", "builtin", "", false),
 		_item("blank", "Blank rectangle", "custom", "builtin", "", false),
+		_item("poncho", "Poncho (square, neck hole)", "tops", "builtin", "", false),
 		_item("fs-teagan", "Tee (FreeSewing)", "tops", "freesewing", preset, true),
 		_item("fs-penelope", "Pencil skirt (FreeSewing)", "skirts", "freesewing", preset, true),
 		_item("fs-charlie", "Chinos (FreeSewing)", "bottoms", "freesewing", preset, true),
