@@ -22,7 +22,7 @@
     charlie: { title: 'Charlie chinos', fabric: 'cotton_poplin', url: 'https://freesewing.org/docs/designs/charlie', free: /^(hem|hemBase|bottom)$/,   // the front's waist edge, slant and upper side edge all carry the pocket-bag label; the slant is sewn to the back's upper side edge (no pocket)
       parts: { 'charlie.front': { kind: 'leg', theta: 0, origSide: 'R', top: 'origin', role: 'Front leg' }, 'charlie.back': { kind: 'leg', theta: 180, origSide: 'R', top: 'origin', role: 'Back leg' }, 'charlie.waistband': { kind: 'band', role: 'Waistband', holdTop: true, folded: true } } },
     penelope: { title: 'Penelope pencil skirt', fabric: 'wool_suiting', url: 'https://freesewing.org/docs/designs/penelope',
-      parts: { 'penelope.front': { kind: 'body', theta: 0, top: 'waist', role: 'Front', holdTop: true }, 'penelope.back': { kind: 'body', theta: 180, top: 'waist', role: 'Back half', holdTop: true }, 'penelope.waistband': { kind: 'band', role: 'Waistband', holdTop: true } } },
+      parts: { 'penelope.front': { kind: 'body', theta: 0, top: 'waist', role: 'Front', holdTop: true }, 'penelope.back': { kind: 'body', theta: 180, top: 'waist', role: 'Back half', holdTop: true }, 'penelope.waistband': { kind: 'band', role: 'Waistband', holdTop: true, folded: true } } },
   };
 
   const area = (p) => { let a = 0; for (let i = 0; i < p.length; i++) { const j = (i + 1) % p.length; a += p[i][0] * p[j][1] - p[j][0] * p[i][1]; } return a / 2; };
@@ -63,7 +63,10 @@
     const inst = [];
     for (const rp of raw.pieces) {
       const spec = rec.parts[rp.id]; if (!spec) continue;
-      let chains = rp.chains.map((c) => ({ label: c.label, pts: c.pts.map(([x, y]) => [x / 1000, -y / 1000]) }));
+      // a waistband drafted with a button tab (raw.store.waistbandFly, mm from the band's y = 0 end) makes a ring without it: the tab overlaps the
+      // other end, it does not add to the circumference. Cut it off, so the band is as long as the trouser edges it is sewn to.
+      const fly = spec.kind === 'band' && raw.store && raw.store.waistbandFly > 0 ? raw.store.waistbandFly : 0;
+      let chains = rp.chains.map((c) => { const pts = []; for (const [x, y] of c.pts) { const q = [x / 1000, -(fly > 0 ? Math.max(y, fly) : y) / 1000], l = pts[pts.length - 1]; if (!l || Math.hypot(q[0] - l[0], q[1] - l[1]) > 1e-7) pts.push(q); } return { label: c.label, pts }; });
       // long axis horizontal. A cut-on-the-fold waistband is twice its finished width (it folds along its middle line, one half inside): one layer of the finished band is modelled
       if (spec.kind === 'band') chains = chains.map((c) => ({ label: c.label, pts: c.pts.map(([x, y]) => [-y, x * (spec.folded ? 0.5 : 1)]) }));
       const flat = [].concat(...chains.map((c) => c.pts));
@@ -83,7 +86,14 @@
       if (pc.spec.kind === 'body') pc.wrap = { mode: 'fit', theta: pc.spec.theta, y: (pc.spec.top === 'hps' ? yHps : yWaist) - h, clear: 0.012 };
       else if (pc.spec.kind === 'leg') pc.wrap = { mode: 'leg', side: pc.side, theta: pc.spec.theta, y: pc.spec.top === 'origin' ? yWaist + pc.bb.y0 : yWaist - h, clear: 0.012, vcap: pc.bb.y1 - 0.03 };   // 'origin': the design's own y = 0 is the natural waist
       else if (pc.spec.kind === 'band') pc.wrap = { mode: 'fit', theta: 0, y: yWaist - 0.002, clear: 0.012, group: 'band' };   // y is lowered onto the top edge of the other pieces below
-      else if (pc.spec.kind === 'sleeve') pc.wrap = { mode: 'arm', side: pc.side === 'R' ? 'R' : 'L', sTop: 0.045, clear: 0.02, phiSeam: pc.side === 'R' ? 90 : -90 };   // the R arm's frame is mirrored (its cross product flips handedness), so its underarm is at +90
+      else if (pc.spec.kind === 'sleeve') {
+        pc.wrap = { mode: 'arm', side: pc.side === 'R' ? 'R' : 'L', sTop: 0.045, clear: 0.02, phiSeam: pc.side === 'R' ? 90 : -90 };   // the R arm's frame is mirrored (its cross product flips handedness), so its underarm is at +90
+        // EXPERIMENT, off by default (opt.sleeveCap, env SLEEVECAP=1 in tools/fs_plan.js): the cap's two corners (the underarm line); the rows above them are
+        // the cap (see makeWrapRows 'wrap.cap') and the sleeve's start height on the arm is calibrated to the armholes (below). It did not bring the start
+        // pose of the cap closer to the armholes (docs/TEE_NOTES.md): the body pieces' shoulder rows end at the torso hull, medial of the shoulder tip.
+        const cc = pc.chains.filter((c) => c.label === 'sleevecap');
+        if (opt.sleeveCap && cc.length) { const a = cc[0].pts[0], b = cc[cc.length - 1].pts[cc[cc.length - 1].pts.length - 1]; pc.wrap.cap = { v: +((a[1] + b[1]) / 2).toFixed(5), x0: +Math.min(a[0], b[0]).toFixed(5), x1: +Math.max(a[0], b[0]).toFixed(5) }; }
+      }
       if (pc.wrap.mode === 'fit' && pc.side) pc.wrap.over = pc.bb.x1 > -pc.bb.x0 ? 1 : -1;
       pc.flat = flat;
     }
@@ -148,7 +158,56 @@
     for (const pc of inst) pc.chains.forEach((c, k) => { const cv = mkCurve(c.pts); chainList.push({ pc, k, c, cv, M: Math.max(8, Math.min(60, Math.ceil(cv.L / 0.01))) }); });
     const M = 40;
     for (const e of chainList) { e.P3 = []; for (let i = 0; i <= M; i++) { const q = e.cv.at(i / M); e.P3.push(e.pc.wrapObj.point(q[0], q[1])); } }
-    for (const e of chainList) { e.T3 = e.P3.map((q, i) => { const a = e.P3[Math.max(0, i - 1)], b = e.P3[Math.min(M, i + 1)], t = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], l = Math.hypot(...t) || 1; return t.map((x) => x / l); }); }
+    const tangents = (e) => e.P3.map((q, i) => { const a = e.P3[Math.max(0, i - 1)], b = e.P3[Math.min(M, i + 1)], t = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], l = Math.hypot(...t) || 1; return t.map((x) => x / l); });
+    for (const e of chainList) e.T3 = tangents(e);
+    // Sleeves: the cap is sewn to the armholes by construction (the front half to one armhole, the back half to the other),
+    // not by where the start pose happens to put them; the armhole is the run of chains from the side seam's upper end up to
+    // the shoulder tip.
+    const forced = [];
+    for (const sl of inst.filter((p) => p.spec.kind === 'sleeve')) {
+      const cap = chainList.find((e) => e.pc === sl && e.c.label === 'sleevecap'); if (!cap) continue;
+      const cp = cap.c.pts; let pk = 0; for (let i = 1; i < cp.length; i++) if (cp[i][1] > cp[pk][1]) pk = i;
+      const fp = chainLen(cp.slice(0, pk + 1)) / cap.cv.L, sgn = sl.side === 'R' ? -1 : 1, arm = [];
+      for (const bp of inst.filter((p) => p.spec.kind === 'body')) {
+        const ch = chainList.filter((e) => e.pc === bp), nc = ch.length;
+        const ss = ch.find((e) => /^sideSeam/.test(e.c.label || '') && Math.sign(e.P3[M][0] + e.P3[0][0]) === sgn); if (!ss) continue;
+        const up = ss.P3[M][1] > ss.P3[0][1], dir = up ? 1 : -1; let k = (ss.k + dir + nc) % nc, acc = [], best = null;
+        for (let n = 0; n < 4; n++, k = (k + dir + nc) % nc) { acc.push(ch[k]); const tl = acc.reduce((t, e) => t + e.cv.L, 0), d = Math.abs(tl - cap.cv.L / 2); if (!best || d < best.d) best = { d, n: acc.length }; }
+        arm.push({ bp, list: acc.slice(0, best.n), dir, len: acc.slice(0, best.n).reduce((t, e) => t + e.cv.L, 0) });
+      }
+      if (arm.length !== 2) continue;
+      // The sleeve starts as a tube around the arm. How far up the arm its cap begins is not known from the arm alone (the shoulder joint is a few
+      // centimetres below the shoulder tip, which is where the armhole ends), so the height is the one at which the cap's edge lies on the armholes.
+      if (sl.wrap.cap) {
+        const segs = []; for (const a of arm) for (const e of a.list) for (let i = 0; i + 1 < e.P3.length; i++) segs.push([e.P3[i], e.P3[i + 1]]);
+        const smp = []; for (let i = 0; i <= 48; i++) smp.push(cap.cv.at(i / 48));
+        const dseg = (p) => { let b = 1e9; for (const [A, B] of segs) { const ex = B[0] - A[0], ey = B[1] - A[1], ez = B[2] - A[2], l2 = ex * ex + ey * ey + ez * ez || 1e-12, t = Math.max(0, Math.min(1, ((p[0] - A[0]) * ex + (p[1] - A[1]) * ey + (p[2] - A[2]) * ez) / l2)), d = Math.hypot(A[0] + t * ex - p[0], A[1] + t * ey - p[1], A[2] + t * ez - p[2]); if (d < b) b = d; } return b; };
+        let best = null;
+        for (let st = -0.14; st <= 0.0601; st += 0.005) {
+          const wo = FL.makeWrap(FL.normalizePiece({ outline: sl.flat.slice(), wrap: Object.assign({}, sl.wrap, { sTop: st }) }), body);
+          let c = 0; for (const q of smp) c += dseg(wo.point(q[0], q[1])); c /= smp.length;
+          if (!best || c < best.c) best = { st, c };
+        }
+        sl.wrap.sTop = +best.st.toFixed(4); mkObj(sl);
+        for (const e of chainList) if (e.pc === sl) { e.P3 = []; for (let i = 0; i <= M; i++) { const q = e.cv.at(i / M); e.P3.push(sl.wrapObj.point(q[0], q[1])); } e.T3 = tangents(e); }
+        if (opt.debugCand) console.log('sleeve', sl.id, 'sTop', sl.wrap.sTop, 'cap edge to armholes, mean', (best.c * 100).toFixed(1), 'cm');
+      }
+      // which armhole takes the first part of the cap (corner A -> peak): the one nearer to the cap's first half
+      const mid = (f) => sl.wrapObj.point(...cap.cv.at(f)), amid = (a) => a.list[Math.floor(a.list.length / 2)].P3[M >> 1];
+      const dd = (i, j) => dist3(mid(i ? (fp + 1) / 2 : fp / 2), amid(arm[j]));
+      const halves = [[0, fp], [fp, 1]], zOf = (f) => { let z = 0; for (let i = 0; i <= 8; i++) z += mid(f[0] + (f[1] - f[0]) * i / 8)[2]; return z / 9; };
+      // the cap half that lies further forward on the arm belongs to the front armhole
+      const frontHalf = zOf(halves[0]) >= zOf(halves[1]) ? 0 : 1, frontArm = arm.findIndex((a) => a.bp.spec.theta === 0), swap = frontArm !== frontHalf;
+      void dd;
+      [0, 1].forEach((h) => {
+        const a = arm[swap ? 1 - h : h], f = halves[h], tot = a.len; let acc = 0;
+        const ord = h === 0 ? [0, 1] : [1, 0];   // cap order from the corner towards the peak: half 0 forward, half 1 backward
+        a.list.forEach((e) => { const l0 = acc / tot, l1 = (acc + e.cv.L) / tot; acc += e.cv.L;
+          const g = (t) => (h === 0 ? f[0] + (f[1] - f[0]) * t : f[1] - (f[1] - f[0]) * t), c0 = g(l0), c1 = g(l1);
+          forced.push({ a: cap, b: e, fa: [Math.min(c0, c1), Math.max(c0, c1)], fb: [0, 1] }); });
+        void ord;
+      });
+    }
     const sideBy = (a, i, b, j) => { const d = [b.P3[j][0] - a.P3[i][0], b.P3[j][1] - a.P3[i][1], b.P3[j][2] - a.P3[i][2]], l = Math.hypot(...d); return l < 0.006 || Math.abs(d[0] * a.T3[i][0] + d[1] * a.T3[i][1] + d[2] * a.T3[i][2]) / l < 0.6; };
     const tolFor = (a, b) => (a.c.label === 'sleevecap' || b.c.label === 'sleevecap') ? 0.10 : 0.05;
     // For every pair of chains: the samples of a that have a side-by-side neighbour on b (within tolerance), as runs
@@ -190,38 +249,6 @@
         if (good) cand.push({ a, b, fa: p.f, fb: q.f, score: Math.min(la, lb) });
       }
     }
-    // Sleeves: the cap is sewn to the armholes by construction (the front half to one armhole, the back half to the other),
-    // not by where the start pose happens to put them; the armhole is the run of chains from the side seam's upper end up to
-    // the shoulder tip.
-    const forced = [];
-    for (const sl of inst.filter((p) => p.spec.kind === 'sleeve')) {
-      const cap = chainList.find((e) => e.pc === sl && e.c.label === 'sleevecap'); if (!cap) continue;
-      const cp = cap.c.pts; let pk = 0; for (let i = 1; i < cp.length; i++) if (cp[i][1] > cp[pk][1]) pk = i;
-      const fp = chainLen(cp.slice(0, pk + 1)) / cap.cv.L, sgn = sl.side === 'R' ? -1 : 1, arm = [];
-      for (const bp of inst.filter((p) => p.spec.kind === 'body')) {
-        const ch = chainList.filter((e) => e.pc === bp), nc = ch.length;
-        const ss = ch.find((e) => /^sideSeam/.test(e.c.label || '') && Math.sign(e.P3[M][0] + e.P3[0][0]) === sgn); if (!ss) continue;
-        const up = ss.P3[M][1] > ss.P3[0][1], dir = up ? 1 : -1; let k = (ss.k + dir + nc) % nc, acc = [], best = null;
-        for (let n = 0; n < 4; n++, k = (k + dir + nc) % nc) { acc.push(ch[k]); const tl = acc.reduce((t, e) => t + e.cv.L, 0), d = Math.abs(tl - cap.cv.L / 2); if (!best || d < best.d) best = { d, n: acc.length }; }
-        arm.push({ bp, list: acc.slice(0, best.n), dir, len: acc.slice(0, best.n).reduce((t, e) => t + e.cv.L, 0) });
-      }
-      if (arm.length !== 2) continue;
-      // which armhole takes the first part of the cap (corner A -> peak): the one nearer to the cap's first half
-      const mid = (f) => sl.wrapObj.point(...cap.cv.at(f)), amid = (a) => a.list[Math.floor(a.list.length / 2)].P3[M >> 1];
-      const dd = (i, j) => dist3(mid(i ? (fp + 1) / 2 : fp / 2), amid(arm[j]));
-      const halves = [[0, fp], [fp, 1]], zOf = (f) => { let z = 0; for (let i = 0; i <= 8; i++) z += mid(f[0] + (f[1] - f[0]) * i / 8)[2]; return z / 9; };
-      // the cap half that lies further forward on the arm belongs to the front armhole
-      const frontHalf = zOf(halves[0]) >= zOf(halves[1]) ? 0 : 1, frontArm = arm.findIndex((a) => a.bp.spec.theta === 0), swap = frontArm !== frontHalf;
-      void dd;
-      [0, 1].forEach((h) => {
-        const a = arm[swap ? 1 - h : h], f = halves[h], tot = a.len; let acc = 0;
-        const ord = h === 0 ? [0, 1] : [1, 0];   // cap order from the corner towards the peak: half 0 forward, half 1 backward
-        a.list.forEach((e) => { const l0 = acc / tot, l1 = (acc + e.cv.L) / tot; acc += e.cv.L;
-          const g = (t) => (h === 0 ? f[0] + (f[1] - f[0]) * t : f[1] - (f[1] - f[0]) * t), c0 = g(l0), c1 = g(l1);
-          forced.push({ a: cap, b: e, fa: [Math.min(c0, c1), Math.max(c0, c1)], fb: [0, 1] }); });
-        void ord;
-      });
-    }
     // A waistband: the trousers' top-edge chains (the chains that run alongside the band's lower long edge in the start pose) are sewn to it
     // end to end in the order they meet it, each taking the stretch of the band that is as long as it is in the pattern (the band is drafted as
     // long as the edges together). The start pose only decides which chains and in which order; a seam never joins 14 cm of trousers to 11 cm of band
@@ -229,14 +256,16 @@
     for (const bc of chainList.filter((e) => e.pc.spec.kind === 'band' && e.cv.L > 0.2 && !bandTop(e))) {
       const tops = [];
       for (const e of chainList) {
-        if (e.pc.spec.kind === 'band' || FREE.test(e.c.label || '') || e.cv.L < 0.08) continue;
+        if (e.pc.spec.kind === 'band' || FREE.test(e.c.label || '') || e.cv.L < (opt.minTop != null ? opt.minTop : 0.01)) continue;
         let n = 0, sum = 0; for (let i = 0; i <= M; i++) { const r = nearOn(e.P3[i], e.T3[i], bc); if (r[0] < 0.05 && r[2]) { n++; sum += r[1] / M; } }
         if (n >= 0.7 * (M + 1)) tops.push({ e, pos: sum / n });
       }
       if (tops.length < 2) continue;
       tops.sort((p, q) => p.pos - q.pos);
       const tot = tops.reduce((t, q) => t + q.e.cv.L, 0); let acc = 0;
-      for (const t of tops) { forced.push({ a: t.e, b: bc, fa: [0, 1], fb: [acc / tot, (acc + t.e.cv.L) / tot] }); acc += t.e.cv.L; }
+      // a stretch of top edge shorter than ~4% of the band (the sliver between a dart leg and a corner) keeps its share of the band but is not sewn: the seam
+      // intervals of the band chain merge below 3%, and the sliver would then be joined to a neighbour's 10 cm
+      for (const t of tops) { if (t.e.cv.L >= 0.04 * tot) forced.push({ a: t.e, b: bc, fa: [0, 1], fb: [acc / tot, (acc + t.e.cv.L) / tot] }); acc += t.e.cv.L; }
       if (opt.debugCand) console.log('band', bc.pc.id + '#' + bc.k, 'L', (bc.cv.L * 100).toFixed(1), 'edges', (tot * 100).toFixed(1), tops.map((t) => t.e.pc.id + '#' + t.e.k + '@' + t.pos.toFixed(2)).join(' '));
     }
     cand.sort((p, q) => q.score - p.score);

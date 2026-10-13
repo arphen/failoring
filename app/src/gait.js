@@ -63,7 +63,7 @@
     // arms: opposite to the same-side leg
     const arm = (side, ph) => {
       const sg = side === 'l' ? 1 : -1, sh = J[side + '-shoulder'], hand = J[side + '-hand'];
-      const a = Math.atan2(hand[0] - sh[0], sh[1] - hand[1]), want = sg * (opts.armAbduct == null ? 0.14 : opts.armAbduct);
+      const a = Math.atan2(hand[0] - sh[0], sh[1] - hand[1]), want = sg * (opts.armAbduct == null ? ARM_ABDUCT : opts.armAbduct);
       const rx = 24 * D * sa * Math.cos(tau * ph);   // = -flexion: the arm is forward when the same-side leg is back
       rot[k[side + '-shoulder']] = [rx, 0, -(a - want)];
       rot[k[side + '-elbow']] = [-(8 + ELBOW(ph) * 0.6) * sa * D, 0, 0];
@@ -114,13 +114,50 @@
     return out;
   };
 
+  // Arm clearance. The arms hang so that, below the armpit, they stay ARM_GAP clear of the body's section hulls (the surface
+  // garments are wrapped on and the cloth rests on). A body with wide hips or a belly (the plus preset: at the default 8 degrees
+  // the elbow lies 17 mm inside the hull) needs its arms held further out, else the cloth is pinched between arm and torso and
+  // never settles. The angle is never smaller than the default.
+  const ARM_ABDUCT = 0.14, ARM_GAP = 0.02, ARM_MAX = 0.5;
+  const hullDist = (h, x, z) => {   // signed distance of (x, z) to a convex polygon [x0, z0, x1, z1, ...]; negative inside
+    const n = h.length >> 1; if (n < 3) return 1;
+    let area = 0; for (let i = 0; i < n; i++) { const j = (i + 1) % n; area += h[2 * i] * h[2 * j + 1] - h[2 * j] * h[2 * i + 1]; }
+    const sg = area >= 0 ? 1 : -1; let inside = true, best = 1e9;
+    for (let i = 0; i < n; i++) {
+      const j = (i + 1) % n, ax = h[2 * i], az = h[2 * i + 1], ex = h[2 * j] - ax, ez = h[2 * j + 1] - az, l = Math.hypot(ex, ez) || 1e-9;
+      if ((ex * (z - az) - ez * (x - ax)) * sg < 0) inside = false;
+      const t = Math.max(0, Math.min(1, ((x - ax) * ex + (z - az) * ez) / (l * l))); best = Math.min(best, Math.hypot(x - ax - t * ex, z - az - t * ez));
+    }
+    return inside ? -best : best;
+  };
+  // smallest distance between the arm and hand vertices (below the waist + 6 cm: elbow, forearm, hand) and the section hulls: { d, y }
+  G.armGap = (M, P, S) => {
+    const ids = ['arm.L', 'arm.R', 'hand.L', 'hand.R'].map((n) => M.parts.indexOf(n)), yMax = P.allPos[3 * M.lm.waist + 1] + 0.06;
+    let d = 1e9, y = 0;
+    for (let i = 0; i < M.nb; i++) {
+      if (!ids.includes(M.part[i])) continue;
+      const vy = P.allPos[3 * i + 1]; if (vy > yMax) continue;
+      const h = S.hulls[Math.round(vy / S.dy)]; if (!h || h.length < 6) continue;
+      const q = hullDist(h, P.allPos[3 * i], P.allPos[3 * i + 2]); if (q < d) { d = q; y = vy; }
+    }
+    return { d, y };
+  };
+
   // The standing mannequin: A-pose legs and arms brought down (stride 0). Same structure as a generated body
   // (pos, allPos, joints, landmarks, sections) so the rest of the app can use it as is; .rest is the A-pose body.
+  // .armAbduct is the arm angle used (rad from vertical); a walk of this body must pass it to G.pose.
   G.stand = (M, body) => {
-    const P = G.pose(M, body, 0, { stride: 0, arms: 0 });
-    const out = Object.assign({}, body, { pos: P.pos, allPos: P.allPos, joints: P.joints, rest: body, key: body.key + '/stand', landmarks: {} });
+    let abd = ARM_ABDUCT, P, S;
+    for (let it = 0; it < 4; it++) {
+      P = G.pose(M, body, 0, { stride: 0, arms: 0, armAbduct: abd });
+      S = FL.Body.sections(M, P.allPos, 0.01);
+      const g = G.armGap(M, P, S);
+      if (g.d >= ARM_GAP - 0.002 || abd >= ARM_MAX) break;
+      abd = Math.min(ARM_MAX, abd + (ARM_GAP - g.d) / Math.max(0.15, P.joints['l-shoulder'][1] - g.y));
+    }
+    const out = Object.assign({}, body, { pos: P.pos, allPos: P.allPos, joints: P.joints, rest: body, key: body.key + '/stand', landmarks: {}, armAbduct: abd });
     for (const [name, id] of Object.entries(M.lm)) if (typeof id === 'number') out.landmarks[name] = [P.allPos[3 * id], P.allPos[3 * id + 1], P.allPos[3 * id + 2]];
-    out.sections = FL.Body.sections(M, P.allPos, 0.01);
+    out.sections = S;
     out.arms = G.arms(M, P);
     return out;
   };

@@ -25,7 +25,7 @@ const settle = +(process.env.SETTLE || 40), cycle = +(process.env.CYCLE || 64);
 const spec = { job: 1, meas: FL.PRESETS[preset], fabric: fab, quality: q, rampFrames: +(process.env.RAMPF || 20), seamStiffness: 20000, selfCollision: false, frames: +nframes,
   pieces: P.pieces.map((p) => ({ id: p.id, outline: p.outline, grain: p.grain, wrap: p.wrap })), seams: P.seams,
   body: { key: body.key, pos: body.pos.slice(), tris: Int32Array.from(M.tris), sections: body.sections, arms: body.arms },
-  walk: process.env.STAND ? null : { rest: rest.allPos, joints: rest.joints, settle, cycle, ramp: +(process.env.RAMP || 24), stride: 1 } };
+  walk: process.env.STAND ? null : { rest: rest.allPos, joints: rest.joints, settle, cycle, ramp: +(process.env.RAMP || 24), stride: 1, armAbduct: body.armAbduct } };
 const t0 = Date.now();
 ctx.onmessage({ data: { type: 'build', spec } });
 const iv = setInterval(() => {
@@ -45,6 +45,20 @@ function finish() {
     console.log('settle: mean vertex step (mm/frame) over last ' + k + ' frames ' + sp.map((v) => (v * 1000).toFixed(2)).join(' ') + ' | ke ' + (fl.ke == null ? 'n/a' : (+fl.ke).toExponential(2)) + ' gap ' + (fl.gap == null ? 'n/a' : (+fl.gap * 1000).toFixed(1) + 'mm') + ' clear ' + (fl.clear == null ? 'n/a' : (+fl.clear * 1000).toFixed(1) + 'mm')); }
   { const cl = frames.map((f, i) => [f.clear, i]).filter((x) => x[0] != null), gp = frames.map((f, i) => [f.gap, i]).filter((x) => x[0] != null);   // worst frame of the whole run (a walk can overrun the cloth long before the last frame)
     if (cl.length) { const m = cl.reduce((a, b) => (b[0] < a[0] ? b : a)), g = gp.reduce((a, b) => (b[0] > a[0] ? b : a)); console.log('worst over the run: clearance ' + (m[0] * 1000).toFixed(1) + ' mm at frame ' + m[1] + ', seam gap ' + (g[0] * 1000).toFixed(1) + ' mm at frame ' + g[1]); } }
+  if (process.env.PIECESTAT) {   // PIECESTAT=<piece index>: per frame, the mean height of that piece and its lowest/longest edge stretch (outline edges, current 3D length / rest length from uv)
+    const pi = +process.env.PIECESTAT, E = meta.chains[pi], uv = meta.uv, rl = E.map(([a, b]) => Math.hypot(uv[2 * a] - uv[2 * b], uv[2 * a + 1] - uv[2 * b + 1]));
+    const vs = new Set(); for (const [a, b] of E) { vs.add(a); vs.add(b); }
+    let y0 = 1e9; for (const v of vs) y0 = Math.min(y0, uv[2 * v + 1]);
+    const low = E.map(([a, b], k) => uv[2 * a + 1] < y0 + 0.004 && uv[2 * b + 1] < y0 + 0.004 ? k : -1).filter((k) => k >= 0), L0 = low.reduce((t, k) => t + rl[k], 0);
+    const line = [], hi = new Set(); { let y1 = -1e9; for (const v of vs) y1 = Math.max(y1, uv[2 * v + 1]); for (const v of vs) if (uv[2 * v + 1] > y1 - 0.004) hi.add(v); }
+    const wl = M.lm.waist;
+    for (let f = 0; f < frames.length; f += 6) { const P = frames[f].pos; let ym = 0; for (const v of vs) ym += P[3 * v + 1]; ym /= vs.size;
+      const Ln = low.reduce((t, k) => { const [a, b] = E[k]; return t + Math.hypot(P[3 * a] - P[3 * b], P[3 * a + 1] - P[3 * b + 1], P[3 * a + 2] - P[3 * b + 2]); }, 0);
+      let yt = 0; for (const v of hi) yt += P[3 * v + 1]; yt /= hi.size;
+      const bp = frames[f].body || body.pos, yw = bp[3 * wl + 1];   // the waist landmark of the body as it is posed in that frame
+      line.push(f + ':' + (ym * 100).toFixed(0) + 'cm/' + (Ln / L0).toFixed(3) + '/top' + ((yt - yw) * 100).toFixed(1)); }
+    console.log('piece ' + pi + ' (frame:mean height/stretch of its lower edge/top edge minus waist landmark in cm) ' + line.join(' '));
+  }
   if (process.env.DUMP) fs.writeFileSync(process.env.DUMP, JSON.stringify({ pos0: Array.from(frames[0].pos), pos: Array.from(frames[frames.length - 1].pos), posPrev: Array.from(frames[Math.max(0, frames.length - 2)].pos), n: meta.n, nd: meta.nd, uv: Array.from(meta.uv), dtris: Array.from(meta.dtris), ranges: meta.ranges, chains: meta.chains, seams: P.seams, ids: P.pieces.map((p) => p.id) }));
   const pick = []; const n = 8, k0 = settle + 1, span = Math.min(cycle, frames.length - k0);
   if (process.env.PICK) process.env.PICK.split(',').forEach((v) => pick.push(Math.min(frames.length - 1, +v)));   // PICK=1,10,30,70: explicit frame indices

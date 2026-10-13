@@ -310,13 +310,17 @@ FL.makeWrapRows = (piece, body) => {
   const regimeHalf = (k) => { const up = (w.side === 'L') === (w.theta === 0), pa = up ? theta : theta - Math.PI / 2;
     return arc('h' + w.side + (up ? 'u' : 'd') + k, nearest(S.hulls, k), 0, pa, pa + Math.PI / 2); };
   const ySmooth = (x) => { x = Math.max(0, Math.min(1, x)); return x * x * (3 - 2 * x); };
+  // wrap.cap (set-in sleeves): { v, x0, x1 }, the pattern height and the span of the cap's two corners (the underarm line). Rows below it are rings
+  // closed at the underarm seam; the rows above it are only as wide as the cap is, so they use the angular scale of the corner row (they climb the
+  // arm from the underarm to the top of the shoulder) instead of each closing into a full ring, which stretched the narrow rows several times round.
+  // The axis runs on above the shoulder joint (sTop < 0): the cap's peak belongs at the shoulder tip, not at the joint.
   const armPos = (u, v) => {   // sleeve: a tube around the arm axis; row fraction t -> angle from the underarm seam
-    const A = body.arms[w.side], [x0, x1] = rowExt(v), t = (u - x0) / (x1 - x0);
-    const s = Math.max(0, Math.min(A.total, (w.sTop || 0.06) + (bb.y1 - v))), k = s < A.len[0] ? 0 : 1, l = s - (k ? A.len[0] : 0);
+    const A = body.arms[w.side], cp = w.cap && v > w.cap.v + 1e-6 ? w.cap : null, [x0, x1] = cp ? [cp.x0, cp.x1] : rowExt(v), t = (u - x0) / (x1 - x0);
+    const s = Math.max(w.cap ? -0.2 : 0, Math.min(A.total, (w.sTop == null ? 0.06 : w.sTop) + (bb.y1 - v))), k = s < A.len[0] ? 0 : 1, l = s - (k ? A.len[0] : 0);
     const a = A.seg[k], c = [A.pts[k][0] + a[0] * l, A.pts[k][1] + a[1] * l, A.pts[k][2] + a[2] * l];
     const dz = a[2]; let e0 = [-dz * a[0], -dz * a[1], 1 - dz * a[2]]; const l0 = Math.hypot(...e0); e0 = e0.map((q) => q / l0);
     const up = [-a[0], -a[1], -a[2]], e1 = [up[1] * e0[2] - up[2] * e0[1], up[2] * e0[0] - up[0] * e0[2], up[0] * e0[1] - up[1] * e0[0]];
-    const ra = A.rad[Math.min(A.rad.length - 1, Math.round(s / 0.01))], r = Math.max(ra + 0.004, Math.min(ra + clear + (w.loose || 0), (x1 - x0) / (2 * Math.PI))), ph = (w.phiSeam * D) + 2 * Math.PI * t, cs = Math.cos(ph), sn = Math.sin(ph);
+    const ra = A.rad[Math.max(0, Math.min(A.rad.length - 1, Math.round(s / 0.01)))], r = Math.max(ra + 0.004, Math.min(ra + clear + (w.loose || 0), (x1 - x0) / (2 * Math.PI))), ph = (w.phiSeam * D) + 2 * Math.PI * t, cs = Math.cos(ph), sn = Math.sin(ph);
     return [c[0] + r * (cs * e0[0] + sn * e1[0]), c[1] + r * (cs * e0[1] + sn * e1[1]), c[2] + r * (cs * e0[2] + sn * e1[2])];
   };
   const posAt = (u, v) => {
@@ -356,7 +360,7 @@ FL.makeWrapRows = (piece, body) => {
   if (w.mode === 'arm') {
     const A = body.arms[w.side], sg = w.side === 'L' ? 1 : -1;
     return { ax: 0.2, az: 0.12, cz: 0, per: 1, uc, vmin: bb.y0, point: (u, v) => armPos(u, v),
-      flatPoint: (u, v, d) => { const s = Math.max(0, Math.min(A.total, (w.sTop || 0.06) + (bb.y1 - v))), k = s < A.len[0] ? 0 : 1, l = s - (k ? A.len[0] : 0), a = A.seg[k];
+      flatPoint: (u, v, d) => { const s = Math.max(0, Math.min(A.total, (w.sTop == null ? 0.06 : w.sTop) + (bb.y1 - v))), k = s < A.len[0] ? 0 : 1, l = s - (k ? A.len[0] : 0), a = A.seg[k];
         return [A.pts[k][0] + a[0] * l + sg * (A.rad[Math.round(s / 0.01)] + clear + d), A.pts[k][1] + a[1] * l, A.pts[k][2] + a[2] * l - sg * (u - uc)]; } };
   }
   const c0 = posAt(uc, vc), ca = posAt(uc - 0.005, vc), cb = posAt(uc + 0.005, vc);
