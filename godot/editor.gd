@@ -1514,7 +1514,7 @@ func _set_cloth_mesh(disp: PackedVector3Array) -> void:
 	arr[Mesh.ARRAY_VERTEX] = disp
 	arr[Mesh.ARRAY_INDEX] = _disp_idx
 	arr[Mesh.ARRAY_COLOR] = _cloth_colors()
-	arr[Mesh.ARRAY_NORMAL] = Look.cloth_normals(disp, idx)
+	arr[Mesh.ARRAY_NORMAL] = Look.cloth_normals(disp, _disp_idx)
 	# one ArrayMesh for the whole session: reset its surface instead of allocating a new mesh per update
 	_cloth_am.clear_surfaces()
 	_cloth_am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
