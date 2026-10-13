@@ -315,7 +315,8 @@ void ClothSolver::finalize() {
     hash_.stamp.assign(tris_.size(), 0);
     hash_.stampId = 0;
 
-    buildBlockPattern();
+    if (patternValid_) bindBlockSlots();  // re-finalize after a topology-preserving edit: keep the symbolic factorisation
+    else buildBlockPattern();
     finalized_ = true;
 }
 

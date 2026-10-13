@@ -76,6 +76,55 @@ struct SolverParams {
     Real selfThickness = 0.002;    // m, vertex-triangle contact distance
 };
 
+// ---- static equilibrium solve (cloth_static.cpp); everything here is opt-in via ClothSolver::solveStatic ----
+struct StaticParams {
+    // Final gravity load as a multiple of SolverParams::gravity (1 = the real weight).
+    Real gravityScale = 1.0;
+    // Gravity continuation: the load goes 0 -> gravityScale in about this many increments (adapted: halved on a
+    // failed stage, grown on quick ones). Ignored for a warm start.
+    int loadSteps = 4;
+    // Pseudo-transient proximal term (alpha/2) sum m_i |x - x_anchor|^2, alpha in 1/s^2 (like 1/h^2 of a time step).
+    // Cold start: alphaStart, reduced by alphaDecay per successful stage, set to exactly 0 below alphaMin.
+    Real alphaStart = 3600.0;
+    Real alphaWarm = 5.0;      // starting alpha of a warm start (small: the previous shape is already close)
+    Real alphaDecay = 0.2;
+    Real alphaMin = 0.05;
+    // Stage = one regularised Newton solve (a pseudo time step) with at most this many Newton iterations.
+    int stageNewton = 3;
+    Real stageTolerance = 1e-4;   // m, a stage ends early once the largest Newton step is below this
+    // Final convergence (alpha = 0, full load): scaled force imbalance AND largest vertex step per Newton iteration.
+    Real residualTolerance = 1e-3;     // |filtered force| / |weight|, both in the 2-norm over free vertices
+    Real displacementTolerance = 1e-5; // m
+    int maxIterations = 400;           // cap on Newton iterations (= numeric factorisations) over the whole solve
+    bool warmStart = false;            // start from the current positions at full load with small alpha
+    bool verbose = false;
+};
+
+struct StaticResult {
+    bool converged = false;
+    int iterations = 0;       // Newton iterations (each one numeric Cholesky factorisation), all stages
+    int stages = 0;           // pseudo-transient stages / load steps taken (successful ones)
+    int failedStages = 0;     // stages rolled back (load increment halved or alpha raised)
+    int finalIterations = 0;  // iterations spent in the last phase (alpha = 0, full load)
+    Real residual = 0;        // scaled force imbalance at the end (see StaticParams::residualTolerance)
+    Real maxStep = 0;         // largest vertex displacement of the last Newton iteration (m)
+    Real energy = 0;          // physical potential energy at the end: stretch + shear + bending + seams - gravity work
+    Real seconds = 0;         // wall time
+    Real cpuSeconds = 0;      // process CPU time (steadier than wall time on a busy machine)
+    int lineSearchFailures = 0;
+    int symbolicAnalyses = 0; // sparse-Cholesky ordering/analyses done during the call (0 = pattern reused)
+};
+
+// Result of ClothSolver::checkStaticStability (path-dependence diagnostic).
+struct StaticStability {
+    bool converged = false;      // the perturbed re-solve converged
+    Real maxShapeDiff = 0;       // m, largest vertex distance between the settled and the re-settled shape
+    Real rmsShapeDiff = 0;       // m
+    Real energyDiff = 0;         // J, re-settled minus original physical energy (negative: a lower equilibrium exists)
+    Real relEnergyDiff = 0;
+    int iterations = 0;
+};
+
 struct SeamSpec {
     int panelA, edgeA;
     int panelB, edgeB;
@@ -94,6 +143,20 @@ public:
 
     // Sew outline edge `edgeA` of panel A to `edgeB` of panel B (see PanelMesh::edgeChains).
     void addSeam(int panelA, int edgeA, int panelB, int edgeB, bool reverse = false);
+
+    // ---- static equilibrium (opt-in; the dynamic step() is untouched) ---------
+    // Finds the equilibrium of the potential energy (stretch, shear, bending, seams, gravity, body contact) from the
+    // current positions, without simulating motion. See docs/agent_notes/S1_static_settle.md.
+    StaticResult solveStatic(const StaticParams& sp = {});
+    // Physical potential energy (constraints - gravity work) of the current positions.
+    Real potentialEnergy(Real gravityScale = 1.0) const;
+    // Edits that keep the topology (so the symbolic factorisation is reused); follow with solveStatic({warmStart=true}).
+    void setPanelMaterial(int panel, const FabricMaterial& mat);
+    void setRestUV(int v, const Vec2& restCoords);  // grain-aligned rest coordinates (see restUV())
+    // Perturbs the settled state (random displacement of `amplitude` m, load wiggle of +-`gravityWiggle`), re-solves,
+    // reports how far the shape and energy moved, and restores the original state. Off unless called.
+    StaticStability checkStaticStability(const StaticParams& sp = {}, unsigned seed = 1, Real amplitude = 1e-3, Real gravityWiggle = 0.2);
+    int symbolicAnalyses() const { return symbolicAnalyses_; }
 
     void setCollider(std::shared_ptr<Collider> c) { collider_ = std::move(c); }
     // Displacement of the collider surface at each cloth vertex over the coming frame (a moving body). Used only
@@ -205,6 +268,14 @@ private:
         int find(int i, int j) const;
     };
     void buildBlockPattern();
+    void bindBlockSlots();     // (re)assign the K_ slot of every constraint for the current pattern
+    bool patternValid_ = false;
+    int symbolicAnalyses_ = 0;
+    // static solver internals (cloth_static.cpp)
+    Real staticEnergy(Real alpha, Real lam) const;
+    struct StaticNewton { int iters = 0; bool ok = true; bool converged = false; Real residual = 0, maxStep = 0; };
+    // Regularised Newton solve of one stage; see cloth_static.cpp.
+    StaticNewton staticNewton(Real alpha, Real lam, int maxIt, Real stepTol, Real resTol, Real weightNorm, Real maxStepCap);
     void stepImplicit();
     void stepXpbd();
     // Gradient of the constraint energy (into grad_) and Gauss-Newton Hessian (into K_).
