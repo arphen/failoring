@@ -127,8 +127,7 @@ check, not an independent test).
 
 ### Shear (bias extension, naive formula 1/G = 4/E45 - 1/ku - 1/kv): G derived / G input
 1.13 (lambskin) to 1.25 (chiffon), all presets above 1. The bias strip is therefore stiffer in shear than the input G by
-12 to 25 %. NOT explained. Candidates: the clamp zones (the naive formula ignores them, but they would bias the
-modulus in either direction is not established), and the diagonal over-stiffness of the lattice mesh already listed
+12 to 25 %. NOT explained. Candidates: the clamp zones (the naive formula ignores them; the sign of their effect is not established), and the diagonal over-stiffness of the lattice mesh already listed
 in docs/ARCHITECTURE.md. Neither is tested here.
 
 ### Drape (30 cm disc, 10 mm, 300-frame cap): bench DC % vs docs/ARCHITECTURE.md (both reported, nothing adjusted)
