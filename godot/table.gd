@@ -15,7 +15,6 @@ var ox := 0.0
 var oy := 0.0
 var drag = null
 var hover = null
-var space_down := false
 var fitted := false  # kept for the editor, which resets it on load; fit() is what matters now
 var hint_label: Label
 var _fit_pending := false   # fit() is deferred to the next draw, once the control has a real size
@@ -174,7 +173,7 @@ func _ensure_geo() -> void:
 			var b2: Vector2 = pts[(k + 1) % n]
 			var el := a2.distance_to(b2)
 			var d := (b2 - a2) / el if el > 0.0 else Vector2.ZERO
-			var txt := "%d: %.1f" % [k, el * 100.0]
+			var txt := "%d: %.1f cm" % [k + 1, el * 100.0]
 			edges.append({"mid": (a2 + b2) * 0.5, "n": Vector2(d.y, d.x), "txt": txt,
 				"tw": fnt.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, LABEL_FS).x})
 		var pid := String(p["id"])
@@ -421,7 +420,8 @@ func _zoom_at(spos: Vector2, f: float) -> void:
 func _down(spos: Vector2, button: int) -> void:
 	var sx := spos.x
 	var sy := spos.y
-	if button == MOUSE_BUTTON_MIDDLE or button == MOUSE_BUTTON_RIGHT or space_down:
+	# pan is on the mouse buttons only (Space is play/pause, see _unhandled_key_input)
+	if button == MOUSE_BUTTON_MIDDLE or button == MOUSE_BUTTON_RIGHT:
 		drag = {"kind": "pan", "sx": sx, "sy": sy, "ox": ox, "oy": oy}
 		return
 	if ed.active_locked():
@@ -458,11 +458,11 @@ func _down(spos: Vector2, button: int) -> void:
 			return
 		ed.push_undo()
 		var bside := [(best["p"] as Dictionary)["id"], best["e"]]
-		ed.seams = ed.seams.filter(func(s) -> bool:
-			return not (_same_side(s["a"], ed.sew_a) or _same_side(s["b"], ed.sew_a) or _same_side(s["a"], bside) or _same_side(s["b"], bside)))
-		ed.seams.append({"a": ed.sew_a, "b": bside, "reverse": true})
+		var replaced := sew_edges(ed, ed.sew_a, bside)
 		ed.sew_a = null
 		update_hint()
+		if replaced > 0:
+			ed.notify("Sewing replaced %d seam(s) on those edges. Ctrl+Z restores them." % replaced)
 		ed.changed("structure")
 		return
 	var sel: Variant = null
@@ -572,8 +572,10 @@ func _dbl(spos: Vector2) -> void:
 	var a: Array = o[int(h["edge"])]
 	var b: Array = o[(int(h["edge"]) + 1) % o.size()]
 	ed.push_undo()
-	insert_vertex(ed, p, int(h["edge"]), [snapv(float(a[0]) + (float(b[0]) - float(a[0])) * float(h["t"])), snapv(float(a[1]) + (float(b[1]) - float(a[1])) * float(h["t"]))])
+	var dropped := insert_vertex(ed, p, int(h["edge"]), [snapv(float(a[0]) + (float(b[0]) - float(a[0])) * float(h["t"])), snapv(float(a[1]) + (float(b[1]) - float(a[1])) * float(h["t"]))])
 	ed.sel_v = int(h["edge"]) + 1
+	if dropped > 0:
+		ed.notify("Splitting that edge removed %d seam(s). Ctrl+Z restores them." % dropped)
 	ed.changed("structure")
 
 
@@ -586,8 +588,7 @@ func _unhandled_key_input(e: InputEvent) -> void:
 	if fo != null and (fo is LineEdit or fo is TextEdit):
 		return
 	if k.keycode == KEY_SPACE:
-		space_down = true
-		ed._on_play()
+		ed._on_play()  # Space is play/pause only
 		return
 	if (k.ctrl_pressed or k.meta_pressed) and k.keycode == KEY_Z:
 		if k.shift_pressed:
@@ -618,23 +619,22 @@ func _unhandled_key_input(e: InputEvent) -> void:
 		if p == null:
 			return
 		ed.push_undo()
+		var pname := String(p.get("name", p["id"]))
 		if ed.sel_v >= 0 and (p["outline"] as Array).size() > 3:
-			remove_vertex(p, ed.sel_v, ed.seams)
+			var dropped := remove_vertex(p, ed.sel_v, ed.seams)
 			ed.sel_v = -1
+			if dropped > 0:
+				ed.notify("Deleted the corner and %d seam(s) on it. Ctrl+Z restores them." % dropped)
 		else:
-			remove_piece(ed, p["id"])
+			var gone := remove_piece(ed, p["id"])
+			ed.notify("Deleted %s%s. Ctrl+Z restores it." % [pname, (" and its %d seam(s)" % gone) if gone > 0 else ""])
 		ed.changed("structure")
 
 
-func _unhandled_input(e: InputEvent) -> void:
-	if e is InputEventKey:
-		var k := e as InputEventKey
-		if not k.pressed and k.keycode == KEY_SPACE:
-			space_down = false
-
-
 # ------------------------------------------------------------------ piece edits (state.js)
-static func insert_vertex(edref, p: Dictionary, e: int, pt: Array) -> void:
+# Splits edge e of p at pt (the new corner is e + 1). Seams on the split edge cannot follow either half, so they are
+# dropped. Returns how many were dropped (the caller warns and the edit is undoable).
+static func insert_vertex(edref, p: Dictionary, e: int, pt: Array) -> int:
 	(p["outline"] as Array).insert(e + 1, pt)
 	var dropped := 0
 	var kept := []
@@ -651,13 +651,17 @@ static func insert_vertex(edref, p: Dictionary, e: int, pt: Array) -> void:
 		else:
 			kept.append(s)
 	edref.seams = kept
+	return dropped
 
 
-static func remove_vertex(p: Dictionary, i: int, seams: Array) -> bool:
+# Removes corner i of p with the seams on its two edges. Returns the number of seams dropped, or -1 when p has
+# three corners or fewer (nothing is removed).
+static func remove_vertex(p: Dictionary, i: int, seams: Array) -> int:
 	var n: int = (p["outline"] as Array).size()
 	if n <= 3:
-		return false
+		return -1
 	var prev: int = (i - 1 + n) % n
+	var dropped := 0
 	for idx in range(seams.size() - 1, -1, -1):
 		var s: Dictionary = seams[idx]
 		var drop := false
@@ -668,20 +672,34 @@ static func remove_vertex(p: Dictionary, i: int, seams: Array) -> bool:
 					drop = true
 		if drop:
 			seams.remove_at(idx)
+			dropped += 1
 	for s in seams:
 		for side in ["a", "b"]:
 			if String(s[side][0]) == String(p["id"]) and int(s[side][1]) > i:
 				s[side][1] = int(s[side][1]) - 1
 	(p["outline"] as Array).remove_at(i)
-	return true
+	return dropped
 
 
-static func remove_piece(edref, pid: String) -> void:
+# Removes piece pid and every seam on it. Returns the number of seams removed.
+static func remove_piece(edref, pid: String) -> int:
+	var before: int = (edref.seams as Array).size()
 	edref.pieces = (edref.pieces as Array).filter(func(p) -> bool: return String(p["id"]) != pid)
 	edref.seams = (edref.seams as Array).filter(func(s) -> bool: return String(s["a"][0]) != pid and String(s["b"][0]) != pid)
 	if edref.sel == pid:
 		edref.sel = null
 		edref.sel_v = -1
+	return before - (edref.seams as Array).size()
+
+
+# Joins edge a to edge b (each [piece id, edge index]). Seams already on either edge are replaced. Returns how many.
+static func sew_edges(edref, a: Array, b: Array) -> int:
+	var before: int = (edref.seams as Array).size()
+	edref.seams = (edref.seams as Array).filter(func(s) -> bool:
+		return not (_same_side(s["a"], a) or _same_side(s["b"], a) or _same_side(s["a"], b) or _same_side(s["b"], b)))
+	var replaced := before - (edref.seams as Array).size()
+	edref.seams.append({"a": a, "b": b, "reverse": true})
+	return replaced
 
 
 static func add_piece(edref, kind: String) -> Dictionary:

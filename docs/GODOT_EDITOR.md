@@ -8,7 +8,7 @@ and sliders both regenerate the body live; plans resolve per state.
 ## Run
 
 Needs `godot/bin/libfailoring.dylib` on macOS (`libfailoring.so` on Linux); build it with
-the commands in `docs/NATIVE_NOTES.md`. Open `godot/` in Godot 4.3 and run `editor.tscn`
+`tools/build_gdext.sh` (the committed copy is stale; see `docs/NATIVE_NOTES.md`). Open `godot/` in Godot 4.3 and run `editor.tscn`
 (it is the project's main scene). First launch imports assets (`.godot/`, `*.import`;
 untracked, see `godot/.gitignore`).
 
@@ -17,7 +17,10 @@ untracked, see `godot/.gitignore`).
   (plan selector, re-draft, mesh quality, motion, open/save pattern JSON, demo, live sim stats).
   See "Garment library and outfit" below.
 * Cutting table: Select/Sew tools, Fit, snap 5 mm; drag pieces and corners,
-  double-click an edge to add a corner, Del removes, wheel zooms, V/S/F/Esc work.
+  double-click an edge to add a corner, Del removes (a corner, or a whole piece with its seams: the status
+  line says so and Ctrl+Z restores it), wheel zooms, V/S/F/Esc work. Space plays and pauses the timeline; the
+  table pans with the middle or right mouse button only. Splitting a seamed edge or re-sewing an edge drops the
+  seam it replaces: the status line warns and Ctrl+Z restores it.
 * 3D: orbit drag, wheel zoom; timeline scrub through cut, move, sew, drape.
 * Right tabs: Outfit, Piece, Seams, Body, Fabric, Pattern, Shoot.
 
@@ -43,8 +46,11 @@ The shown garments are merged into one plan (`outfit.gd`) and simulated together
   vertex-triangle test over all cloth triangles (`cloth_core` `solveSelfCollision`), so garments
   collide with each other; seams never join two garments.
 
-Re-draft: drafted garments follow the live body (as before). FreeSewing and saved garments keep
-their outline until Re-draft is pressed, which drafts them for the current preset. Locking a garment
+Re-draft: drafted garments (Trousers, Tank, T-shirt) follow a body change while they are unedited. Once
+the pattern is edited on the table, the garment keeps its pieces through every rebuild and body change (the
+status line says so); Re-draft fits it to the body again. FreeSewing and saved garments keep their outline until
+Re-draft is pressed, which drafts them for the current preset. Plan, Re-draft, Open, and removing a garment ask
+for confirmation first when the garment has unsaved edits. Locking a garment
 freezes its pattern: no table edits, no re-draft, no plan change; its fabric and visibility can still change.
 
 Limitations: no seams across garments; the table shows the active garment only; "Save pattern"
@@ -169,7 +175,7 @@ garbage in any implementation.
 
 * The tracked `godot/bin/libfailoring.so` predates the current `FailoringSim` API (`add_seam`
   returns void there), so the editor does not compile against it: rebuild the extension with
-  `docs/NATIVE_NOTES.md` first. `godot/walk_demo.gd` also fails to parse under Godot 4.3
+  `tools/build_gdext.sh` first (details in `docs/NATIVE_NOTES.md`). `godot/walk_demo.gd` also fails to parse under Godot 4.3
   (an untyped `var idx` at line 136); it is not used by the editor.
 * Outfit: the merged sim is checked headless (`tests/outfit_check.tscn`) and the layout was
   looked at in a virtual display. Dragging, the 3D view and the cards' double-click were

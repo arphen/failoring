@@ -73,6 +73,8 @@ var tool := "select"
 var snap := true
 var undo: Array = []
 var redo: Array = []
+var _notice := ""        # warning shown in the status line after an edit (cleared by the next edit or undo)
+var _meas_key := ""      # the body measurements the drafted garments were last drafted for
 var table_dirty := true
 var table: Control
 var stage: Node3D
@@ -449,6 +451,13 @@ func _plan_title(key: String) -> String:
 	return key
 
 
+# The name a garment carries: the Plan dropdown's name for built-in plans, so the dropdown, the header and the status
+# line agree. Opened patterns and saved garments keep their own name.
+func _display_name(key: String, p: Dictionary) -> String:
+	var t := _plan_title(key)
+	return t if t != key else String(p.get("name", key))
+
+
 func _build_tabs() -> void:
 	for tab in ["Outfit", "Piece", "Seams", "Body", "Fabric", "Pattern", "Shoot"]:
 		var sc := ScrollContainer.new()
@@ -522,7 +531,7 @@ func _refresh_seams_tab() -> void:
 		var t := Label.new()
 		t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		t.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		t.text = "%s #%d ↔ %s #%d\n%.1f / %.1f cm - ease %s%.1f%%%s" % [String(a.get("name", a["id"])), int(s["a"][1]), String(b.get("name", b["id"])), int(s["b"][1]), la * 100.0, lb * 100.0, "+" if ease >= 0.0 else "", ease * 100.0, " (large)" if absf(ease) > 0.08 else ""]
+		t.text = "Seam %d: %s edge %d ↔ %s edge %d\n%.1f / %.1f cm - ease %s%.1f%%%s" % [si, String(a.get("name", a["id"])), int(s["a"][1]) + 1, String(b.get("name", b["id"])), int(s["b"][1]) + 1, la * 100.0, lb * 100.0, "+" if ease >= 0.0 else "", ease * 100.0, " (large)" if absf(ease) > 0.08 else ""]
 		row.add_child(t)
 		var flip := Button.new()
 		flip.text = "⇄"
@@ -532,12 +541,12 @@ func _refresh_seams_tab() -> void:
 		var del := Button.new()
 		del.text = "✕"
 		del.tooltip_text = "Delete seam"
-		del.pressed.connect(func() -> void: push_undo(); seams.erase(s); changed("structure"))
+		del.pressed.connect(func() -> void: push_undo(); seams.erase(s); notify("Deleted seam %d. Ctrl+Z restores it." % si); changed("structure"))
 		row.add_child(del)
 		vb.add_child(row)
 	var note := Label.new()
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	note.text = "Pick the Sew tool on the cutting table, click one edge, then the edge it joins. Edge numbers are shown beside each edge length."
+	note.text = "Pick the Sew tool on the cutting table, click one edge, then the edge it joins. Edge numbers (from 1) are shown beside each edge length."
 	vb.add_child(note)
 	_lock_editing(vb)
 
@@ -929,7 +938,7 @@ func _refresh_piece_tab() -> void:
 		var ne := LineEdit.new()
 		ne.text = String(p.get("name", p["id"]))
 		ne.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		ne.text_submitted.connect(func(t: String) -> void: p["name"] = t; table_dirty = true)
+		ne.text_submitted.connect(func(t: String) -> void: push_undo(); p["name"] = t; changed("structure"))
 		name_row.add_child(ne)
 		vb.add_child(name_row)
 		var bb := Table.bbox_of(p["outline"])
@@ -940,7 +949,7 @@ func _refresh_piece_tab() -> void:
 		_slider_row(vb, "Angle", 0.0, 180.0, 1.0,
 			func() -> float: return _grain_deg(),
 			func(v: float) -> void: _sel_wrap_set("grain_deg", v),
-			func(v: float) -> String: return "%d°" % int(v))
+			func(v: float) -> String: return "%d°" % int(v), true)
 		var gb := HBoxContainer.new()
 		for g in [["Straight 90°", 90.0], ["Cross 0°", 0.0], ["Bias 45°", 45.0], ["Bias 135°", 135.0]]:
 			var b := Button.new()
@@ -952,19 +961,19 @@ func _refresh_piece_tab() -> void:
 		_slider_row(vb, "Around", 0.0, 360.0, 1.0,
 			func() -> float: return float((p.get("wrap", {}) as Dictionary).get("theta", 0.0)),
 			func(v: float) -> void: (p["wrap"] as Dictionary)["theta"] = v; changed("structure-drag"),
-			func(v: float) -> String: return "%d°" % int(v))
+			func(v: float) -> String: return "%d°" % int(v), true)
 		_slider_row(vb, "Height", 0.0, 150.0, 1.0,
 			func() -> float: return float((p.get("wrap", {}) as Dictionary).get("y", 0.5)) * 100.0,
 			func(v: float) -> void: (p["wrap"] as Dictionary)["y"] = v / 100.0; changed("structure-drag"),
-			func(v: float) -> String: return "%d cm" % int(v))
+			func(v: float) -> String: return "%d cm" % int(v), true)
 		_slider_row(vb, "Clearance", 0.0, 40.0, 1.0,
 			func() -> float: return float((p.get("wrap", {}) as Dictionary).get("clear", 0.012)) * 1000.0,
 			func(v: float) -> void: (p["wrap"] as Dictionary)["clear"] = v / 1000.0; changed("structure-drag"),
-			func(v: float) -> String: return "%d mm" % int(v))
+			func(v: float) -> String: return "%d mm" % int(v), true)
 		_slider_row(vb, "Flare", 0.0, 6.0, 0.1,
 			func() -> float: return float((p.get("wrap", {}) as Dictionary).get("ring", 0.0)),
 			func(v: float) -> void: (p["wrap"] as Dictionary)["ring"] = v; changed("structure-drag"),
-			func(v: float) -> String: return "%.1f" % v)
+			func(v: float) -> String: return "%.1f" % v, true)
 		var lines := []
 		for i in (p["outline"] as Array).size():
 			var mark := ""
@@ -973,7 +982,7 @@ func _refresh_piece_tab() -> void:
 				if (String(s["a"][0]) == String(p["id"]) and int(s["a"][1]) == i) or (String(s["b"][0]) == String(p["id"]) and int(s["b"][1]) == i):
 					mark = " (seam %d)" % (si + 1)
 					break
-			lines.append("edge %d%s: %.1f cm" % [i, mark, Table.edge_len(p["outline"], i) * 100.0])
+			lines.append("edge %d%s: %.1f cm" % [i + 1, mark, Table.edge_len(p["outline"], i) * 100.0])
 		vb.add_child(_fold_section("Edges (%d)" % lines.size(), lines))
 		var btns := HBoxContainer.new()
 		var mb := Button.new()
@@ -986,7 +995,11 @@ func _refresh_piece_tab() -> void:
 		btns.add_child(db)
 		var del := Button.new()
 		del.text = "Delete"
-		del.pressed.connect(func() -> void: push_undo(); Table.remove_piece(self, String(p["id"])); changed("structure"))
+		del.pressed.connect(func() -> void:
+			push_undo()
+			var gone := Table.remove_piece(self, String(p["id"]))
+			notify("Deleted %s%s. Ctrl+Z restores it." % [String(p.get("name", p["id"])), (" and its %d seam(s)" % gone) if gone > 0 else ""])
+			changed("structure"))
 		btns.add_child(del)
 		vb.add_child(btns)
 	var add_h := Label.new()
@@ -1018,7 +1031,8 @@ func _sel_wrap_set(which: String, v: float) -> void:
 	changed("structure-drag")
 
 
-func _slider_row(parent: VBoxContainer, label_text: String, minv: float, maxv: float, step: float, get: Callable, set: Callable, fmt: Callable) -> HSlider:
+# undo_step: each drag, or each key step, is one undo step. Piece sliders pass true; body and fabric sliders do not.
+func _slider_row(parent: VBoxContainer, label_text: String, minv: float, maxv: float, step: float, get: Callable, set: Callable, fmt: Callable, undo_step := false) -> HSlider:
 	var h := HBoxContainer.new()
 	var l := Label.new()
 	l.custom_minimum_size = Vector2(92, 0)
@@ -1035,7 +1049,17 @@ func _slider_row(parent: VBoxContainer, label_text: String, minv: float, maxv: f
 	o.custom_minimum_size = Vector2(64, 0)
 	o.text = fmt.call(s.value)
 	h.add_child(o)
-	s.value_changed.connect(func(v: float) -> void: o.text = fmt.call(v); set.call(v))
+	var dragging := [false]
+	if undo_step:
+		s.drag_started.connect(func() -> void:
+			dragging[0] = true
+			push_undo())
+		s.drag_ended.connect(func(_c: bool) -> void: dragging[0] = false)
+	s.value_changed.connect(func(v: float) -> void:
+		o.text = fmt.call(v)
+		if undo_step and not dragging[0]:
+			push_undo()  # keyboard step
+		set.call(v))
 	parent.add_child(h)
 	return s
 
@@ -1229,6 +1253,7 @@ func snapshot() -> String:
 
 
 func push_undo() -> void:
+	_notice = ""
 	undo.append(snapshot())
 	if undo.size() > 60:
 		undo.pop_front()
@@ -1238,48 +1263,66 @@ func push_undo() -> void:
 func do_undo() -> void:
 	if undo.is_empty() or active_locked():
 		return
+	_notice = ""
 	redo.append(snapshot())
 	var o = JSON.parse_string(undo.pop_back())
 	pieces = o["pieces"]
 	seams = o["seams"]
 	_fix_selection()
-	changed("structure")
+	changed("history")
 
 
 func do_redo() -> void:
 	if redo.is_empty() or active_locked():
 		return
+	_notice = ""
 	undo.append(snapshot())
 	var o = JSON.parse_string(redo.pop_back())
 	pieces = o["pieces"]
 	seams = o["seams"]
 	_fix_selection()
-	changed("structure")
+	changed("history")
+
+
+# Shows a warning in the status line. The next edit or undo clears it.
+func notify(msg: String) -> void:
+	_notice = msg
+	if status_label != null:
+		status_label.text = msg
+
+
+func _status_suffix() -> String:
+	return "" if _notice == "" else "\n" + _notice
 
 
 func _fix_selection() -> void:
-	if Table.piece_by_id(pieces, sel) == null:
+	if sel == null or Table.piece_by_id(pieces, String(sel)) == null:
 		sel = null
 	sel_v = -1
 	sew_a = null
 
 
-# kind: load (new plan), structure (rebuild sim), structure-drag (rebuild debounced),
+# kind: load (new plan), structure (a pattern edit by the user: marks the garment edited, rebuild sim),
+# structure-drag (the same, debounced), history (undo/redo), outfit (layers, visibility: rebuild, not an edit),
 # table/table-done (table moved), ui (redraw), body/fabric (regen + rebuild)
 func changed(kind: String) -> void:
 	table_dirty = true
 	_store_active()
+	if kind == "structure" or kind == "structure-drag" or kind == "table-done":  # table-done: a piece was moved
+		if active >= 0 and active < outfit.size():
+			outfit[active]["edited"] = true  # later rebuilds keep the user's pieces (see _redraft_drafted)
 	if kind == "load":
 		_drain()  # the worker may be stepping the old sim: let it finish before the sim is dropped
 		sim = null
 		playing = false
+		_notice = ""
 		undo.clear()
 		redo.clear()
 		table.fitted = false
 		table.fit()
 		_refresh_garment_tabs()
 		regen_and_rebuild()
-	elif kind == "structure" or kind == "body" or kind == "fabric":
+	elif kind in ["structure", "body", "fabric", "outfit", "history"]:
 		_refresh_garment_tabs()
 		_schedule()
 	elif kind == "structure-drag":
@@ -1341,7 +1384,7 @@ func _entry_from_plan(key: String, p: Dictionary) -> Dictionary:
 	var fab := String(p.get("fabric", "cotton_poplin"))
 	if fab == "":
 		fab = "cotton_poplin"
-	return {"uid": -1, "key": key, "redraft": _redraft_key(key, p), "name": String(p.get("name", key)),
+	return {"uid": -1, "key": key, "redraft": _redraft_key(key, p), "name": _display_name(key, p), "edited": false,
 		"notes": String(p.get("notes", "")), "fabric": fab, "color": String(Table.FABRIC_COLORS.get(fab, "#9fb7d6")),
 		"visible": true, "locked": false, "fitted": _fs_preset(meas), "plan": p,
 		"pieces": (p.get("pieces", []) as Array).duplicate(true), "seams": (p.get("seams", []) as Array).duplicate(true)}
@@ -1436,7 +1479,8 @@ func _set_single_garment(key: String) -> void:
 func _entry_set_plan(i: int, p: Dictionary) -> void:
 	var e: Dictionary = outfit[i]
 	e["plan"] = p
-	e["name"] = String(p.get("name", e["key"]))
+	e["name"] = _display_name(String(e["key"]), p)
+	e["edited"] = false  # a fresh draft: no user edits
 	e["notes"] = String(p.get("notes", ""))
 	e["pieces"] = (p.get("pieces", []) as Array).duplicate(true)
 	e["seams"] = (p.get("seams", []) as Array).duplicate(true)
@@ -1445,7 +1489,13 @@ func _entry_set_plan(i: int, p: Dictionary) -> void:
 
 # Draft the garment again for the live body (drafted and FreeSewing garments; keeps fabric, colour and visibility).
 func _redraft_entry(i: int) -> void:
-	if i < 0 or i >= outfit.size() or bool(outfit[i]["locked"]):
+	if i < 0 or i >= outfit.size() or bool(outfit[i]["locked"]) or String(outfit[i]["redraft"]) == "":
+		return
+	_confirm_discard(i, "Re-drafting %s" % String(outfit[i]["name"]), func() -> void: _redraft_entry_now(i))
+
+
+func _redraft_entry_now(i: int) -> void:
+	if i < 0 or i >= outfit.size():
 		return
 	_store_active()
 	var key := String(outfit[i]["redraft"])
@@ -1457,7 +1507,7 @@ func _redraft_entry(i: int) -> void:
 	_entry_set_plan(i, p)
 	if i == active:
 		_activate(i, false)
-	changed("structure")
+	changed("outfit")
 
 
 func _set_garment_fabric(i: int, id: String) -> void:
@@ -1475,7 +1525,7 @@ func _outfit_set(i: int, field: String, value: Variant) -> void:
 		return
 	_store_active()
 	outfit[i][field] = value
-	changed("structure" if field == "visible" else "ui")
+	changed("outfit" if field == "visible" else "ui")
 
 
 func _outfit_select(i: int) -> void:
@@ -1489,6 +1539,12 @@ func _outfit_select(i: int) -> void:
 func _outfit_remove(i: int) -> void:
 	if i < 0 or i >= outfit.size():
 		return
+	_confirm_discard(i, "Removing %s" % String(outfit[i]["name"]), func() -> void: _outfit_remove_now(i))
+
+
+func _outfit_remove_now(i: int) -> void:
+	if i < 0 or i >= outfit.size():
+		return
 	_store_active()
 	var uid := active_uid()
 	outfit.remove_at(i)
@@ -1497,7 +1553,7 @@ func _outfit_remove(i: int) -> void:
 		ni = mini(i, outfit.size() - 1)  # the active garment was removed: take its neighbour
 	_activate(ni, false)
 	_fit_table()
-	changed("structure")
+	changed("outfit")
 
 
 func _outfit_move(i: int, d: int) -> void:
@@ -1510,7 +1566,7 @@ func _outfit_move(i: int, d: int) -> void:
 	outfit[i] = outfit[j]
 	outfit[j] = t
 	_activate(_index_of_uid(uid), false)
-	changed("structure")
+	changed("outfit")
 
 
 func _fabric_items() -> Array:
@@ -1708,19 +1764,54 @@ func _on_preset_button(p: String) -> void:
 	_schedule()
 
 
+# Puts the Plan dropdown back on the plan of the active garment (after a refused or cancelled switch).
+func _select_plan_key(key: String) -> void:
+	if plan_opt != null:
+		plan_opt.select(maxi(0, _plan_entries().map(func(e: Array) -> String: return e[1]).find(key)))
+
+
 func _on_plan(_i: int) -> void:
 	# the Plan dropdown swaps the active garment (with one garment in the outfit: the whole outfit)
 	var key: String = _plan_entries()[plan_opt.selected][1]
 	if active_locked():
 		status_label.text = "This garment is locked: unlock it in the Outfit tab to change its plan"
-		plan_opt.select(maxi(0, _plan_entries().map(func(e: Array) -> String: return e[1]).find(plan_key)))
+		_select_plan_key(plan_key)
 		return
 	var p := _plan_for_key(key)
 	if p.is_empty():
+		_select_plan_key(plan_key)
 		return
-	_replace_active(key, p)
-	_fit_table()
-	changed("load")
+	_confirm_discard(active, "Switching to %s" % _plan_title(key),
+		func() -> void:
+			_replace_active(key, p)
+			_fit_table()
+			changed("load"),
+		func() -> void: _select_plan_key(plan_key))
+
+
+# Discard guard for actions that replace a garment's pattern (Plan, Re-draft, Open, Remove). When outfit[idx] has
+# edits, asks first; action runs on confirm and on_cancel when the user backs out. Without edits action runs at once.
+func _confirm_discard(idx: int, what: String, action: Callable, on_cancel := Callable()) -> void:
+	if idx < 0 or idx >= outfit.size() or not bool(outfit[idx].get("edited", false)):
+		action.call()
+		return
+	var dlg := ConfirmationDialog.new()
+	dlg.title = "Discard your edits?"
+	dlg.dialog_text = "%s replaces the pattern you edited for %s on the cutting table.\n\nSave the pattern first to keep those edits. Discard them?" % [what, String(outfit[idx]["name"])]
+	dlg.ok_button_text = "Discard edits"
+	dlg.cancel_button_text = "Keep editing"
+	var answered := [false]
+	dlg.confirmed.connect(func() -> void:
+		answered[0] = true
+		action.call())
+	dlg.canceled.connect(func() -> void:
+		if not answered[0] and on_cancel.is_valid():
+			on_cancel.call())
+	dlg.visibility_changed.connect(func() -> void:
+		if not dlg.visible:
+			dlg.queue_free())
+	add_child(dlg)
+	dlg.popup_centered()
 
 
 func _on_quality(_i: int) -> void:
@@ -1734,6 +1825,12 @@ func _on_motion(_i: int) -> void:
 
 
 func _on_redraft() -> void:
+	if active < 0 or active_locked():
+		return
+	_confirm_discard(active, "Re-drafting", func() -> void: _redraft_active())
+
+
+func _redraft_active() -> void:
 	if active < 0 or active_locked():
 		return
 	var e: Dictionary = outfit[active]
@@ -1773,6 +1870,10 @@ func _on_open_file(path: String) -> void:
 	if active_locked():
 		status_label.text = "This garment is locked: unlock it in the Outfit tab to open a pattern into it"
 		return
+	_confirm_discard(active, "Opening %s" % path.get_file(), func() -> void: _open_loaded(loaded))
+
+
+func _open_loaded(loaded: Dictionary) -> void:
 	var p := PlanLoader.normalize_plan(loaded)
 	if loaded.has("meas") and loaded["meas"] is Dictionary:
 		for k in (loaded["meas"] as Dictionary).keys():
@@ -1892,6 +1993,9 @@ func regen_and_rebuild() -> void:
 	_drain()  # body regen and rebuild replace the sim: no step may be running
 	if M.is_empty():
 		return
+	var meas_key := JSON.stringify(meas)
+	var body_changed := meas_key != _meas_key
+	_meas_key = meas_key
 	body_rest = BodyGen.generate(M, meas, prev_body)
 	prev_body = {"x": (body_rest as Dictionary)["x"], "keys": (body_rest as Dictionary)["keys"]}
 	body_stand = BodyGen.stand(M, body_rest)
@@ -1899,8 +2003,8 @@ func regen_and_rebuild() -> void:
 	if _need_outfit:
 		_need_outfit = false
 		_start_outfit(plan_key)
-	else:
-		_redraft_drafted()  # drafted garments follow the live body (their outlines are drafted from it)
+	elif body_changed:
+		_redraft_drafted()  # drafted garments follow a body change (their outlines are drafted from it)
 	_refresh_fabric_tab()
 	_refresh_body_note()
 	_refresh_garment_tabs()
@@ -1910,16 +2014,28 @@ func regen_and_rebuild() -> void:
 
 # Drafted garments (pants, tank, shirt) are drafted from the live body: re-draft them on every body change, as the
 # single-garment editor always did. FreeSewing garments keep their outline (re-draft on request, see _redraft_entry).
+# A garment with user edits keeps its pattern: the body change is shown in the status line, and Re-draft (which asks
+# first) fits it to the new body.
 func _redraft_drafted() -> void:
 	var was := active
+	var kept := false
 	for i in outfit.size():
 		var e: Dictionary = outfit[i]
 		if String(e["redraft"]) in Library.DRAFTED and not bool(e["locked"]):
+			if bool(e.get("edited", false)):
+				kept = kept or i == was
+				continue
 			var p := _plan_for_key(String(e["redraft"]))
 			if not p.is_empty():
 				_entry_set_plan(i, p)
-	if was >= 0 and was < outfit.size() and String(outfit[was]["redraft"]) in Library.DRAFTED:
-		_activate(was, false)
+	if kept:
+		_notice = "Body changed: your edits to this pattern are kept. Press Re-draft to fit it to the new body."
+	if was >= 0 and was < outfit.size() and String(outfit[was]["redraft"]) in Library.DRAFTED and not kept:
+		# reload the working copy without clearing the undo history
+		pieces = outfit[was]["pieces"]
+		seams = outfit[was]["seams"]
+		plan = outfit[was]["plan"]
+		_fix_selection()
 
 
 func _refresh_body_note() -> void:
@@ -1972,7 +2088,7 @@ func rebuild() -> void:
 		frames.clear()
 		_build_mat()
 		_render_info()
-		status_label.text = "No garment on the mannequin - add one from the Library tab" if body_stand != null else "starting"
+		status_label.text = ("No garment on the mannequin - add one from the Library tab" if body_stand != null else "starting") + _status_suffix()
 		return
 	_stand_v3 = _to_v3a(body_stand["pos"])
 	var q: Dictionary = QUALITIES[quality]
@@ -2012,7 +2128,7 @@ func rebuild() -> void:
 	_sync_tl_ui()
 	_render_info()
 	_show_current()
-	status_label.text = "%d verts - press play" % int(built["n"])
+	status_label.text = "%d verts - press play" % int(built["n"]) + _status_suffix()
 
 
 func _tris() -> PackedInt32Array:
@@ -2658,11 +2774,11 @@ static func _smooth(x: float) -> float:
 
 func _render_stats(_m: float, fr: Dictionary) -> void:
 	var done := " - done" if frames.size() >= target and target > 0 else ""
-	_set_text_if_changed(status_label, "%s / %s   frame %d/%d   verts %d   KE %s J   gap %.1f mm   clear %.1f mm\nbake %.0f ms   step %.0f ms (newton %d, ls-fail %d)%s" % [
+	_set_text_if_changed(status_label, ("%s / %s   frame %d/%d   verts %d   KE %s J   gap %.1f mm   clear %.1f mm\nbake %.0f ms   step %.0f ms (newton %d, ls-fail %d)%s" % [
 		plan_name, fabric_id, frames.size(), target, _vcount, str(fr.get("ke", 0.0)),
 		float(fr.get("gap", 0.0)) * 1000.0, float(fr.get("clear", 0.0)) * 1000.0,
 		float(fr.get("bake", 0.0)), float(fr.get("ms", 0.0)),
-		int(_solver_stats.get("newton_iterations", 0)), int(_solver_stats.get("line_search_failures", 0)), done])
+		int(_solver_stats.get("newton_iterations", 0)), int(_solver_stats.get("line_search_failures", 0)), done]) + _status_suffix())
 	if frames.size() % 30 == 0 and not frames.is_empty():
 		print("EDITOR ", status_label.text.replace("\n", " | "))
 

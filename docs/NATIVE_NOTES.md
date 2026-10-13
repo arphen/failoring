@@ -28,6 +28,29 @@ The extension writes its library to `godot/bin/libfailoring.so`. That path is a 
 (an older build, before this API), so the rebuilt library was not committed. It is a 1.67 MB build from this
 environment; rebuild it locally rather than trusting the tracked copy.
 
+## Rebuilding libfailoring (Godot editor, linux and macOS)
+
+The editor loads `godot/bin/libfailoring.so` (linux) or `godot/bin/libfailoring.dylib` (macOS). The committed copies
+are older than `gdextension/` and `cloth_core/`, so with them the editor fails at start with
+`Native class "FailoringSim" not found`, or the scripts fail to parse. Rebuild from the sources of the commit you
+have checked out:
+
+```
+tools/build_gdext.sh                       # all cores; JOBS=2 on a small machine (about 15-30 min)
+FL_MACOS_ARCHS="arm64;x86_64" tools/build_gdext.sh   # macOS universal (optional)
+godot --headless --path godot --import     # once after a rebuild: Godot registers the extension
+```
+
+What the script does: clones godot-cpp `godot-4.3-stable` into `third_party/godot-cpp` (once; or set
+`GODOT_CPP_DIR` to an existing checkout), configures `gdextension/` into `build-gd/` (Release), builds the
+`failoring` target, and writes the library into `godot/bin/`. `third_party/` and `build-gd/` are gitignored.
+
+Do not commit the rebuilt library. After a rebuild `git status` shows `godot/bin/libfailoring.*` as modified; leave
+it unstaged, or `git checkout -- godot/bin` to get the committed copy back.
+
+Checks: `godot --headless --path godot res://tests/api_smoke.tscn` (API checks), then
+`res://tests/editor_edit_check.tscn` (editor edits, undo, and the discard guards).
+
 ## Benchmark (native, single thread)
 
 Machine: x86_64, 2 cores shared with other agents. Load average was 1 to 17 during the runs, so wall-clock numbers are
