@@ -33,3 +33,11 @@
   image); the solver check uses magnitudes only.
 - Doc references in the bench sources fixed (FABRIC_BENCH.md / FABRIC_PROTOCOL.md did not exist; the protocol
   document will be docs/FABRIC_TESTING.md).
+
+### Step 4 (draft): docs/FABRIC_TESTING.md
+- Written as a document only. Covers: purpose, the three tests (cantilever at 0/45/90, hanging weights, held-out
+  30 cm disc drape plus folds), known limits, materials, preparation, fitting, and acceptance.
+- Acceptance thresholds are deliberately NOT set; the document says they must be fixed before the first real swatch.
+- Not tested on real cloth. No real-world validation is claimed.
+- Unsure: the ISO 139 standard atmosphere reference and the 2025 phone-photo figures (22 cm, 980 lux) are
+  reported from the research notes, not checked against the standards or the paper text.
