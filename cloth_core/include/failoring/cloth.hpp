@@ -74,6 +74,40 @@ struct SolverParams {
     bool tensionStiffness = false;  // garment option (the app turns it on): exact PSD tension term, see ARCHITECTURE.md  // implicit: include the (PSD) tension part of the stretch Hessian; changes convergence, not the physics
     bool selfCollision = true;
     Real selfThickness = 0.002;    // m, vertex-triangle contact distance
+    // ---- body contact as an augmented Lagrangian (idea K2, docs/agent_notes/K2_contact_multipliers.md) ----
+    // Off by default (the projection + motion filter path above is used). On: each vertex keeps a normal-force
+    // multiplier lambda (N) across Newton iterations and time steps; the body enters the variational energy as
+    // the C1 augmented-Lagrangian term of g = phi - radius >= 0, there is no projection inside the solve, and the
+    // after-the-solve Coulomb friction uses lambda as the normal force.
+    bool contactAL = false;
+    Real contactALStiffness = 1000.0;  // rho_i = this * (m_i/h^2 + tr(K_ii)/3) at the start of each substep (N/m)
+    Real contactALTolerance = 1e-5;    // m: re-solve (outer loop) while a vertex is deeper than this after Newton
+    int contactALOuter = 3;            // max Newton solves per substep (multiplier updates in between)
+    bool contactDiagnostics = false;   // extra energy bookkeeping in contactStats() (costs energy evaluations)
+};
+
+// Counters for body-contact diagnostics, summed since the last resetContactStats(). The counters are kept in both
+// contact modes; the energy fields are only filled with SolverParams::contactDiagnostics.
+struct ContactStats {
+    long long substeps = 0, newtonIterations = 0, lineSearchFailures = 0;
+    long long lsFailProjection = 0;  // failed line search that would have descended without the projection
+    long long lsFailFlat = 0;        // failed line search with |dE| at round-off level for every step tried
+    long long flipsIteration = 0;    // vertices whose contact state changed between consecutive Newton iterations
+    long long flipsStep = 0;         // ... between the end of consecutive substeps
+    long long flipsForceSign = 0;    // of flipsIteration: vertex stayed within contactBand, only the sign of its force flipped
+    long long activeEnd = 0;         // contact-active vertices at the end of each substep (summed)
+    long long projections = 0;       // in-Newton projections (iterations after the first)
+    double projectionDistance = 0;   // m, summed
+    double projectionEnergy = 0;     // J, change of the variational energy caused by those projections (diagnostics)
+    long long bodyProjections = 0;   // after-the-solve projections (solveBody)
+    double bodyProjectionDistance = 0;
+    long long frictionStick = 0, frictionSlide = 0;
+    double frictionDistance = 0;     // m, tangential correction applied by friction
+    double keAfterNewton = 0;        // J, kinetic energy implied by the Newton result (diagnostics, summed)
+    double keBodyPass = 0, keSelfPass = 0;  // J, change of that kinetic energy by the after-solve passes (diagnostics)
+    double maxPenetration = 0;       // m, deepest vertex after Newton (before the after-solve pass)
+    long long alOuter = 0;           // contactAL: Newton solves (outer iterations) summed over substeps
+    double maxLambda = 0;            // contactAL: largest multiplier (N)
 };
 
 struct SeamSpec {
@@ -124,6 +158,7 @@ public:
 
     // ---- diagnostics -------------------------------------------------------
     Real kineticEnergy() const;
+    Real kineticEnergyOf(const std::vector<Vec3>& x, Real h) const;  // KE of the velocities (x - xPrev)/h
     Real maxSeamGap() const;          // metres, over all seam constraints
     Real minBodyClearance() const;    // metres between cloth vertices and the collider surface (negative = penetration)
     Real totalMass() const;
@@ -242,6 +277,25 @@ public:
     // Newton iterations used so far, and substeps taken (their ratio is the mean iterations per substep).
     long long newtonIterations() const { return newtonIterations_; }
     long long substepsDone() const { return substepsDone_; }
+
+    // ---- body contact diagnostics and augmented Lagrangian (cloth_contact_al.cpp) ----
+    const ContactStats& contactStats() const { return cstats_; }
+    void resetContactStats() { cstats_ = ContactStats(); }
+    // contactAL: current normal-force multipliers (N), one per vertex (empty before the first step).
+    const std::vector<Real>& contactMultipliers() const { return alLambda_; }
+
+private:
+    ContactStats cstats_;
+    std::vector<char> diagPrevActive_, diagStepActive_;
+    std::vector<Real> alLambda_, alRho_;
+    void diagIterationActive(int iteration);        // counts flips between Newton iterations
+    void diagSubstepEnd();                           // counts flips between substeps, active set, penetration
+    void diagLineSearchFailure(Real invH2, Real seamScale, Real E0);
+    // contactAL implementation
+    void stepImplicitAL();
+    Real alContactEnergy() const;                    // sum of the augmented-Lagrangian terms at x_
+    void alAssemble();                               // adds AL gradient and Hessian (rho n n^T) to grad_ / K_
+    void solveBodyAL();                              // after-the-solve: friction with lambda as normal force
 };
 
 }  // namespace fl
