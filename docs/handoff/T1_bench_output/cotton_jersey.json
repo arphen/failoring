@@ -1,0 +1,33 @@
+{
+  "fabric": "cotton_jersey",
+  "name": "Cotton single jersey (knit)",
+  "notes": "Simulated-preset validation. Textbook formulas marked UNVERIFIED in docs/FABRIC_BENCH.md. The cantilever angle is the chord clamp->tip.",
+  "cantilever_angle_deg": 41.5,
+  "strip_width_m": 0.025,
+  "input": {"density_kg_m2": 0.15, "thickness_m": 0.0006, "tensile_warp_N_m": 250, "tensile_weft_N_m": 100, "shear_N_m_rad": 3.5, "bending_warp_Nm": 3e-06, "bending_weft_Nm": 3e-06, "compression_ratio": 0.15},
+  "bending_length_input_m": {"warp": 0.01268, "weft": 0.01268},
+  "bending": [
+    {"dir": "warp", "grain_deg": 0, "B_reference_Nm": 3e-06, "reference_kind": "preset input",
+     "headline_level": 1, "B_peirce_Nm": 2.23878e-06, "ratio_peirce": 0.746262, "B_half_overhang_Nm": 2.64463e-06, "ratio_half_overhang": 0.881543,
+     "levels": [{"elements_along_overhang": 6, "h_m": 0.00447447, "overhang_m": 0.0232493, "B_elastica_Nm": 2.31033e-06, "ratio": 0.77011, "sims": 3, "seconds": 0.387035}, {"elements_along_overhang": 10, "h_m": 0.00280789, "overhang_m": 0.0243163, "B_elastica_Nm": 2.64324e-06, "ratio": 0.88108, "sims": 3, "seconds": 0.878737}, {"elements_along_overhang": 16, "h_m": 0.00180345, "overhang_m": 0.0249886, "B_elastica_Nm": 2.86858e-06, "ratio": 0.956193, "sims": 3, "seconds": 2.97497}]},
+    {"dir": "weft", "grain_deg": 90, "B_reference_Nm": 3e-06, "reference_kind": "preset input",
+     "headline_level": 1, "B_peirce_Nm": 2.23419e-06, "ratio_peirce": 0.744729, "B_half_overhang_Nm": 2.6392e-06, "ratio_half_overhang": 0.879732,
+     "levels": [{"elements_along_overhang": 6, "h_m": 0.0044712, "overhang_m": 0.0232323, "B_elastica_Nm": 2.30527e-06, "ratio": 0.768422, "sims": 3, "seconds": 0.398834}, {"elements_along_overhang": 10, "h_m": 0.00280597, "overhang_m": 0.0242997, "B_elastica_Nm": 2.63781e-06, "ratio": 0.879271, "sims": 3, "seconds": 0.870458}, {"elements_along_overhang": 16, "h_m": 0.0018022, "overhang_m": 0.0249713, "B_elastica_Nm": 2.86264e-06, "ratio": 0.954215, "sims": 3, "seconds": 3.03235}]},
+    {"dir": "bias", "grain_deg": 45, "B_reference_Nm": 3e-06, "reference_kind": "compliance-mixing model of cloth.cpp (not an input)",
+     "headline_level": 1, "B_peirce_Nm": 2.23495e-06, "ratio_peirce": 0.744984, "B_half_overhang_Nm": 2.6401e-06, "ratio_half_overhang": 0.880034,
+     "levels": [{"elements_along_overhang": 6, "h_m": 0.00447402, "overhang_m": 0.023247, "B_elastica_Nm": 2.30964e-06, "ratio": 0.769879, "sims": 3, "seconds": 0.331539}, {"elements_along_overhang": 10, "h_m": 0.00280629, "overhang_m": 0.0243025, "B_elastica_Nm": 2.63872e-06, "ratio": 0.879572, "sims": 3, "seconds": 0.828327}, {"elements_along_overhang": 16, "h_m": 0.001802, "overhang_m": 0.0249685, "B_elastica_Nm": 2.86166e-06, "ratio": 0.953885, "sims": 3, "seconds": 3.2099}]}
+  ],
+  "tensile": [
+    {"dir": "warp", "k_reference_N_m": 250, "k_derived_N_m": 249.979, "ratio": 0.999917, "seconds": 2.6487, "loads": [{"mass_kg": 0.00504456, "tension_N_m": 1, "strain": 0.00488324}, {"mass_kg": 0.0100891, "tension_N_m": 2, "strain": 0.00888357}, {"mass_kg": 0.0151337, "tension_N_m": 3, "strain": 0.0128839}]},
+    {"dir": "weft", "k_reference_N_m": 100, "k_derived_N_m": 99.9966, "ratio": 0.999966, "seconds": 1.43929, "loads": [{"mass_kg": 0.00201783, "tension_N_m": 0.4, "strain": 0.00620739}, {"mass_kg": 0.00403565, "tension_N_m": 0.8, "strain": 0.0102075}, {"mass_kg": 0.00605348, "tension_N_m": 1.2, "strain": 0.0142077}]},
+    {"dir": "bias", "k_reference_N_m": 13.346, "k_derived_N_m": 16.0908, "ratio": 1.20566, "seconds": 16.3475, "loads": [{"mass_kg": 0.00067325, "tension_N_m": 0.13346, "strain": 0.0233095}, {"mass_kg": 0.0013465, "tension_N_m": 0.266921, "strain": 0.0317171}, {"mass_kg": 0.00201975, "tension_N_m": 0.400381, "strain": 0.0398969}]}
+  ],
+  "shear": {"G_input_N_m_rad": 3.5, "G_bias_extension_naive_N_m_rad": 4.26278, "ratio": 1.21794, "method": "bias extension, 1/G = 4/E45 - 1/ku - 1/kv (uniform uniaxial stress; ignores clamp zones)"},
+  "drape": [
+    {"h_m": 0.014, "drape_coefficient_pct": 27.7191, "folds": 9, "r_min_m": 0.0937081, "r_max_m": 0.132745, "shadow_area_m2": 0.0379867, "frames": 247, "kinetic_energy_J": 9.82463e-09, "min_clearance_m": 0.0018, "seconds": 14.6829},
+    {"h_m": 0.01, "drape_coefficient_pct": 27.6491, "folds": 9, "r_min_m": 0.0938104, "r_max_m": 0.130177, "shadow_area_m2": 0.037955, "frames": 223, "kinetic_energy_J": 8.88397e-09, "min_clearance_m": 0.0018, "seconds": 35.0973},
+    {"h_m": 0.007, "drape_coefficient_pct": 27.7721, "folds": 10, "r_min_m": 0.0951887, "r_max_m": 0.128533, "shadow_area_m2": 0.0380107, "frames": 268, "kinetic_energy_J": 9.90381e-09, "min_clearance_m": 0.0018, "seconds": 135.438}
+  ],
+  "drape_headline_level": 1,
+  "seconds_total": 218.589
+}

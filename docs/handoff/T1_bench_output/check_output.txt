@@ -1,0 +1,34 @@
+| fabric | direction | finest n | ratio finest | check (|r-1| <= 0.05) | headline n | ratio headline | ratios all levels |
+|---|---|---|---|---|---|---|---|
+| canvas_heavy | warp | 16 | 0.926 | FAIL | 10 | 0.843 | 0.734, 0.843, 0.926 |
+| canvas_heavy | weft | 16 | 0.930 | FAIL | 10 | 0.847 | 0.739, 0.847, 0.930 |
+| cotton_jersey | warp | 16 | 0.956 | PASS | 10 | 0.881 | 0.770, 0.881, 0.956 |
+| cotton_jersey | weft | 16 | 0.954 | PASS | 10 | 0.879 | 0.768, 0.879, 0.954 |
+| cotton_poplin | warp | 16 | 0.951 | PASS | 10 | 0.877 | 0.755, 0.877, 0.951 |
+| cotton_poplin | weft | 16 | 0.958 | PASS | 10 | 0.881 | 0.771, 0.881, 0.958 |
+| denim_12oz | warp | 16 | 0.937 | FAIL | 10 | 0.855 | 0.752, 0.855, 0.937 |
+| denim_12oz | weft | 16 | 0.951 | PASS | 10 | 0.874 | 0.761, 0.874, 0.951 |
+| lambskin_leather | warp | 16 | 0.921 | FAIL | 10 | 0.838 | 0.733, 0.838, 0.921 |
+| lambskin_leather | weft | 16 | 0.921 | FAIL | 10 | 0.838 | 0.733, 0.838, 0.921 |
+| linen_medium | warp | 16 | 0.943 | FAIL | 10 | 0.860 | 0.756, 0.860, 0.943 |
+| linen_medium | weft | 16 | 0.946 | FAIL | 10 | 0.873 | 0.759, 0.873, 0.946 |
+| polyester_chiffon | warp | 16 | 0.965 | PASS | 10 | 0.890 | 0.777, 0.890, 0.965 |
+| polyester_chiffon | weft | 16 | 0.965 | PASS | 10 | 0.890 | 0.777, 0.890, 0.965 |
+| silk_charmeuse | warp | 16 | 0.963 | PASS | 10 | 0.889 | 0.776, 0.889, 0.963 |
+| silk_charmeuse | weft | 16 | 0.963 | PASS | 10 | 0.889 | 0.776, 0.889, 0.963 |
+| wool_suiting | warp | 16 | 0.948 | FAIL | 10 | 0.866 | 0.753, 0.866, 0.948 |
+| wool_suiting | weft | 16 | 0.952 | PASS | 10 | 0.877 | 0.758, 0.877, 0.952 |
+
+| fabric | drape DC % at 10 mm (bench) | docs/ARCHITECTURE.md | difference (points) | folds (10 mm) | KE at last frame (J) |
+|---|---|---|---|---|---|
+| canvas_heavy | 92.8 | 93 | -0.2 | 5 | 8.4e-09 |
+| cotton_jersey | 27.6 | 28 | -0.4 | 9 | 8.9e-09 |
+| cotton_poplin | 65.0 | 64 | +1.0 | 7 | 3.6e-07 |
+| denim_12oz | 80.7 | 81 | -0.3 | 6 | 9.3e-09 |
+| lambskin_leather | 90.9 | 91 | -0.1 | 5 | 5.9e-08 |
+| linen_medium | 81.2 | 82 | -0.8 | 6 | 8.1e-08 |
+| polyester_chiffon | 43.1 | 38 | +5.1 | 8 | 1.9e-07 |
+| silk_charmeuse | 46.6 | 36 | +10.6 | 7 | 2.2e-07 |
+| wool_suiting | 64.8 | 65 | -0.2 | 6 | 8.8e-09 |
+
+bending checks failed: 8 (tolerance 0.05, finest mesh level)

@@ -98,3 +98,77 @@ this test alone. Limits: one real preset (1.43:1), synthetic 5:1 and 10:1 varian
 - Drape comparison so far: poplin bench 65.0 % vs documented 64 % (+1.0 points). Silk bench 46.6 % vs documented 36 %
   (+10.6 points). The silk gap is NOT explained yet. test_drape uses the same rig code; its per-fabric numbers were not
   captured by ctest. Likely the documented silk number is stale, but this is unverified.
+
+## Full preset sweep (done): fabric_bench on all 9 presets, default levels (bending n = 6/10/16, drape 14/10/7 mm, 300-frame cap)
+Raw outputs: docs/handoff/T1_bench_output/ (per-preset .md and .json, summary.md, check_output.txt, bias runs).
+Checker: `python3 tools/fabric_bench/check_bench.py docs/handoff/T1_bench_output`.
+
+### Bending (cantilever, elastica reference at 41.5 deg): B derived / B input
+| preset | warp finest (n=16) | warp headline (n=10) | weft finest | weft headline | check at finest (|r-1| <= 0.05) |
+|---|---|---|---|---|---|
+| silk_charmeuse | 0.963 | 0.889 | 0.963 | 0.889 | PASS |
+| polyester_chiffon | 0.965 | 0.890 | 0.965 | 0.890 | PASS |
+| cotton_jersey | 0.956 | 0.881 | 0.954 | 0.879 | PASS |
+| cotton_poplin | 0.951 | 0.877 | 0.958 | 0.881 | PASS (edge) |
+| wool_suiting | 0.948 | 0.866 | 0.952 | 0.877 | FAIL warp, PASS weft |
+| linen_medium | 0.943 | 0.860 | 0.946 | 0.873 | FAIL both |
+| denim_12oz | 0.937 | 0.855 | 0.951 | 0.874 | FAIL warp, PASS weft |
+| canvas_heavy | 0.926 | 0.843 | 0.930 | 0.847 | FAIL both |
+| lambskin_leather | 0.921 | 0.838 | 0.921 | 0.838 | FAIL both |
+
+8 of 18 direction checks FAIL the stated 5 % tolerance. The ratios rise steadily with mesh refinement
+(n = 6 -> 10 -> 16 is about 0.75 -> 0.88 -> 0.95 for every preset), so the bending is NOT converged at the finest
+level tried. I did not fit a convergence order (three levels are too few for an honest extrapolation), and I did not
+loosen the tolerance. The solver's bending is low by 5 to 8 % at n = 16 and by 12 to 16 % at the headline n = 10.
+
+### Stretch (hanging strip): derived k / input k
+Warp and weft: 0.998 to 1.000 for all presets (the solver reproduces its input stiffness; this is a consistency
+check, not an independent test).
+
+### Shear (bias extension, naive formula 1/G = 4/E45 - 1/ku - 1/kv): G derived / G input
+1.13 (lambskin) to 1.25 (chiffon), all presets above 1. The bias strip is therefore stiffer in shear than the input G by
+12 to 25 %. NOT explained. Candidates: the clamp zones (the naive formula ignores them, but they would bias the
+modulus in either direction is not established), and the diagonal over-stiffness of the lattice mesh already listed
+in docs/ARCHITECTURE.md. Neither is tested here.
+
+### Drape (30 cm disc, 10 mm, 300-frame cap): bench DC % vs docs/ARCHITECTURE.md (both reported, nothing adjusted)
+| preset | bench DC % | documented | difference (points) | folds | KE at last frame (J) |
+|---|---|---|---|---|---|
+| canvas_heavy | 92.8 | 93 | -0.2 | 5 | 8e-9 (settled) |
+| cotton_jersey | 27.6 | 28 | -0.4 | 9 | 9e-9 (settled) |
+| cotton_poplin | 65.0 | 64 | +1.0 | 7 | 4e-7 |
+| denim_12oz | 80.7 | 81 | -0.3 | 6 | 9e-9 (settled) |
+| lambskin_leather | 90.9 | 91 | -0.1 | 5 | 6e-8 |
+| linen_medium | 81.2 | 82 | -0.8 | 6 | 8e-8 |
+| polyester_chiffon | 43.1 | 38 | +5.1 | 8 | 2e-7 |
+| silk_charmeuse | 46.6 | 36 | +10.6 | 7 | 2e-7 |
+| wool_suiting | 64.8 | 65 | -0.2 | 6 | 9e-9 |
+
+Six of nine agree within about 1 point. Silk and chiffon differ by 5 to 11 points, and they are the two presets whose
+drape run did not reach the KE stop threshold. The drape spread over the three mesh levels is large for the light
+fabrics (silk 39.7 to 46.6, chiffon 32.0 to 45.6 points), so the documented headline for those is mesh-sensitive too.
+Fold counts (5 to 9) were not checked against measurement.
+
+### Bias-angle strip (denim, real 1.43:1, and SYNTHETIC 5:1 and 10:1): see Step 3b and 3c above
+Plain answer: the hinge model under-represents the directional contrast slightly for strongly orthotropic
+bending (about 7 % of the 10:1 contrast, stable across n = 6/10/16). It does not fail badly, so the
+ARCHITECTURE.md warning is only weakly supported by this test. The Bolt-style rewrite is not justified by this
+test alone. One preset, synthetic variants, cantilever only.
+
+## What is still unfinished (honest)
+1. Bending does not meet the 5 % tolerance at the finest level tried (8 of 18). Not converged. Needs a finer mesh
+   level or a proper convergence study before the calibration is trusted.
+2. The drape table is not settled for silk and chiffon (KE does not reach 1e-8). The 1500-frame check on silk changed
+   the value by 0.3 points, but the stop criterion itself was not met. Unexplained gap to the documented silk value.
+3. The bias-extension shear is 12 to 25 % stiffer than input. Unexplained.
+4. The bending check is not in ctest (it takes minutes per preset). It is run by `fabric_bench` and
+   `check_bench.py`. ctest has test_fabric_bench (self-checks only).
+5. test_drape's per-preset numbers are not captured in the ctest log (passing output is hidden), so the documented
+   numbers could not be compared with test_drape's own output, only with the bench.
+6. FABRIC_TESTING.md is a protocol document only. No real swatch has been tested. The acceptance thresholds in it are
+   intentionally blank.
+7. The `validated` flag and reality-gap column proposed in the T1 idea entry were NOT added to fabrics.json.
+   (The handoff lists this as a T1 idea item, not a done-criterion.)
+8. Uncertain: the Peirce-style formula in the code (marked UNVERIFIED); the elastica code is checked against
+   its own ODE and small-load limit, not against a textbook table. The ISO 139 reference in FABRIC_TESTING.md
+   is from memory.

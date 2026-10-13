@@ -1,0 +1,7 @@
+  [bias-strip denim_12oz_ortho10]   0.0 deg: B model 1.000e-04, derived 9.035e-05, ratio 0.903
+  [bias-strip denim_12oz_ortho10]  15.0 deg: B model 7.630e-05, derived 6.944e-05, ratio 0.910
+  [bias-strip denim_12oz_ortho10]  30.0 deg: B model 4.213e-05, derived 3.964e-05, ratio 0.941
+  [bias-strip denim_12oz_ortho10]  45.0 deg: B model 2.309e-05, derived 2.221e-05, ratio 0.962
+  [bias-strip denim_12oz_ortho10]  60.0 deg: B model 1.455e-05, derived 1.411e-05, ratio 0.970
+  [bias-strip denim_12oz_ortho10]  75.0 deg: B model 1.098e-05, derived 1.067e-05, ratio 0.972
+  [bias-strip denim_12oz_ortho10]  90.0 deg: B model 1.000e-05, derived 9.722e-06, ratio 0.972
