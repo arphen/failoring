@@ -35,7 +35,7 @@ enable_testing()
 set(FL_MATERIALS_PATH "${CMAKE_SOURCE_DIR}/materials/fabrics.json")
 set(FL_OUT_DIR "${CMAKE_SOURCE_DIR}/out")
 
-foreach(t test_basics test_cantilever test_drape test_garment test_sdf_grid test_barrier test_passthrough)
+foreach(t test_basics test_cantilever test_drape test_garment test_sdf_grid test_barrier test_passthrough test_layers)
   add_executable(${t} cloth_core/tests/${t}.cpp)
   target_link_libraries(${t} PRIVATE cloth_core)
   target_compile_definitions(${t} PRIVATE FL_MATERIALS_PATH="${FL_MATERIALS_PATH}" FL_OUT_DIR="${FL_OUT_DIR}")
