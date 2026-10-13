@@ -45,7 +45,7 @@ App.rebuild = () => {
   const ids = new Set(pieces.map((p) => p.id));
   // the mesh body (or null: legacy primitive mannequin); the worker re-bakes its collider only when `key` changes
   const body = App.body ? { key: App.body.key, pos: App.body.pos.slice(), tris: App.bodyTris, sections: App.body.sections, arms: App.body.arms } : null;
-  const walk = S.motion === 'walk' && App.body && App.bodyRest ? { rest: App.bodyRest.allPos.slice(), joints: App.bodyRest.joints, settle: q.frames + (S.extraFrames || 0), cycle: WALK.cycle, ramp: WALK.ramp, stride: 1 } : null;
+  const walk = S.motion === 'walk' && App.body && App.bodyRest ? { rest: App.bodyRest.allPos.slice(), joints: App.bodyRest.joints, settle: q.frames + (S.extraFrames || 0), cycle: WALK.cycle, ramp: WALK.ramp, stride: 1, armAbduct: App.body.armAbduct } : null;
   const spec = {
     job, walk, meas: S.meas, fabric: fab, quality: q, rampFrames: S.rampFrames, seamStiffness: S.seamStiffness, selfCollision: S.selfCollision || !!q.self, frames: q.frames + (S.extraFrames || 0) + (walk ? Math.round(1.5 * WALK.cycle) : 0),
     pieces: pieces.map((p) => ({ id: p.id, outline: p.outline, grain: p.grain, wrap: p.wrap })),

@@ -83,14 +83,14 @@ function walkBin(file, M, rest, stand, frames) {
   const ref = Float64Array.from(stand.pos.subarray(0, n3), (v) => +v.toFixed(4));
   const fdata = new Uint16Array(frames * n3);
   for (let k = 0; k < frames; k++) {
-    const P = FL.Gait.pose(M, rest, k / frames, { stride: 1, arms: 1 }).pos;
+    const P = FL.Gait.pose(M, rest, k / frames, { stride: 1, arms: 1, armAbduct: stand.armAbduct }).pos;
     for (let i = 0; i < n3; i++) fdata[k * n3 + i] = toHalf(P[i] - ref[i]);
   }
   const header = {
     format: 'failoring-walk', version: 1, units: 'm', axes: 'y up, +z front, +x body left (same as the browser app)',
     vertices: nb, frames, cycle_seconds: +CYCLE.toFixed(6), fps: +(frames / CYCLE).toFixed(3),
     frame_phase: 'frame k is the pose at phase k/frames of the left-leg gait cycle (0 = left heel strike); loop it',
-    gait: 'FL.Gait.pose(M, rest, phase, {stride: 1, arms: 1}) with the default walk (app/src/gait.js)',
+    gait: 'FL.Gait.pose(M, rest, phase, {stride: 1, arms: 1, armAbduct: stand.armAbduct}) with the default walk (app/src/gait.js; armAbduct is the arm angle FL.Gait.stand chose for this body)',
     sections: {
       bind: { dtype: 'f32', offset: 0, count: n3, layout: 'x0 y0 z0 x1 y1 z1 ... (vertex order = body.obj order)' },
       frames: { dtype: 'f16', offset: 4 * n3, count: frames * n3, frame_bytes: 2 * n3, relative_to: 'body.obj vertex positions',
@@ -171,7 +171,7 @@ function verify(name, M, rest, stand) {
   let worst = 0, footWorst = 0, boundsWalk = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
   const fo = d0 + 4 * n3;
   for (let k = 0; k < H.frames; k++) {
-    const P = FL.Gait.pose(M, rest, k / H.frames, { stride: 1, arms: 1 }).pos;
+    const P = FL.Gait.pose(M, rest, k / H.frames, { stride: 1, arms: 1, armAbduct: stand.armAbduct }).pos;
     let fmin = Infinity;
     for (let i = 0; i < nb; i++) {
       for (let c = 0; c < 3; c++) {

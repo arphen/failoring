@@ -80,8 +80,9 @@ solver "blocker" is resolved: the core default is `tensionStiffness = false` (ct
    container), with the same clearance and seam gap on both. The demo garment and quality differ from the browser's, so
    this is not a like-for-like comparison with it.
 7. Small gaps: the Demo bar overlaps the lower body; `plan.info` is lost on save/open; the trouser pieces overlap on the
-   cutting table; at draft mesh quality (4 cm triangles) skin shows through the cloth in small patches while walking
-   (the display mesh lifts the cloth only by what it can see, a coarse triangle still cuts a thin shin).
+   cutting table; at Draft mesh quality (6 cm triangles) patches of skin show through the cloth at the knees and shins
+   while walking (a 6 cm triangle cuts a 3.5 cm radius shin by about 13 mm, the display mesh lifts at most 4 mm). At
+   Standard quality (4 cm, the app default) the same walk, looked at close up in the browser, shows only a few specks.
 
 ## Maintenance
 
