@@ -324,7 +324,7 @@ int countFolds(const std::vector<double>& rad) {
     return count;
 }
 
-DrapeSim simulateDrape(const FabricMaterial& mat, double h) {
+DrapeSim simulateDrape(const FabricMaterial& mat, double h, int maxFrames) {
     // Same rig as cloth_core/tests/test_drape.cpp: 30 cm disc, 18 cm pedestal, disc 12 mm above the pedestal top.
     const double R = 0.15, Rs = 0.09;
     PanelMesh disc = meshDisc(R, h);
@@ -339,7 +339,7 @@ DrapeSim simulateDrape(const FabricMaterial& mat, double h) {
     cs.setCollider(std::make_shared<CylinderCollider>(Vec3(0, -0.10, 0), Rs, 0.10));
     const double t0 = now();
     int f = 0;
-    for (; f < 300; ++f) {
+    for (; f < maxFrames; ++f) {
         cs.step();
         if (f > 100 && cs.kineticEnergy() < 1e-8) break;
     }
@@ -480,13 +480,31 @@ FabricBench runFabricBench(const FabricMaterial& m, const BenchConfig& cfg) {
     }
     if (cfg.doDrape) {
         for (double h : cfg.drapeLevels) {
-            b.drape.push_back({h, simulateDrape(m, h)});
+            b.drape.push_back({h, simulateDrape(m, h, cfg.drapeFrames)});
             say(("drape h=" + std::to_string(1000 * h).substr(0, 4) + " mm").c_str(), b.drape.back().sim.seconds);
         }
         b.drapeHeadline = b.drape.size() / 2;
     }
     b.secondsTotal = now() - t0;
     return b;
+}
+
+std::vector<BiasPoint> runBiasStrip(const FabricMaterial& m, const BenchConfig& cfg, const std::vector<double>& anglesDeg, int n) {
+    std::vector<BiasPoint> out;
+    for (double a : anglesDeg) {
+        const double psi = a * kPi / 180.0;
+        BiasPoint p;
+        p.angleDeg = a;
+        p.n = n;
+        p.Bmodel = bendingAtAngleModel(m, psi);
+        const BendLevel L = benchBendingLevel(m, psi, n, cfg, p.Bmodel);
+        p.Bderived = L.Belastica;
+        p.ratio = L.ratio;
+        p.ratioLo = p.ratioHi = L.ratio;
+        out.push_back(p);
+        if (cfg.verbose) std::fprintf(stderr, "  [bias-strip %s] %5.1f deg: B model %.3e, derived %.3e, ratio %.3f\n", m.id.c_str(), a, p.Bmodel, p.Bderived, p.ratio);
+    }
+    return out;
 }
 
 // =====================================================================================================

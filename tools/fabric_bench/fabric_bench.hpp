@@ -71,7 +71,7 @@ struct DrapeSim {
     double seconds = 0;
     std::vector<double> radial;      // outline radius per degree (m)
 };
-DrapeSim simulateDrape(const FabricMaterial& m, double h);
+DrapeSim simulateDrape(const FabricMaterial& m, double h, int maxFrames = 300);
 // Fold counting on a periodic radial profile (heuristic: prominence >= max(3 mm, 15 % of the range)).
 int countFolds(const std::vector<double>& radial);
 // Area (m2) of the union of the projected triangles; same rasterisation as fl::projectedShadowArea, plus the outline.
@@ -84,6 +84,7 @@ struct BenchConfig {
     double angleDeg = kCantileverAngleDeg;
     std::vector<int> bendLevels{6, 10, 16};    // elements along the overhang; the middle one is the headline
     std::vector<double> drapeLevels{0.014, 0.010, 0.007};  // edge lengths (m); middle is the headline
+    int drapeFrames = 300;                     // frame cap per drape run (the run stops early when KE < 1e-8)
     double tensileWidth = 0.05, tensileLength = 0.30, tensileMesh = 0.00625;
     double biasLength = 0.30;
     std::vector<double> warpWeftStrains{0.004, 0.008, 0.012};
@@ -139,6 +140,13 @@ struct FabricBench {
 FabricBench runFabricBench(const FabricMaterial& m, const BenchConfig& cfg);
 std::string benchToJson(const FabricBench& b, const BenchConfig& cfg);
 std::string benchToMarkdown(const FabricBench& b, const BenchConfig& cfg);
+// Bias-angle strip check: cantilever strips at several angles to the warp, compared with the compliance-mixing
+// model B(psi) used by the solver. Uses one mesh level (n elements along the overhang).
+struct BiasPoint {
+    double angleDeg = 0, Bmodel = 0, Bderived = 0, ratio = 0, ratioLo = 0, ratioHi = 0;
+    int n = 0;
+};
+std::vector<BiasPoint> runBiasStrip(const FabricMaterial& m, const BenchConfig& cfg, const std::vector<double>& anglesDeg, int n);
 // Combined hand-panel / summary tables for many fabrics.
 std::string summaryMarkdown(const std::vector<FabricBench>& all, const BenchConfig& cfg);
 
