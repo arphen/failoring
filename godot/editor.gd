@@ -100,12 +100,12 @@ func _ready() -> void:
 	table.ed = self
 	stage = $UI/Root/Main/ViewPane/View/Stage
 	sub_view = $UI/Root/Main/ViewPane/View
+	M = BodyGen.load_data(PlanLoader.load_json("res://assets/body_data.json"))
+	meas = (BodyGen.PRESETS["average"] as Dictionary).duplicate()
 	_build_scene()
 	_apply_auto_env()
 	_build_ui()
 	_build_table_bar()
-	M = BodyGen.load_data(PlanLoader.load_json("res://assets/body_data.json"))
-	meas = (BodyGen.PRESETS["average"] as Dictionary).duplicate()
 	if OS.has_environment("FL_STAND"):
 		motion = "stand"
 	debounce = Timer.new()
@@ -114,6 +114,8 @@ func _ready() -> void:
 	debounce.timeout.connect(_on_debounce)
 	add_child(debounce)
 	regen_and_rebuild()
+	if OS.has_environment("FL_DEMO"):
+		_demo_toggle()
 
 
 func _apply_auto_env() -> void:
@@ -145,7 +147,19 @@ func _build_scene() -> void:
 	stage.add_child(env)
 	var sun := DirectionalLight3D.new()
 	sun.rotation_degrees = Vector3(-50, 30, 0)
+	sun.shadow_enabled = true
 	stage.add_child(sun)
+	var floor_node := MeshInstance3D.new()
+	var disc := CylinderMesh.new()
+	disc.top_radius = 9.0
+	disc.bottom_radius = 9.0
+	disc.height = 0.02
+	floor_node.mesh = disc
+	var fmat := StandardMaterial3D.new()
+	fmat.albedo_color = Color(0.14, 0.16, 0.19)
+	floor_node.material_override = fmat
+	floor_node.position = Vector3(0, -0.011, 0)
+	stage.add_child(floor_node)
 	cam_pivot = Node3D.new()
 	cam_pivot.position = Vector3(0, 0.9, 0)
 	stage.add_child(cam_pivot)
@@ -160,7 +174,7 @@ func _build_scene() -> void:
 	cloth_node = MeshInstance3D.new()
 	cloth_node.extra_cull_margin = 0.5
 	var cmat := StandardMaterial3D.new()
-	cmat.albedo_color = Color(0.25, 0.45, 0.8)
+	cmat.vertex_color_use_as_albedo = true
 	cmat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	cloth_node.material_override = cmat
 	stage.add_child(cloth_node)
@@ -187,6 +201,11 @@ func _build_ui() -> void:
 	open.text = "Open pattern..."
 	open.pressed.connect(_on_open)
 	box.add_child(open)
+	var demo := Button.new()
+	demo.name = "DemoBtn"
+	demo.text = "Demo"
+	demo.pressed.connect(_demo_toggle)
+	box.add_child(demo)
 	var save := Button.new()
 	save.name = "SaveBtn"
 	save.text = "Save pattern"
@@ -246,12 +265,17 @@ func _build_tabs() -> void:
 		vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		sc.add_child(vb)
 		tabs.add_child(sc)
+	if OS.has_environment("FL_TAB"):
+		for i in tabs.get_tab_count():
+			if tabs.get_tab_title(i) == OS.get_environment("FL_TAB"):
+				tabs.current_tab = i
 	_build_body_tab()
 	_build_fabric_tab()
 	_build_pattern_tab()
-	_placeholder_tab("Piece", "Piece editing arrives with the cutting table.")
-	_placeholder_tab("Seams", "Seam editing arrives with the cutting table.")
-	_placeholder_tab("Shoot", "Photo shoot arrives in a later commit.")
+	_build_piece_tab()
+	_build_seams_tab()
+	_build_shoot_tab()
+
 
 
 func _build_pattern_tab() -> void:
@@ -268,11 +292,537 @@ func _tab_vbox(tab: String) -> VBoxContainer:
 	return tabs.get_node("%s/VBox" % tab)
 
 
+func _build_seams_tab() -> void:
+	_refresh_seams_tab()
+
+
+func _refresh_seams_tab() -> void:
+	var vb := _tab_vbox("Seams")
+	if vb == null:
+		return
+	for c in vb.get_children():
+		c.queue_free()
+	var h := Label.new()
+	h.text = "Seams"
+	vb.add_child(h)
+	if seams.is_empty():
+		var none := Label.new()
+		none.text = "No seams yet."
+		vb.add_child(none)
+	var si := 0
+	for s in seams:
+		si += 1
+		var a = Table.piece_by_id(pieces, String(s["a"][0]))
+		var b = Table.piece_by_id(pieces, String(s["b"][0]))
+		if a == null or b == null:
+			continue
+		var row := HBoxContainer.new()
+		var sw := ColorRect.new()
+		sw.color = Color(Table.SEAM_COLORS[(si - 1) % Table.SEAM_COLORS.size()])
+		sw.custom_minimum_size = Vector2(12, 12)
+		row.add_child(sw)
+		var la: float = Table.edge_len(a["outline"], int(s["a"][1]))
+		var lb: float = Table.edge_len(b["outline"], int(s["b"][1]))
+		var ease: float = (lb - la) / la if la > 0.0 else 0.0
+		var t := Label.new()
+		t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		t.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		t.text = "%s #%d ↔ %s #%d\n%.1f / %.1f cm - ease %s%.1f%%%s" % [String(a.get("name", a["id"])), int(s["a"][1]), String(b.get("name", b["id"])), int(s["b"][1]), la * 100.0, lb * 100.0, "+" if ease >= 0.0 else "", ease * 100.0, " (large)" if absf(ease) > 0.08 else ""]
+		row.add_child(t)
+		var flip := Button.new()
+		flip.text = "⇄"
+		flip.tooltip_text = "Flip direction"
+		flip.pressed.connect(func() -> void: push_undo(); s["reverse"] = not bool(s.get("reverse", false)); changed("structure"))
+		row.add_child(flip)
+		var del := Button.new()
+		del.text = "✕"
+		del.tooltip_text = "Delete seam"
+		del.pressed.connect(func() -> void: push_undo(); seams.erase(s); changed("structure"))
+		row.add_child(del)
+		vb.add_child(row)
+	var note := Label.new()
+	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	note.text = "Pick the Sew tool on the cutting table, click one edge, then the edge it joins. Edge numbers are shown beside each edge length."
+	vb.add_child(note)
+
+
+# ------------------------------------------------------------------ demo mode
+var demo_active := false
+var demo_bodies := []
+var demo_outfits := []
+var demo_body := 0
+var demo_outfit := 0
+var demo_failures := 0
+var demo_start := 0
+var demo_pause_until := 0
+var demo_max := 0
+var demo_count := 0
+var demo_last_count := 0
+var demo_last_tick := 0
+var demo_bar: HBoxContainer
+var demo_info: Label
+
+
+func _demo_plan_keys() -> Array:
+	var out := []
+	for e in _plan_entries():
+		out.append(e[1])
+	return out
+
+
+func _demo_toggle() -> void:
+	if demo_active:
+		_demo_stop()
+	else:
+		demo_max = int(OS.get_environment("FL_DEMO")) if OS.has_environment("FL_DEMO") else 0
+		demo_count = 0
+		demo_active = true
+		demo_bodies = ["petite", "average", "tall", "curvy", "athletic", "plus"]
+		demo_outfits = _demo_plan_keys()
+		demo_body = maxi(0, demo_bodies.find("average"))
+		demo_outfit = 0
+		demo_failures = 0
+		_show_demo_bar(true)
+		_demo_load()
+
+
+func _show_demo_bar(on: bool) -> void:
+	if on and demo_bar == null:
+		demo_bar = HBoxContainer.new()
+		demo_info = Label.new()
+		demo_info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		demo_bar.add_child(demo_info)
+		var nb := Button.new()
+		nb.text = "Next body"
+		nb.pressed.connect(_demo_next_body)
+		demo_bar.add_child(nb)
+		var no := Button.new()
+		no.text = "Next outfit"
+		no.pressed.connect(_demo_next_outfit)
+		demo_bar.add_child(no)
+		var st := Button.new()
+		st.text = "Stop demo"
+		st.pressed.connect(_demo_stop)
+		demo_bar.add_child(st)
+		($UI/Root as VBoxContainer).add_child(demo_bar)
+	if demo_bar != null:
+		demo_bar.visible = on
+		if on:
+			_update_demo_label()
+
+
+func _update_demo_label() -> void:
+	if demo_info != null:
+		demo_info.text = "%s body - %s" % [demo_bodies[demo_body % demo_bodies.size()], _plan_title(demo_outfits[demo_outfit % demo_outfits.size()])]
+
+
+func _demo_load() -> bool:
+	if not demo_active:
+		return false
+	demo_count += 1
+	if demo_max > 0 and demo_count > demo_max:
+		_demo_stop()
+		if OS.has_environment("FL_DEMO"):
+			get_tree().quit()
+		return false
+	demo_outfit = ((demo_outfit % demo_outfits.size()) + demo_outfits.size()) % demo_outfits.size()
+	meas = (BodyGen.PRESETS[demo_bodies[demo_body % demo_bodies.size()]] as Dictionary).duplicate()
+	motion = "walk"
+	plan_key = demo_outfits[demo_outfit % demo_outfits.size()]
+	_rebuild_body_tab()
+	demo_start = Time.get_ticks_msec()
+	demo_pause_until = 0
+	demo_last_count = 0
+	demo_last_tick = demo_start
+	tl_t = 0.0
+	playing = true
+	regen_and_rebuild()
+	_update_demo_label()
+	return true
+
+
+func _demo_skip(why: String) -> void:
+	if not demo_active:
+		return
+	demo_failures += 1
+	status_label.text = "%s - trying the next outfit" % why
+	if demo_failures >= maxi(1, demo_outfits.size()):
+		status_label.text = "Demo: no garment could be simulated"
+		_demo_stop()
+		return
+	demo_outfit += 1
+	_demo_load()
+
+
+func _demo_next_outfit() -> void:
+	if demo_active:
+		demo_failures = 0
+		demo_outfit += 1
+		_demo_load()
+
+
+func _demo_next_body() -> void:
+	if demo_active:
+		demo_failures = 0
+		demo_body = (demo_body + 1) % demo_bodies.size()
+		_demo_load()
+
+
+func _demo_stop() -> void:
+	if not demo_active:
+		return
+	demo_active = false
+	_show_demo_bar(false)
+	playing = false
+	tl_t = 0.0
+	yaw = 0.3
+	pitch = -0.12
+	zoom = 1.0
+	motion = "stand"
+	regen_and_rebuild()
+
+
+func _demo_tick() -> void:
+	if not demo_active:
+		return
+	yaw += 0.12 / 60.0
+	if OS.has_environment("FL_DEMO") and not playing and tl_t >= 4.0 and frames.size() >= target and target > 0:
+		if demo_count >= demo_max:
+			print("EDITOR demo finished %d outfits, quitting" % demo_count)
+			_demo_stop()
+			get_tree().quit()
+			return
+		_demo_next_outfit()
+		return
+	if not playing and tl_t >= 4.0 and frames.size() >= target and target > 0:
+		if demo_pause_until == 0:
+			demo_pause_until = Time.get_ticks_msec() + 2500
+		elif Time.get_ticks_msec() >= demo_pause_until:
+			demo_pause_until = 0
+			tl_t = 0.0
+			playing = true
+			_sync_tl_ui()
+	if sim == null and Time.get_ticks_msec() - demo_start > 5000:
+		_demo_skip("simulation error")
+		return
+	if frames.size() != demo_last_count:
+		demo_last_count = frames.size()
+		demo_last_tick = Time.get_ticks_msec()
+		demo_failures = 0
+	elif frames.size() > 0 and Time.get_ticks_msec() - demo_last_tick > 300000:
+		_demo_skip("simulation stalled")
+
+
 func _placeholder_tab(tab: String, text: String) -> void:
 	var l := Label.new()
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	l.text = text
 	_tab_vbox(tab).add_child(l)
+
+
+# ------------------------------------------------------------------ photo shoot
+const SHOTS := [
+	{"id": "front", "name": "Full length - front", "cam": [0.0, 1.0, 6.8], "tgt": [0.0, 0.86, 0.0], "fov": 18.0, "yaw": 0.0},
+	{"id": "three", "name": "Three-quarter pass", "cam": [2.7, 1.12, 5.6], "tgt": [0.0, 0.87, 0.0], "fov": 20.0, "yaw": 0.12},
+	{"id": "profile", "name": "Profile", "cam": [6.6, 1.02, 0.3], "tgt": [0.0, 0.87, 0.0], "fov": 20.0, "yaw": 0.0},
+	{"id": "low", "name": "Low-angle hero", "cam": [0.9, 0.28, 3.8], "tgt": [0.0, 0.92, 0.0], "fov": 30.0, "yaw": -0.1},
+	{"id": "waist", "name": "Waist and seams detail", "cam": [0.9, 1.0, 2.6], "tgt": [0.0, 0.86, 0.0], "fov": 17.0, "yaw": 0.2},
+	{"id": "back", "name": "Back three-quarter", "cam": [-2.5, 1.1, -5.4], "tgt": [0.0, 0.87, 0.0], "fov": 20.0, "yaw": 0.0},
+	{"id": "hem", "name": "Hem detail", "cam": [1.5, 0.46, 2.2], "tgt": [0.0, 0.46, 0.0], "fov": 24.0, "yaw": 0.35},
+]
+const SHOOT_SIZES := {"preview": [800, 1000], "standard": [1200, 1500], "high": [1600, 2000]}
+
+var shoot_enabled := {}
+var shoot_size := "standard"
+var shoot_same_moment := false
+var shoot_busy := false
+var shoot_done := false
+var gallery: Window
+var gallery_grid: GridContainer
+
+
+func _build_shoot_tab() -> void:
+	var vb := _tab_vbox("Shoot")
+	var h := Label.new()
+	h.text = "Shots"
+	vb.add_child(h)
+	for s in SHOTS:
+		shoot_enabled[s["id"]] = true
+		var chk := CheckBox.new()
+		chk.text = s["name"]
+		chk.button_pressed = true
+		chk.toggled.connect(func(on: bool) -> void: shoot_enabled[s["id"]] = on)
+		vb.add_child(chk)
+	vb.add_child(_h4("Resolution"))
+	var o := OptionButton.new()
+	o.add_item("Preview 800 x 1000", 0)
+	o.add_item("Standard 1200 x 1500", 1)
+	o.add_item("High 1600 x 2000", 2)
+	o.select(1)
+	o.item_selected.connect(func(i: int) -> void: shoot_size = ["preview", "standard", "high"][o.get_item_id(i)])
+	vb.add_child(o)
+	var same := CheckBox.new()
+	same.text = "Same moment for every shot"
+	same.toggled.connect(func(on: bool) -> void: shoot_same_moment = on)
+	vb.add_child(same)
+	var go := Button.new()
+	go.text = "Take photos"
+	go.pressed.connect(take_shots)
+	vb.add_child(go)
+	var note := Label.new()
+	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	note.text = "Each shot renders the finished drape with a long lens. With Walking motion the shots spread over the last gait cycle unless Same moment is ticked."
+	vb.add_child(note)
+
+
+func take_shots() -> void:
+	if shoot_busy or sim == null or frames.is_empty():
+		status_label.text = "Nothing to photograph yet - wait for the drape to appear"
+		return
+	var list := []
+	for s in SHOTS:
+		if shoot_enabled.get(s["id"], false):
+			list.append(s)
+	if list.is_empty():
+		status_label.text = "Pick at least one shot"
+		return
+	shoot_busy = true
+	status_label.text = "Shooting..."
+	var kept_sel = sel
+	sel = null
+	_last_shown = ""
+	await get_tree().process_frame
+	var size: Array = SHOOT_SIZES[shoot_size]
+	var saved_view := sub_view.size
+	var saved_cam := [cam.position, cam.fov, cam_pivot.position, cam_pivot.rotation]
+	var saved_vis := [_stitch_mesh.visible, _seam_mesh.visible]
+	_stitch_mesh.visible = false
+	_seam_mesh.visible = false
+	sub_view.size = Vector2i(size[0], size[1])
+	var last: int = frames.size() - 1
+	var h: float = float(meas.get("height", 1.68)) / 1.68
+	var shots := []
+	for i in list.size():
+		var s: Dictionary = list[i]
+		status_label.text = "Shooting %d / %d: %s" % [i + 1, list.size(), s["name"]]
+		var fi: int = last if shoot_same_moment or motion != "walk" else maxi(0, last - int(round(64.0 * (1.0 - float(i) / float(list.size())))))
+		var fr: Dictionary = frames[mini(fi, last)]
+		_set_cloth_mesh_frozen(fr["pos"])
+		cur_cloth = fr["cloth"]
+		body_node.show_pose(fr["body"])
+		var cc: Array = s["cam"]
+		var tt: Array = s["tgt"]
+		cam_pivot.position = Vector3.ZERO
+		cam_pivot.rotation = Vector3(0, float(s["yaw"]), 0)
+		cam.position = Vector3(float(cc[0]), float(cc[1]) * h, float(cc[2]))
+		cam.fov = float(s["fov"])
+		cam.look_at(Vector3(float(tt[0]), float(tt[1]) * h, float(tt[2])))
+		await RenderingServer.frame_post_draw
+		await RenderingServer.frame_post_draw
+		var img := sub_view.get_texture().get_image()
+		if img != null and not img.is_empty():
+			shots.append({"name": s["name"], "id": s["id"], "img": img})
+	_show_gallery(shots, size)
+	sub_view.size = saved_view
+	cam.position = saved_cam[0]
+	cam.fov = saved_cam[1]
+	cam_pivot.position = saved_cam[2]
+	cam_pivot.rotation = saved_cam[3]
+	_stitch_mesh.visible = saved_vis[0]
+	_seam_mesh.visible = saved_vis[1]
+	sel = kept_sel
+	_last_shown = ""
+	_show_current()
+	shoot_busy = false
+	status_label.text = "%d shots" % shots.size()
+
+
+func _set_cloth_mesh_frozen(disp: PackedVector3Array) -> void:
+	_set_cloth_mesh(disp)
+
+
+func _show_gallery(shots: Array, size: Array) -> void:
+	if gallery == null:
+		gallery = Window.new()
+		gallery.title = "Photo shoot"
+		gallery.size = Vector2i(900, 600)
+		gallery_grid = GridContainer.new()
+		gallery_grid.columns = 3
+		var scroll := ScrollContainer.new()
+		scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
+		scroll.add_child(gallery_grid)
+		gallery.add_child(scroll)
+		var save_all := Button.new()
+		save_all.text = "Save all..."
+		save_all.pressed.connect(_on_gallery_save_all)
+		var bar := HBoxContainer.new()
+		bar.add_child(save_all)
+		gallery.add_child(bar)
+		add_child(gallery)
+	for c in gallery_grid.get_children():
+		c.queue_free()
+	for i in shots.size():
+		var cell := VBoxContainer.new()
+		var tex := TextureRect.new()
+		tex.texture = ImageTexture.create_from_image(shots[i]["img"])
+		tex.custom_minimum_size = Vector2(260, 260 * float(size[1]) / float(size[0]))
+		tex.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		tex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		cell.add_child(tex)
+		var cap := Label.new()
+		cap.text = shots[i]["name"]
+		cell.add_child(cap)
+		var sv := Button.new()
+		sv.text = "Save PNG"
+		sv.pressed.connect(func() -> void: _on_gallery_save_one(shots[i]))
+		cell.add_child(sv)
+		gallery_grid.add_child(cell)
+	gallery.popup_centered()
+
+
+func _gallery_dir(cont: Callable) -> void:
+	var dlg := FileDialog.new()
+	dlg.file_mode = FileDialog.FILE_MODE_OPEN_DIR
+	dlg.dir_selected.connect(cont)
+	add_child(dlg)
+	dlg.popup_centered(Vector2(600, 400))
+
+
+func _on_gallery_save_all() -> void:
+	_gallery_dir(func(dir: String) -> void:
+		var cells := gallery_grid.get_children()
+		for i in cells.size():
+			var tex: TextureRect = cells[i].get_child(0)
+			(tex.texture.get_image() as Image).save_png("%s/shot-%02d.png" % [dir, i + 1])
+		status_label.text = "saved %d shots to %s" % [cells.size(), dir])
+
+
+func _on_gallery_save_one(shot: Dictionary) -> void:
+	_gallery_dir(func(dir: String) -> void:
+		(shot["img"] as Image).save_png("%s/%s.png" % [dir, String(shot["id"])])
+		status_label.text = "saved " + String(shot["name"]))
+
+
+func _piece() -> Variant:
+	return Table.piece_by_id(pieces, sel) if sel != null else null
+
+
+func _build_piece_tab() -> void:
+	_refresh_piece_tab()
+
+
+func _refresh_piece_tab() -> void:
+	var vb := _tab_vbox("Piece")
+	if vb == null:
+		return
+	for c in vb.get_children():
+		c.queue_free()
+	var h := Label.new()
+	h.text = "Selected piece"
+	vb.add_child(h)
+	var p = _piece()
+	if p == null:
+		var none := Label.new()
+		none.text = "Click a piece on the cutting table."
+		vb.add_child(none)
+	else:
+		var name_row := HBoxContainer.new()
+		var nl := Label.new()
+		nl.custom_minimum_size = Vector2(92, 0)
+		nl.text = "Name"
+		name_row.add_child(nl)
+		var ne := LineEdit.new()
+		ne.text = String(p.get("name", p["id"]))
+		ne.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		ne.text_submitted.connect(func(t: String) -> void: p["name"] = t; table_dirty = true)
+		name_row.add_child(ne)
+		vb.add_child(name_row)
+		var bb := Table.bbox_of(p["outline"])
+		var kv := Label.new()
+		kv.text = "Size %.1f x %.1f cm\nArea %.0f cm²" % [(bb[2] - bb[0]) * 100.0, (bb[3] - bb[1]) * 100.0, absf(Table.signed_area(p["outline"])) * 1e4]
+		vb.add_child(kv)
+		vb.add_child(_h4("Grain (warp direction)"))
+		_slider_row(vb, "Angle", 0.0, 180.0, 1.0,
+			func() -> float: return _grain_deg(),
+			func(v: float) -> void: _sel_wrap_set("grain_deg", v),
+			func(v: float) -> String: return "%d°" % int(v))
+		var gb := HBoxContainer.new()
+		for g in [["Straight 90°", 90.0], ["Cross 0°", 0.0], ["Bias 45°", 45.0], ["Bias 135°", 135.0]]:
+			var b := Button.new()
+			b.text = g[0]
+			b.pressed.connect(func() -> void: push_undo(); p["grain"] = float(g[1]) * PI / 180.0; changed("structure"))
+			gb.add_child(b)
+		vb.add_child(gb)
+		vb.add_child(_h4("Placement on the body"))
+		_slider_row(vb, "Around", 0.0, 360.0, 1.0,
+			func() -> float: return float((p.get("wrap", {}) as Dictionary).get("theta", 0.0)),
+			func(v: float) -> void: (p["wrap"] as Dictionary)["theta"] = v; changed("structure-drag"),
+			func(v: float) -> String: return "%d°" % int(v))
+		_slider_row(vb, "Height", 0.0, 150.0, 1.0,
+			func() -> float: return float((p.get("wrap", {}) as Dictionary).get("y", 0.5)) * 100.0,
+			func(v: float) -> void: (p["wrap"] as Dictionary)["y"] = v / 100.0; changed("structure-drag"),
+			func(v: float) -> String: return "%d cm" % int(v))
+		_slider_row(vb, "Clearance", 0.0, 40.0, 1.0,
+			func() -> float: return float((p.get("wrap", {}) as Dictionary).get("clear", 0.012)) * 1000.0,
+			func(v: float) -> void: (p["wrap"] as Dictionary)["clear"] = v / 1000.0; changed("structure-drag"),
+			func(v: float) -> String: return "%d mm" % int(v))
+		_slider_row(vb, "Flare", 0.0, 6.0, 0.1,
+			func() -> float: return float((p.get("wrap", {}) as Dictionary).get("ring", 0.0)),
+			func(v: float) -> void: (p["wrap"] as Dictionary)["ring"] = v; changed("structure-drag"),
+			func(v: float) -> String: return "%.1f" % v)
+		vb.add_child(_h4("Edges"))
+		var edges := Label.new()
+		var lines := []
+		for i in (p["outline"] as Array).size():
+			var mark := ""
+			for si in seams.size():
+				var s: Dictionary = seams[si]
+				if (String(s["a"][0]) == String(p["id"]) and int(s["a"][1]) == i) or (String(s["b"][0]) == String(p["id"]) and int(s["b"][1]) == i):
+					mark = " (seam %d)" % (si + 1)
+					break
+			lines.append("edge %d%s: %.1f cm" % [i, mark, Table.edge_len(p["outline"], i) * 100.0])
+		edges.text = "\n".join(lines)
+		vb.add_child(edges)
+		var btns := HBoxContainer.new()
+		var mb := Button.new()
+		mb.text = "Mirror"
+		mb.pressed.connect(func() -> void: push_undo(); Table.mirror_piece(p, seams); changed("structure"))
+		btns.add_child(mb)
+		var db := Button.new()
+		db.text = "Duplicate"
+		db.pressed.connect(func() -> void: push_undo(); Table.duplicate_piece(self, p); changed("structure"))
+		btns.add_child(db)
+		var del := Button.new()
+		del.text = "Delete"
+		del.pressed.connect(func() -> void: push_undo(); Table.remove_piece(self, String(p["id"])); changed("structure"))
+		btns.add_child(del)
+		vb.add_child(btns)
+	var add_h := Label.new()
+	add_h.text = "Add a piece"
+	vb.add_child(add_h)
+	var add_row := HBoxContainer.new()
+	for kind in [["Rectangle", "rect"], ["Trapezoid", "trap"], ["Triangle", "tri"]]:
+		var b := Button.new()
+		b.text = kind[0]
+		b.pressed.connect(func() -> void: push_undo(); Table.add_piece(self, kind[1]); table.fit(); changed("structure"))
+		add_row.add_child(b)
+	vb.add_child(add_row)
+
+
+func _grain_deg() -> float:
+	var p = _piece()
+	if p == null:
+		return 0.0
+	return fposmod(float(p.get("grain", 0.0)) * 180.0 / PI, 180.0)
+
+
+func _sel_wrap_set(which: String, v: float) -> void:
+	var p = _piece()
+	if p == null:
+		return
+	if which == "grain_deg":
+		p["grain"] = v * PI / 180.0
+	changed("structure-drag")
 
 
 func _slider_row(parent: VBoxContainer, label_text: String, minv: float, maxv: float, step: float, get: Callable, set: Callable, fmt: Callable) -> HSlider:
@@ -413,6 +963,10 @@ func _build_fabric_tab() -> void:
 	note.name = "FabricNote"
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vb.add_child(note)
+	var plan_note := Label.new()
+	plan_note.name = "PlanNote"
+	plan_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vb.add_child(plan_note)
 	_refresh_fabric_tab()
 
 
@@ -436,6 +990,7 @@ func _refresh_fabric_tab() -> void:
 		String(f.get("notes", "")), int(pr["density_kg_m2"] * 1000.0), float(pr["thickness_m"]) * 1000.0,
 		int(pr["tensile_warp_N_m"]), int(pr["tensile_weft_N_m"]), int(pr["shear_N_m_rad"]),
 		float(pr["bending_warp_Nm"]) * 1e6, float(pr["bending_weft_Nm"]) * 1e6]
+	(vb.get_node("PlanNote") as Label).text = "%s - %s" % [plan_name, plan_notes]
 
 
 # ------------------------------------------------------------------ state changes
@@ -489,21 +1044,28 @@ func changed(kind: String) -> void:
 	table_dirty = true
 	if kind == "load":
 		sim = null
+		playing = false
 		undo.clear()
 		redo.clear()
 		table.fitted = false
 		table.fit()
+		_refresh_piece_tab()
+		_refresh_seams_tab()
 		regen_and_rebuild()
 	elif kind == "structure" or kind == "structure-drag" or kind == "body" or kind == "fabric":
+		_refresh_piece_tab()
+		_refresh_seams_tab()
 		_schedule()
 	elif kind == "table" or kind == "table-done" or kind == "ui":
-		pass
+		_refresh_piece_tab()
+		_refresh_seams_tab()
 
 
 func _process(_delta: float) -> void:
 	if table_dirty and table != null:
 		table_dirty = false
 		table.queue_redraw()
+	_demo_tick()
 
 
 func _on_debounce() -> void:
@@ -594,6 +1156,10 @@ func _on_open_file(path: String) -> void:
 	plan_notes = String(plan.get("notes", ""))
 	if String(plan.get("fabric", "")) != "":
 		fabric_id = String(plan["fabric"])
+	if loaded.has("meas") and loaded["meas"] is Dictionary:
+		for k in (loaded["meas"] as Dictionary).keys():
+			meas[k] = loaded["meas"][k]
+		_rebuild_body_tab()
 	_reset_working()
 	changed("load")
 
@@ -686,6 +1252,8 @@ func regen_and_rebuild() -> void:
 		_reset_working()
 	_refresh_fabric_tab()
 	_refresh_body_note()
+	_refresh_piece_tab()
+	_refresh_seams_tab()
 	rebuild()
 
 
@@ -747,7 +1315,6 @@ func rebuild() -> void:
 	walk_k = 0.0
 	var qf: int = QUALITIES[quality]["frames"]
 	target = qf + (96 if motion == "walk" else qf)
-	playing = false
 	if OS.has_environment("FL_AUTO"):
 		tl_t = 4.0
 		playing = true
@@ -840,6 +1407,14 @@ func _step_frame() -> void:
 	if OS.has_environment("FL_AUTO"):
 		var parts := OS.get_environment("FL_AUTO").split(",")
 		if parts.size() >= 3 and frames.size() >= int(parts[2]):
+			if OS.has_environment("FL_SHOOT") and not shoot_done:
+				shoot_done = true
+				tl_t = 4.0
+				_show_current()
+				await take_shots()
+				print("EDITOR shoot done, quitting")
+				get_tree().quit()
+				return
 			print("EDITOR auto target %s frames reached, quitting" % parts[2])
 			_shot(parts[0] + "_" + parts[1])
 
@@ -856,7 +1431,7 @@ func _show_current() -> void:
 		if hi >= 0:
 			_render_stats(float(frames[hi]["ms"]), frames[hi])
 		return
-	var key := "%d|%d" % [int(tl_t * 1000.0), _frame_idx()]
+	var key := "%d|%d|%s" % [int(tl_t * 1000.0), _frame_idx(), sel]
 	if key == _last_shown:
 		return
 	_last_shown = key
@@ -897,9 +1472,34 @@ func _set_cloth_mesh(disp: PackedVector3Array) -> void:
 	arr.resize(Mesh.ARRAY_MAX)
 	arr[Mesh.ARRAY_VERTEX] = disp
 	arr[Mesh.ARRAY_INDEX] = idx
+	arr[Mesh.ARRAY_COLOR] = _cloth_colors()
 	var m := ArrayMesh.new()
 	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
 	cloth_node.mesh = m
+
+
+var _mid_panel := PackedInt32Array()
+
+
+# Per-vertex colors by piece, selected piece brightened (browser V.recolor).
+func _cloth_colors() -> PackedColorArray:
+	var n: int = meta["n"]
+	var ecount: int = mesh_edges.size() / 2
+	var col := PackedColorArray()
+	col.resize(n + ecount)
+	var base := Color(str(Table.FABRIC_COLORS.get(fabric_id, "#9fb7d6")))
+	var order: Array = meta["order"]
+	for i in order.size():
+		var pid := String(order[i])
+		var r: Dictionary = meta["ranges"][pid]
+		var c := base * (0.92 + 0.06 * float(i % 3))
+		if pid == sel:
+			c = c * 1.18
+		for k in int(r["count"]):
+			col[int(r["first"]) + k] = c
+	for e in ecount:
+		col[n + e] = col[_mid_panel[e]]
+	return col
 
 
 # display positions for a cloth mesh: vertices plus plain edge midpoints (browser
@@ -945,6 +1545,15 @@ func _build_mesh_edges() -> void:
 				edges.append(mini(a, b))
 				edges.append(maxi(a, b))
 	mesh_edges = edges
+	_mid_panel.resize(edges.size() / 2)
+	var order: Array = meta["order"]
+	for e in edges.size() / 2:
+		_mid_panel[e] = -1
+		for i in order.size():
+			var r: Dictionary = meta["ranges"][String(order[i])]
+			if edges[2 * e] >= int(r["first"]) and edges[2 * e] < int(r["first"]) + int(r["count"]):
+				_mid_panel[e] = i
+				break
 
 
 func _table_layout() -> Dictionary:
