@@ -49,8 +49,31 @@
 - Factorisations equal Newton iterations: the default solver refactors every iteration (reuseFactorization is off).
 - Not compared: the vertex-triangle run's physics is different, so the iteration counts are not like-for-like.
 
-## Still open
-- (c) test_garment with barrierContact on: not run.
-- test_drape (main ctest suite, mode off) still running at the time of this note; it runs for a long time on this machine.
-- Passthrough cost, and a cost comparison on a case where both modes produce the same physics.
-- Newton tolerance untouched (1e-6). No test was weakened.
+## Done-criterion (c) and garment cost: test_garment with the barrier mode (opt-in env FL_BARRIER=1)
+- test_garment.cpp: one line added. With FL_BARRIER unset it is identical to before (default run unchanged).
+- Mode off: RESULT ok. 153 frames, mass 29 g, KE 9.3e-07 J, seam gap max 2.35 mm, clearance min 1.65 mm,
+  hem 156.7 mm vs predicted 161.2 mm. Wall 480.9 s, user 52.3 s.
+- Mode on (FL_BARRIER=1): RESULT ok. 211 frames, KE 7.5e-07 J, seam gap max 0.47 mm (smaller than mode off),
+  clearance min 1.65 mm, hem 156.9 mm vs predicted 161.2 mm. Wall 982.2 s, user 217.6 s.
+- Cost: about 4x user CPU time with the barrier on (217.6 s vs 52.3 s) for this garment. Wall times are inflated by
+  other agents' jobs on the same machine, so the user-time figure is the one to use. Iteration and factorisation
+  counts were not logged for this run (the test prints only frames and timing).
+- Note: the test's hem-height check is the same in both modes (both within the 0.04 m tolerance), and the existing
+  tolerances were not changed.
+
+## ctest status (this session, measured per binary, not in one ctest call)
+- test_basics: pass. test_cantilever: pass. test_drape: pass (28m16s wall on this shared machine).
+- test_garment (mode off): pass. test_garment (FL_BARRIER=1): pass.
+- test_sdf_grid: pass. test_barrier: pass. test_passthrough (new): pass. test_layers (new): pass.
+- A single `ctest` call exceeded the 10 minute tool limit; the binaries were run in the background instead.
+  Full ctest through the ctest runner was not completed in one run.
+
+## Still open / unsure
+- The barrier path is roughly 4x the CPU cost of the vertex-triangle path on the garment, and about 120x per frame on the
+  layered scene (where the old path does not produce the same physics, so that ratio is not like-for-like).
+- Factorisations equal Newton iterations in both modes: the default solver refactors every iteration.
+- cloth.hpp's comment points to docs/K5_BARRIER_CONTACT.md, which does not exist in this branch. Not fixed.
+- The adaptive stiffness rule in cloth_barrier.cpp is labelled as our variant, not the IPC rule.
+- ipc-toolkit was not consulted in this session; the maths came from the WIP and its tests (finite differences, sampling,
+  known TOI). The Ando cubic-barrier paper was not opened. Nothing was copied from ipc-toolkit.
+- Newton tolerance untouched (1e-6). No existing test was weakened.

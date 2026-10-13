@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 
 #include "check.hpp"
 #include "failoring/cloth.hpp"
@@ -37,6 +38,9 @@ int main() {
     SolverParams sp;
     sp.substeps = 4;  // contact projection over-stretches wedged rings at larger steps
     sp.seamRampFrames = 0;  // panels start pre-wrapped: seams are already closed
+    // K5 option (off unless FL_BARRIER is set in the environment): IPC-style barrier self contact instead of the
+    // vertex-triangle projection. The default run is unchanged.
+    if (std::getenv("FL_BARRIER")) { sp.barrierContact = true; sp.selfCollision = false; }
     ClothSolver cs(sp);
     cs.setCollider(body);
 
