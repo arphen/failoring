@@ -221,6 +221,24 @@ static func cloth_base(hex: String) -> Color:
 	return Color(hex).srgb_to_linear()
 
 
+# Smooth per-vertex normals (area-weighted), the fallback for the cloth mesh when the sim gives no display
+# normals (sim.get_display_normals is empty). Same weighting as the C++ version.
+static func cloth_normals(verts: PackedVector3Array, idx: PackedInt32Array) -> PackedVector3Array:
+	var n := PackedVector3Array()
+	n.resize(verts.size())
+	for t in range(0, idx.size() - 2, 3):
+		var a := idx[t]
+		var b := idx[t + 1]
+		var c := idx[t + 2]
+		var fn := (verts[b] - verts[a]).cross(verts[c] - verts[a])
+		n[a] += fn
+		n[b] += fn
+		n[c] += fn
+	for i in n.size():
+		n[i] = n[i].normalized()
+	return n
+
+
 # ---------------------------------------------------------------- viewport and UI
 # Called once with the editor root and the 3D SubViewport. Anti-aliasing is set by apply_quality.
 static func apply_ui(root: Control, vp: SubViewport) -> void:

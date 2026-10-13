@@ -1,4 +1,4 @@
-# Cloth display data for the editor view. Per display vertex: angle-weighted normals (every update),
+# Cloth display data for the editor view. Per display vertex: normals (every update, from the sim's C++ display normals),
 # the pattern (u,v) in metres, strain (area against the flat pattern) and curvature (folds), and an
 # occlusion value in the vertex colour's alpha from the distance to the body surface. The triangles are
 # split into one surface per fabric, each with its own shader material (look.gd, shaders/cloth.gdshader).
@@ -120,12 +120,14 @@ func _mat(fid: String) -> ShaderMaterial:
 
 
 # Writes the cloth into the ArrayMesh (one surface per fabric) and sets each surface's material on the node.
-# colors: the editor's per-vertex albedo (not modified).
-func fill(am: ArrayMesh, node: MeshInstance3D, disp: PackedVector3Array, colors: PackedColorArray) -> void:
+# colors: the editor's per-vertex albedo (not modified). nrm: the display normals from the sim (C++
+# get_display_normals); when missing or the wrong size, look.gd computes them (Look.cloth_normals).
+func fill(am: ArrayMesh, node: MeshInstance3D, disp: PackedVector3Array, colors: PackedColorArray, nrm := PackedVector3Array()) -> void:
 	if _groups.is_empty() or disp.size() != _nd or colors.size() != _nd:
 		return
 	_tick += 1
-	var nrm := _normals(disp)
+	if nrm.size() != _nd:
+		nrm = Look.cloth_normals(disp, _idx)
 	var every := int(_q["heavy_every"])
 	var cols := colors
 	if every > 0:
@@ -151,34 +153,6 @@ func fill(am: ArrayMesh, node: MeshInstance3D, disp: PackedVector3Array, colors:
 	node.mesh = am  # the node sizes its surface overrides from the mesh, so it must see the surfaces first
 	for s in _groups.size():
 		node.set_surface_override_material(s, _groups[s]["mat"])
-
-
-# Smooth normals, each face weighted by the angle it subtends at the vertex, so long thin triangles
-# do not pull the shading. Winding is the same as the earlier area-weighted normals (outward for a closed piece).
-func _normals(disp: PackedVector3Array) -> PackedVector3Array:
-	var n := PackedVector3Array()
-	n.resize(_nd)
-	var t := 0
-	while t < _idx.size():
-		var a := _idx[t]
-		var b := _idx[t + 1]
-		var c := _idx[t + 2]
-		var pa := disp[a]
-		var pb := disp[b]
-		var pc := disp[c]
-		var e1 := pb - pa
-		var e2 := pc - pa
-		var fn := e1.cross(e2)
-		var len := fn.length()
-		if len > 1e-12:
-			var u := fn / len
-			n[a] += u * e1.angle_to(e2)
-			n[b] += u * (pa - pb).angle_to(pc - pb)
-			n[c] += u * (pa - pc).angle_to(pb - pc)
-		t += 3
-	for i in _nd:
-		n[i] = n[i].normalized()
-	return n
 
 
 # Strain, curvature and the contact/fold occlusion. Curvature is the offset of each vertex from the average of its

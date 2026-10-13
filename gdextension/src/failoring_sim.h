@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cstdint>
+#include <future>
 #include <memory>
 #include <vector>
 
@@ -93,10 +94,15 @@ public:
     real_t set_body_mesh(const PackedVector3Array& vertices, const PackedInt32Array& triangles, real_t edge_length);
     // Moves a mesh body set by set_body_mesh: `vertices` are the new positions of the same vertices (same count and order).
     // Re-bakes the grid and sets the surface motion used by friction (wasm fl_set_body_mesh + fl_set_body_motion, as
-    // in the walking mannequin). Returns the bake time in ms, or -1 on error. A full bake per call. The motion is for one
+    // in the walking mannequin). Returns the bake time in ms, or -1 on error. A full bake per call, unless
+    // prefetch_body_positions already baked these vertices in the background. The motion is for one
     // frame, so call this before every step(1) of a moving body; moving it less often makes the body jump and the cloth
     // lag, and the friction sees no surface motion on the frames in between.
     real_t set_body_positions(const PackedVector3Array& vertices);
+    // Starts the SDF bake of the body at `vertices` on a background thread, so that it runs while the solver steps the
+    // frame before (the editor prefetches the next frame's body during each step). The next set_body_positions with
+    // exactly these vertices takes the baked grid; any other vertices are baked there as usual. Ignored without a body.
+    void prefetch_body_positions(const PackedVector3Array& vertices);
     // Per-cloth-vertex displacement of the body surface over the NEXT solver frame (friction). Empty array = static body.
     // The size must be the cloth vertex count (anything else is reported and ignored). step() clears the motion after
     // each frame it runs, so it applies to one frame only, as in the browser (which sets it before every fl_step(1)).
@@ -119,6 +125,12 @@ public:
     // Display vertex positions: cloth vertices, then edge midpoints pushed out of a body (wasm fl_display_positions).
     // `margin` (m): display triangles are kept at least this far outside the body. Pass 0.0008 for the browser default.
     PackedVector3Array get_display_positions(real_t margin) const;
+    // Unit vertex normals of the display mesh for the given display positions (as from get_display_positions): the sum of
+    // the (unnormalised) face normals of the display triangles at each vertex, normalised. The same rule as
+    // godot/look.gd cloth_normals, in C++ so that the editor does not loop over every vertex in GDScript each frame.
+    // Returns an empty array when the display topology is not set up or the count does not match (the caller then uses
+    // look.gd).
+    PackedVector3Array get_display_normals(const PackedVector3Array& positions) const;
 
     // --- simulation ------------------------------------------------------------
     // Parameter names: substeps, newton_iterations, dt, seam_stiffness, seam_ramp_frames, self_collision,
@@ -169,6 +181,13 @@ private:
         std::vector<std::array<int, 3>> tris;
         fl::Real h = 0.007;
     } body_;
+    // A body bake started by prefetch_body_positions: the vertices it was started with (to match the next call) and
+    // the grid, which is produced on another thread.
+    struct PendingBake {
+        std::vector<fl::Vec3> verts;
+        std::future<std::shared_ptr<fl::SdfGrid>> grid;
+    };
+    std::unique_ptr<PendingBake> pending_;
 
     // display mesh
     std::vector<int> dispEdges_;  // pairs of cloth vertices, one per midpoint

@@ -18,11 +18,15 @@ const ClothShade = preload("res://cloth_shade.gd")
 const Library = preload("res://library.gd")
 const Outfit = preload("res://outfit.gd")
 
+# body_h: spacing (m) of the body's signed-distance grid, baked for every walking frame. 7 mm is the reference (the
+# numbers in docs/PERF_NOTES.md are measured with it). Draft and Preview use 10 mm: the bake takes about 1.8x less CPU,
+# with a near-surface error of about 0.3 mm RMS against the reference (tests: bench_bake).
 const QUALITIES := {
-	"draft": {"label": "Draft (fast)", "edge": 0.060, "sub": 1, "newton": 6, "frames": 36},
-	"standard": {"label": "Standard", "edge": 0.040, "sub": 2, "newton": 8, "frames": 48},
-	"fine": {"label": "Fine (slow)", "edge": 0.028, "sub": 2, "newton": 10, "frames": 60},
-	"photo": {"label": "Photo", "edge": 0.025, "sub": 3, "newton": 12, "frames": 60, "self": true},
+	"draft": {"label": "Draft (fast)", "edge": 0.060, "sub": 1, "newton": 6, "frames": 36, "body_h": 0.010},
+	"preview": {"label": "Preview", "edge": 0.050, "sub": 2, "newton": 8, "frames": 48, "body_h": 0.010},
+	"standard": {"label": "Standard", "edge": 0.040, "sub": 2, "newton": 8, "frames": 48, "body_h": 0.007},
+	"fine": {"label": "Fine (slow)", "edge": 0.028, "sub": 2, "newton": 10, "frames": 60, "body_h": 0.007},
+	"photo": {"label": "Photo", "edge": 0.025, "sub": 3, "newton": 12, "frames": 60, "self": true, "body_h": 0.007},
 }
 const FS_GARMENTS := [["Tee", "teagan"], ["Pencil skirt", "penelope"], ["Chinos", "charlie"]]
 const CYCLE := 64.0
@@ -50,7 +54,9 @@ var plan: Dictionary = {}
 var plan_name := ""
 var plan_notes := ""
 var fabric_id := "cotton_poplin"
-var quality := "standard"
+var quality := "preview"  # the Simulation quality setting (see QUALITIES and docs/PERF_NOTES.md for the default's numbers)
+var draft_while_editing := false  # option: edits show a Draft preview; Play rebuilds at the chosen quality first
+var _edit_draft := false          # the sim shown now was built at Draft for an edit (see _on_debounce, _on_play)
 var motion := "walk"
 var seam_stiffness := 20000.0
 var ramp_frames := 20
@@ -90,6 +96,9 @@ var sub_view: SubViewport
 
 var frame := 0
 var walk_k := 0.0
+var _planned := {}   # the job of the step after the one in flight, made early so its body bakes during that step
+var _jobs_made := 0  # jobs made since the sim was built: the index of the next job's frame is _jobs_made + 1
+var body_h_override := 0.0  # > 0: the body grid spacing for every quality (debug and benchmark; see rebuild)
 var playing := false
 var bake_ms := 0.0
 var step_ms := 0.0
@@ -420,7 +429,14 @@ func _build_ui() -> void:
 	var qlabels := []
 	for k in QUALITIES.keys():
 		qlabels.append(QUALITIES[k]["label"])
-	_add_opt(box, "Mesh", "QualityOpt", qlabels, QUALITIES[quality]["label"])
+	_add_opt(box, "Simulation quality", "QualityOpt", qlabels, QUALITIES[quality]["label"])
+	var dwe := CheckBox.new()
+	dwe.name = "DraftWhileEditing"
+	dwe.text = "Draft preview while editing"
+	dwe.tooltip_text = "Edits show a Draft preview (fast, coarser). Play rebuilds at the chosen simulation quality."
+	dwe.button_pressed = draft_while_editing
+	dwe.toggled.connect(func(on: bool) -> void: draft_while_editing = on)
+	box.add_child(dwe)
 	_add_opt(box, "Motion", "MotionOpt", ["Standing", "Walking"], "Walking" if motion == "walk" else "Standing")
 	var open := Button.new()
 	open.name = "OpenBtn"
@@ -848,7 +864,7 @@ func take_shots() -> void:
 		status_label.text = "Shooting %d / %d: %s" % [i + 1, list.size(), s["name"]]
 		var fi: int = last if shoot_same_moment or motion != "walk" else maxi(0, last - int(round(64.0 * (1.0 - float(i) / float(list.size())))))
 		var fr: Dictionary = frames[mini(fi, last)]
-		_set_cloth_mesh_frozen(fr["pos"])
+		_set_cloth_mesh_frozen(fr["pos"], fr["normal"])
 		cur_cloth = fr["cloth"]
 		body_node.show_pose(fr["body"])
 		_body_key = ""
@@ -879,8 +895,8 @@ func take_shots() -> void:
 	status_label.text = "%d shots" % shots.size()
 
 
-func _set_cloth_mesh_frozen(disp: PackedVector3Array) -> void:
-	_set_cloth_mesh(disp)
+func _set_cloth_mesh_frozen(disp: PackedVector3Array, nrm := PackedVector3Array()) -> void:
+	_set_cloth_mesh(disp, nrm)
 
 
 func _show_gallery(shots: Array, size: Array) -> void:
@@ -2179,6 +2195,7 @@ func _process(_delta: float) -> void:
 
 
 func _on_debounce() -> void:
+	_edit_draft = draft_while_editing  # an edit: the preview is Draft when the option is on
 	regen_and_rebuild()
 
 
@@ -2287,7 +2304,13 @@ func _confirm_discard(idx: int, what: String, action: Callable, on_cancel := Cal
 
 func _on_quality(_i: int) -> void:
 	quality = QUALITIES.keys()[quality_opt.selected]
+	_edit_draft = false
 	_schedule()
+
+
+# The QUALITIES key the sim is built and stepped with: the chosen quality, or Draft while an edit's preview is shown.
+func _qual_key() -> String:
+	return "draft" if _edit_draft else quality
 
 
 func _on_motion(_i: int) -> void:
@@ -2320,6 +2343,9 @@ func _redraft_active() -> void:
 func _on_play() -> void:
 	if tl_t >= 3.999:
 		tl_t = 0.0
+	if not playing and _edit_draft:  # leaving the Draft preview: the walk is simulated at the chosen quality
+		_edit_draft = false
+		regen_and_rebuild()
 	playing = not playing
 	_sync_tl_ui()
 
@@ -2542,6 +2568,8 @@ func rebuild() -> void:
 	sim = null
 	frame = 0
 	walk_k = 0.0
+	_planned = {}
+	_jobs_made = 0
 	_store_active()
 	# the shown garments, merged into one plan (outfit.gd): ids are garment-prefixed, each piece keeps its fabric
 	var gs := []
@@ -2562,7 +2590,10 @@ func rebuild() -> void:
 		status_label.text = ("No garment on the mannequin - add one from the Library tab" if body_stand != null else "starting") + _status_suffix()
 		return
 	_stand_v3 = _to_v3a(body_stand["pos"])
-	var q: Dictionary = QUALITIES[quality]
+	var q: Dictionary = QUALITIES[_qual_key()]
+	if body_h_override > 0.0:  # debug and benchmark only (tests/bench_step.gd): another body grid spacing for this quality
+		q = q.duplicate()
+		q["body_h"] = body_h_override
 	# two or more garments need the solver's self collision: it is what keeps them apart (no seams join garments)
 	var collide := self_collision or bool(q.get("self", false)) or gs.size() > 1
 	var built: Dictionary = PlanLoader.build({"pieces": _sim_pieces, "seams": _sim_seams}, body_stand["sections"], body_stand["arms"],
@@ -2596,7 +2627,9 @@ func rebuild() -> void:
 	frames.clear()
 	frame = 0
 	walk_k = 0.0
-	var qf: int = QUALITIES[quality]["frames"]
+	_planned = {}
+	_jobs_made = 0
+	var qf: int = QUALITIES[_qual_key()]["frames"]
 	target = qf + (96 if motion == "walk" else qf)
 	if OS.has_environment("FL_AUTO"):
 		tl_t = 4.0
@@ -2633,7 +2666,7 @@ var _tick := 0
 
 
 func _advance() -> void:
-	var qf: int = QUALITIES[quality]["frames"]
+	var qf: int = QUALITIES[_qual_key()]["frames"]
 	if tl_t < 3.0:
 		tl_t = minf(4.0, tl_t + tl_speed / 60.0 / 2.4)
 		if tl_t >= 4.0:
@@ -2644,7 +2677,7 @@ func _advance() -> void:
 		# (headless/tests): one step per drawn frame, as before. Playback time still advances below, so a slow sim makes
 		# playback slower instead of freezing the UI in bursts.
 		if not _in_flight and frames.size() < need and (_use_worker or _may_step()):
-			_submit_step(_make_job())
+			_submit_step(_take_job())
 		tl_t = minf(4.0, tl_t + tl_speed / 60.0 / maxf(1.5, float(target) / 24.0))
 		if tl_t >= 4.0 and frames.size() >= target:
 			playing = false
@@ -2673,12 +2706,24 @@ func _frame_idx() -> int:
 	return mini(int(round(clampf(tl_t - 3.0, 0.0, 1.0) * float(n - 1))), frames.size() - 1)
 
 
-# Main thread: decides what the next frame needs (the body pose and the gravity ramp are computed here, from main-thread
-# state, and handed to the worker as plain data). Must run with no step in flight, so `frame` and `walk_k` stay in step.
+# Main thread: the job for the next step, and the job after it. The job after is made now (not when its step starts), so
+# that the worker can bake its body while this step solves: the body of frame k+1 depends only on the pose, not on the
+# cloth. The worker prefetches it (sim.prefetch_body_positions) and the step after takes the baked grid.
+func _take_job() -> Dictionary:
+	var job: Dictionary = _planned if not _planned.is_empty() else _make_job()
+	_planned = _make_job()
+	job["next_move"] = bool(_planned["move"])
+	job["next_body"] = _planned["body"]
+	return job
+
+
+# Main thread: decides what a frame needs (the body pose and the gravity ramp are computed here, from main-thread state,
+# and handed to the worker as plain data). Jobs are made in frame order, so `frame` and `walk_k` stay in step.
 func _make_job() -> Dictionary:
-	var q: Dictionary = QUALITIES[quality]
+	var q: Dictionary = QUALITIES[_qual_key()]
 	var settle: int = q["frames"]
-	frame = frames.size() + 1
+	_jobs_made += 1
+	frame = _jobs_made
 	var job := {"body": _stand_v3, "move": false}
 	if motion == "walk" and frame > settle:
 		walk_k += 1.0
@@ -2699,13 +2744,17 @@ func _run_step(job: Dictionary) -> Dictionary:
 	var t0 := Time.get_ticks_usec()
 	var bake := 0.0
 	if job["move"]:
-		bake = sim.set_body_positions(job["body"])
+		bake = sim.set_body_positions(job["body"])  # the grid was prefetched by the step before (or is baked here)
+	if job.get("next_move", false):
+		sim.prefetch_body_positions(job["next_body"])  # bakes the next body on another thread while this step solves
 	if job.has("gravity"):
 		sim.set_param("gravity_y", job["gravity"])
 	var t1 := Time.get_ticks_usec()
 	sim.step(1)
 	var t2 := Time.get_ticks_usec()
-	var fr := {"pos": sim.get_display_positions(0.0008), "cloth": sim.get_positions(),
+	# the display normals are computed here, on the worker, so the main thread never reads sim while a step is in flight
+	var disp := sim.get_display_positions(0.0008)
+	var fr := {"pos": disp, "normal": sim.get_display_normals(disp), "cloth": sim.get_positions(),
 		"body": job["body"], "ke": sim.get_kinetic_energy(), "gap": sim.get_max_seam_gap(),
 		"clear": sim.get_min_body_clearance(), "ms": (t2 - t1) / 1000.0, "bake": bake}
 	return {"frame": fr, "stats": sim.get_solver_stats(), "vcount": sim.get_vertex_count(),
@@ -2844,7 +2893,7 @@ func _show_current() -> void:
 			_show_stand_body()
 		else:
 			var fr: Dictionary = frames[i]
-			_set_cloth_mesh(fr["pos"])
+			_set_cloth_mesh(fr["pos"], fr["normal"])
 			cur_cloth = fr["cloth"]
 			body_node.show_pose(fr["body"])
 			_body_key = ""
@@ -2865,11 +2914,14 @@ func _show_stand_body() -> void:
 var cur_cloth := PackedVector3Array()
 
 
-func _set_cloth_mesh(disp: PackedVector3Array) -> void:
+# nrm: the normals of disp from the sim (get_display_normals, computed by the worker). Without them, or when they do not
+# match (the stage-1 display before the sim), look.gd computes them.
+func _set_cloth_mesh(disp: PackedVector3Array, nrm := PackedVector3Array()) -> void:
 	if disp.is_empty() or _disp_idx.is_empty():
 		return
-	# one ArrayMesh for the whole session, rebuilt per update with one surface per fabric (cloth_shade.gd)
-	_shade.fill(_cloth_am, cloth_node, disp, _cloth_colors())
+	# one persistent ArrayMesh for the whole session, rebuilt per update with one surface per fabric (cloth_shade.gd).
+	# nrm (C++ display normals) is used as is; ClothShade falls back to Look.cloth_normals when it is empty.
+	_shade.fill(_cloth_am, cloth_node, disp, _cloth_colors(), nrm)
 
 
 var _mid_panel := PackedInt32Array()
