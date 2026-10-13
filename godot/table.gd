@@ -101,6 +101,25 @@ static func valid_pieces(pieces: Array) -> Dictionary:
 	return {"pieces": out, "bad": bad}
 
 
+var _valid_sig := []      # ids + outlines that _valid_res was computed from
+var _valid_res := {"pieces": [], "bad": {}}
+
+
+# valid_pieces() is O(n^2) per piece and _draw runs on every redraw (drags included). Validity only depends on
+# ids and outlines, so recompute only when those change. The signature is compared exactly, not hashed.
+func _valid_cached() -> Dictionary:
+	var sig := []
+	for p in ed.pieces:
+		sig.append(String(p["id"]))
+		for q in p["outline"]:
+			sig.append(float(q[0]))
+			sig.append(float(q[1]))
+	if sig != _valid_sig:
+		_valid_sig = sig
+		_valid_res = valid_pieces(ed.pieces)
+	return _valid_res
+
+
 static func piece_by_id(pieces: Array, pid: String):
 	for p in pieces:
 		if String(p["id"]) == pid:
@@ -589,7 +608,7 @@ func _draw() -> void:
 		var sy := to_screen(0.0, y).y
 		draw_line(Vector2(0.0, sy), Vector2(size.x, sy), Color("#232a35") if heavy2 else Color("#1a1f27"))
 		y += step
-	var val := valid_pieces(ed.pieces)
+	var val := _valid_cached()
 	var fcol := Color(FABRIC_COLORS.get(ed.fabric_id, "#9fb7d6"))
 	# seams: edge pairs + match ticks
 	var si := 0

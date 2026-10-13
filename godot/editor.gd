@@ -611,6 +611,7 @@ func take_shots() -> void:
 		_set_cloth_mesh_frozen(fr["pos"])
 		cur_cloth = fr["cloth"]
 		body_node.show_pose(fr["body"])
+		_body_key = ""
 		var cc: Array = s["cam"]
 		var tt: Array = s["tgt"]
 		cam_pivot.position = Vector3.ZERO
@@ -1053,11 +1054,17 @@ func changed(kind: String) -> void:
 		_refresh_piece_tab()
 		_refresh_seams_tab()
 		regen_and_rebuild()
-	elif kind == "structure" or kind == "structure-drag" or kind == "body" or kind == "fabric":
+	elif kind == "structure" or kind == "body" or kind == "fabric":
 		_refresh_piece_tab()
 		_refresh_seams_tab()
 		_schedule()
-	elif kind == "table" or kind == "table-done" or kind == "ui":
+	elif kind == "structure-drag":
+		# fires on every drag motion: no tab rebuild here (it frees the controls being dragged).
+		# The debounced regen refreshes the tabs once the drag pauses; a vertex drag ends in "structure".
+		_schedule()
+	elif kind == "table":
+		pass  # piece moved on the mat: table_dirty is enough, tabs refresh on "table-done"
+	elif kind == "table-done" or kind == "ui":
 		_refresh_piece_tab()
 		_refresh_seams_tab()
 
@@ -1292,25 +1299,30 @@ func rebuild() -> void:
 	walk_k = 0.0
 	if plan.is_empty() or body_stand == null:
 		return
+	_stand_v3 = _to_v3a(body_stand["pos"])
 	var q: Dictionary = QUALITIES[quality]
 	var valid := Table.valid_pieces(pieces)
 	var spec := {"pieces": valid["pieces"], "seams": seams}
 	var built: Dictionary = PlanLoader.build(spec, body_stand["sections"], body_stand["arms"],
-		_to_v3a(body_stand["pos"]), _tris(), fabric_id, q, seam_stiffness, ramp_frames,
+		_stand_v3, _tris(), fabric_id, q, seam_stiffness, ramp_frames,
 		self_collision or bool(q.get("self", false)))
 	if built.is_empty():
 		status_label.text = "sim build failed"
 		return
 	sim = built["sim"]
+	_disp_idx = sim.get_display_indices()  # topology is fixed for this sim: read it once
 	meta = built
 	wraps.clear()
 	for pid in built["order"]:
 		wraps[pid] = Wrap.new(Table.piece_by_id(pieces, pid), body_stand["sections"], body_stand["arms"])
 	_build_mesh_edges()
+	_col_key = []  # colours depend on the new meta/mesh_edges
 	_build_stitches()
 	_build_mat()
-	body_node.use_custom(_to_v3a(body_stand["pos"]), _tris())
-	body_node.show_pose(_to_v3a(body_stand["pos"]))
+	body_node.use_custom(_stand_v3, _tris())
+	body_node.show_pose(_stand_v3)
+	_body_key = ""
+	_last_shown = ""
 	frames.clear()
 	frame = 0
 	walk_k = 0.0
@@ -1339,8 +1351,6 @@ func _physics_process(_delta: float) -> void:
 		_advance()
 	_show_current()
 	_tick += 1
-	if _tick % 20 == 0:
-		print("HEARTBEAT playing=%s frames=%d tl=%.2f" % [playing, frames.size(), tl_t])
 	if OS.has_environment("FL_UISHOT") and sim != null and (frames.size() == 10 or _tick >= 150):
 		var img := get_viewport().get_texture().get_image()
 		if img != null and not img.is_empty():
@@ -1359,14 +1369,27 @@ func _advance() -> void:
 			playing = false
 	else:
 		var need := target if tl_t >= 4.0 else mini(target, _frame_idx() + 1)
-		var guard := 0
-		while frames.size() < need and guard < 4:
+		# one bake+step (0.1-0.25 s on the main thread) per tick and per rendered frame. Playback time still
+		# advances below, so a slow sim makes playback slower instead of freezing the UI in bursts.
+		if frames.size() < need and _may_step():
 			_step_frame()
-			guard += 1
 		tl_t = minf(4.0, tl_t + tl_speed / 60.0 / maxf(1.5, float(target) / 24.0))
 		if tl_t >= 4.0 and frames.size() >= target:
 			playing = false
 	_sync_tl_ui()
+
+
+var _last_step_drawn := -1
+
+
+func _may_step() -> bool:
+	if DisplayServer.get_name() == "headless":
+		return true  # no rendered frames to pace against
+	var drawn := Engine.get_frames_drawn()
+	if drawn == _last_step_drawn:
+		return false
+	_last_step_drawn = drawn
+	return true
 
 
 func _frame_idx() -> int:
@@ -1383,7 +1406,7 @@ func _step_frame() -> void:
 	var settle: int = q["frames"]
 	var t0 := Time.get_ticks_usec()
 	bake_ms = 0.0
-	var pose_pos := _to_v3a(body_stand["pos"])
+	var pose_pos := _stand_v3
 	frame = frames.size() + 1
 	if motion == "walk" and frame > settle:
 		walk_k += 1.0
@@ -1426,7 +1449,7 @@ var _last_shown := ""
 
 
 func _show_current() -> void:
-	if tl_range != null and (not tl_range.has_focus() or playing):
+	if tl_range != null and (not tl_range.has_focus() or playing) and tl_range.value != tl_t * 1000.0:
 		tl_range.set_value_no_signal(tl_t * 1000.0)
 	_sync_stage_buttons()
 	if DisplayServer.get_name() == "headless":
@@ -1434,19 +1457,30 @@ func _show_current() -> void:
 		if hi >= 0:
 			_render_stats(float(frames[hi]["ms"]), frames[hi])
 		return
-	var key := "%d|%d|%s" % [int(tl_t * 1000.0), _frame_idx(), sel]
+	# stage 0 (cut -> move) moves with the clock, so it is keyed on the millisecond.
+	# stages 1 and 2 are static between frames: they are keyed on the stage and the sim frame index.
+	var phase := 0
+	if tl_t >= 3.0:
+		phase = 2
+	elif tl_t >= 2.0:
+		phase = 1
+	var key := ""
+	if phase == 0:
+		key = "0|%d|%s" % [int(tl_t * 1000.0), sel]
+	else:
+		key = "%d|%d|%s" % [phase, _frame_idx(), sel]
 	if key == _last_shown:
 		return
 	_last_shown = key
-	if tl_t < 2.0:
+	if phase == 0:
 		_stage_pose()
-		body_node.show_pose(_to_v3a(body_stand["pos"]))
+		_show_stand_body()
 		_update_stitches(cur_cloth, tl_t)
-	elif tl_t < 3.0:
+	elif phase == 1:
 		var p2: PackedVector3Array = meta["p2"]
 		_set_cloth_mesh(_with_midpoints(p2))
 		cur_cloth = p2.slice(0, meta["n"] * 3) if p2.size() >= meta["n"] * 3 else p2
-		body_node.show_pose(_to_v3a(body_stand["pos"]))
+		_show_stand_body()
 		_update_stitches(cur_cloth, tl_t)
 	else:
 		var i := _frame_idx()
@@ -1454,38 +1488,63 @@ func _show_current() -> void:
 			var p2b: PackedVector3Array = meta["p2"]
 			_set_cloth_mesh(_with_midpoints(p2b))
 			cur_cloth = p2b
-			body_node.show_pose(_to_v3a(body_stand["pos"]))
+			_show_stand_body()
 		else:
 			var fr: Dictionary = frames[i]
 			_set_cloth_mesh(fr["pos"])
 			cur_cloth = fr["cloth"]
 			body_node.show_pose(fr["body"])
+			_body_key = ""
 			_update_stitches(cur_cloth, tl_t)
 			_render_stats(float(fr["ms"]), fr)
+
+
+var _body_key := ""  # "stand" while the standing body is on screen (it does not move in stages 0-1)
+
+
+func _show_stand_body() -> void:
+	if _body_key == "stand":
+		return
+	_body_key = "stand"
+	body_node.show_pose(_stand_v3)
 
 
 var cur_cloth := PackedVector3Array()
 
 
 func _set_cloth_mesh(disp: PackedVector3Array) -> void:
-	var idx: PackedInt32Array = sim.get_display_indices()
-	if disp.is_empty() or idx.is_empty():
+	if disp.is_empty() or _disp_idx.is_empty():
 		return
 	var arr := []
 	arr.resize(Mesh.ARRAY_MAX)
 	arr[Mesh.ARRAY_VERTEX] = disp
-	arr[Mesh.ARRAY_INDEX] = idx
+	arr[Mesh.ARRAY_INDEX] = _disp_idx
 	arr[Mesh.ARRAY_COLOR] = _cloth_colors()
-	var m := ArrayMesh.new()
-	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
-	cloth_node.mesh = m
+	# one ArrayMesh for the whole session: reset its surface instead of allocating a new mesh per update
+	_cloth_am.clear_surfaces()
+	_cloth_am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+	cloth_node.mesh = _cloth_am
 
 
 var _mid_panel := PackedInt32Array()
+var _cloth_am := ArrayMesh.new()
+var _disp_idx := PackedInt32Array()   # sim.get_display_indices(), fixed per build (set in rebuild)
+var _stand_v3 := PackedVector3Array()  # standing body positions as Vector3, fixed per build (set in rebuild)
+var _col_key := []                     # what _col_cache was computed for; cleared on rebuild
+var _col_cache := PackedColorArray()
 
 
-# Per-vertex colors by piece, selected piece brightened (browser V.recolor).
+# Per-vertex colors by piece, selected piece brightened (browser V.recolor). Cached: only fabric or selection change it.
 func _cloth_colors() -> PackedColorArray:
+	var key := [fabric_id, sel]
+	if key == _col_key:
+		return _col_cache
+	_col_key = key
+	_col_cache = _compute_cloth_colors()
+	return _col_cache
+
+
+func _compute_cloth_colors() -> PackedColorArray:
 	var n: int = meta["n"]
 	var ecount: int = mesh_edges.size() / 2
 	var col := PackedColorArray()
@@ -1808,15 +1867,21 @@ func _build_timeline_bar() -> void:
 
 func _sync_tl_ui() -> void:
 	if tl_play_btn != null:
-		tl_play_btn.text = "||" if playing else ">"
+		_set_text_if_changed(tl_play_btn, "||" if playing else ">")
 	var names := ["1 Cut", "2 Move", "3 Sew", "4 Drape"]
 	if tl_stage_label != null:
 		var extra := ""
 		if tl_t >= 3.0 and (frames.size() < target or target == 0):
 			extra = "  (simulating %d/%d)" % [frames.size(), target]
-		tl_stage_label.text = names[mini(3, int(tl_t))] + extra
+		_set_text_if_changed(tl_stage_label, names[mini(3, int(tl_t))] + extra)
 	if tl_sim_label != null:
-		tl_sim_label.text = "%d/%d fr" % [frames.size(), target]
+		_set_text_if_changed(tl_sim_label, "%d/%d fr" % [frames.size(), target])
+
+
+# Writing identical text still re-lays out the control; this runs every tick during playback.
+static func _set_text_if_changed(c: Object, txt: String) -> void:
+	if c.get("text") != txt:
+		c.set("text", txt)
 
 
 func _sync_stage_buttons() -> void:
@@ -1831,11 +1896,11 @@ static func _smooth(x: float) -> float:
 func _render_stats(_m: float, fr: Dictionary) -> void:
 	var st: Dictionary = sim.get_solver_stats()
 	var done := " - done" if frames.size() >= target and target > 0 else ""
-	status_label.text = "%s / %s   frame %d/%d   verts %d   KE %s J   gap %.1f mm   clear %.1f mm\nbake %.0f ms   step %.0f ms (newton %d, ls-fail %d)%s" % [
+	_set_text_if_changed(status_label, "%s / %s   frame %d/%d   verts %d   KE %s J   gap %.1f mm   clear %.1f mm\nbake %.0f ms   step %.0f ms (newton %d, ls-fail %d)%s" % [
 		plan_name, fabric_id, frames.size(), target, sim.get_vertex_count(), str(fr.get("ke", 0.0)),
 		float(fr.get("gap", 0.0)) * 1000.0, float(fr.get("clear", 0.0)) * 1000.0,
 		float(fr.get("bake", 0.0)), float(fr.get("ms", 0.0)),
-		int(st.get("newton_iterations", 0)), int(st.get("line_search_failures", 0)), done]
+		int(st.get("newton_iterations", 0)), int(st.get("line_search_failures", 0)), done])
 	if frames.size() % 30 == 0 and not frames.is_empty():
 		print("EDITOR ", status_label.text.replace("\n", " | "))
 

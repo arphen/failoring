@@ -56,6 +56,14 @@ stage 4 scrubs stored sim frames (display + cloth + body + stats per frame). Sti
 match lines and seam edges draw with stage reveal. Sim frames after the target stop;
 +60 extends. Frame store is bounded by the target (a few hundred frames).
 
+Perf notes: the bake+sim step runs on the main thread, at most one per physics tick and
+per rendered frame. A step costs 0.1-0.25 s, so the sim trails the playhead by that much
+per frame, but playback time keeps running and the UI hitches once per step instead of
+four times. Display rebuilds only when the stage or sim frame index changes; the cloth
+ArrayMesh, colours, display indices and standing-body Vector3s are cached per build.
+Dragging a piece or vertex does not rebuild the tabs (they refresh on release).
+A worker-thread sim is the next step if the stepping rate is still too low.
+
 ## Body tab
 
 Preset buttons plus the browser's sliders: 5 primary measurements, 6 secondary with
