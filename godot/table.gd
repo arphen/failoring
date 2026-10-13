@@ -19,6 +19,7 @@ var fitted := false  # kept for the editor, which resets it on load; fit() is wh
 var hint_label: Label
 var _fit_pending := false   # fit() is deferred to the next draw, once the control has a real size
 var _sel_seam_key := ""     # "a:e-b:e" of the seam picked on the table, "" when none
+var _sew_note := ""         # what the last sew said (lengths, warning), shown in the hint line until the next click
 
 
 func _ready() -> void:
@@ -225,6 +226,74 @@ func _seam_ends(k: int) -> Array:
 	return [to_screen(pa.x, pa.y), to_screen(pb.x, pb.y)]
 
 
+# Sewing check for two edges (lengths in metres). The drape eases a difference larger than 5 % of the shorter
+# edge or 1 cm, so the sew is flagged then. Returned numbers are in cm (pct in %).
+static func sew_check(la: float, lb: float) -> Dictionary:
+	var diff_cm := absf(lb - la) * 100.0
+	var pct := diff_cm / maxf(minf(la, lb) * 100.0, 1e-9) * 100.0
+	return {"la": la * 100.0, "lb": lb * 100.0, "diff": diff_cm, "pct": pct, "warn": diff_cm > 1.0 or pct > 5.0}
+
+
+static func sew_text(a_name: String, ea: int, la: float, b_name: String, eb: int, lb: float) -> String:
+	var c := sew_check(la, lb)
+	var s := "%s edge %d %.1f cm ↔ %s edge %d %.1f cm" % [a_name, ea, c["la"], b_name, eb, c["lb"]]
+	if c["warn"]:
+		s += "  |  Warning: they differ by %.1f cm (%.1f%%), the drape will ease the difference" % [c["diff"], c["pct"]]
+	else:
+		s += "  |  within 5 % and 1 cm"
+	return s
+
+
+# Symmetric edits. A twin is the mirror image of its piece about the axis fixed when the pair was made
+# (sym.axis, in the piece's own metres), shifted by sym.dx so the twin sits beside it. The same map works in
+# both directions (reflect, then shift), so editing either piece sets the other. The twin takes the driver's
+# outline (reversed corner order to keep it counter-clockwise), grain, table offset and placement (Around mirrored).
+# Only while sym.on is set, and only when both pieces have the same corner count.
+static func sync_twin(edref, p: Dictionary) -> void:
+	var sym = p.get("sym", null)
+	if not (sym is Dictionary) or not bool(sym.get("on", false)):
+		return
+	var tw = piece_by_id(edref.pieces, String(sym.get("twin", "")))
+	if tw == null or String(tw["id"]) == String(p["id"]):
+		return
+	var o: Array = p["outline"]
+	var n := o.size()
+	if (tw["outline"] as Array).size() != n:
+		return
+	var ax := float(sym.get("axis", 0.0))
+	var dx := float(sym.get("dx", 0.0))
+	var out := []
+	for k in n:
+		var q: Array = o[n - 1 - k]
+		out.append([2.0 * ax - float(q[0]) + dx, float(q[1])])
+	tw["outline"] = out
+	tw["grain"] = PI - float(p.get("grain", 0.0))
+	tw["table"] = (p.get("table", {"x": 0.0, "y": 0.0}) as Dictionary).duplicate()
+	var w: Dictionary = (p.get("wrap", {}) as Dictionary).duplicate()
+	w["theta"] = fposmod(360.0 - float(w.get("theta", 0.0)), 360.0)
+	tw["wrap"] = w
+
+
+func _sew_preview() -> String:
+	if ed.sew_a == null or hover == null or not hover.has("e"):
+		return ""
+	if String(hover["p"]) == String(ed.sew_a[0]) and int(hover["e"]) == int(ed.sew_a[1]):
+		return ""
+	var a := _edge_info(String(ed.sew_a[0]), int(ed.sew_a[1]))
+	var b := _edge_info(String(hover["p"]), int(hover["e"]))
+	if a.is_empty() or b.is_empty():
+		return ""
+	return sew_text(a["name"], int(ed.sew_a[1]), a["len"], b["name"], int(hover["e"]), b["len"])
+
+
+# name and length (metres) of one edge, or {} when the piece or edge is missing
+func _edge_info(pid: String, e: int) -> Dictionary:
+	var p = piece_by_id(ed.pieces, pid)
+	if p == null or e < 0 or e >= (p["outline"] as Array).size():
+		return {}
+	return {"name": String(p.get("name", pid)), "len": edge_len(p["outline"], e)}
+
+
 static func piece_by_id(pieces: Array, pid: String):
 	for p in pieces:
 		if String(p["id"]) == pid:
@@ -369,15 +438,27 @@ func hit_seam(sx: float, sy: float) -> int:
 func set_tool(t: String) -> void:
 	ed.tool = t
 	ed.sew_a = null
+	_sew_note = ""
 	update_hint()
 	ed.table_dirty = true
 
 
+# Bottom hint line. In sew mode it says what the next click does; once the first edge is picked, the hovered
+# candidate's two lengths (and a warning when they differ by more than 5 % or 1 cm) show before the click.
 func update_hint() -> void:
 	if hint_label == null:
 		return
 	if ed.tool == "sew":
-		hint_label.text = "Now click the edge to sew it to (Esc cancels)" if ed.sew_a != null else "Sew: click two edges"
+		var text := "Click the first edge to sew (Esc cancels)"
+		if ed.sew_a != null:
+			text = "Now click the edge to sew it to (Esc cancels)"
+			var pv := _sew_preview()
+			if pv != "":
+				text += "  |  " + pv
+				ed.status_label.text = pv  # both lengths and the warning, in the status line as well
+		elif _sew_note != "":
+			text = _sew_note + "  |  " + text
+		hint_label.text = text
 	else:
 		hint_label.text = "Drag pieces and corners to reshape them"
 
@@ -448,6 +529,7 @@ func _down(spos: Vector2, button: int) -> void:
 		if ed.sew_a == null:
 			ed.sew_a = [(best["p"] as Dictionary)["id"], best["e"]]
 			ed.sel = (best["p"] as Dictionary)["id"]
+			_sew_note = ""
 			update_hint()
 			ed.changed("ui")
 			return
@@ -458,11 +540,17 @@ func _down(spos: Vector2, button: int) -> void:
 			return
 		ed.push_undo()
 		var bside := [(best["p"] as Dictionary)["id"], best["e"]]
+		# warning text is computed before the sew so it shows alongside the removed-seam note
+		var ea := _edge_info(String(ed.sew_a[0]), int(ed.sew_a[1]))
+		var eb := _edge_info(String(bside[0]), int(bside[1]))
+		_sew_note = sew_text(ea["name"], int(ed.sew_a[1]), ea["len"], eb["name"], int(bside[1]), eb["len"])
 		var replaced := sew_edges(ed, ed.sew_a, bside)
 		ed.sew_a = null
 		update_hint()
+		var msg := _sew_note  # lengths and warning stay visible next to the removed-seam note
 		if replaced > 0:
-			ed.notify("Sewing replaced %d seam(s) on those edges. Ctrl+Z restores them." % replaced)
+			msg += "  |  Sewing replaced %d seam(s) on those edges. Ctrl+Z restores them." % replaced
+		ed.notify(msg)
 		ed.changed("structure")
 		return
 	var sel: Variant = null
@@ -524,6 +612,8 @@ func _move(spos: Vector2) -> void:
 		if (nh == null) != (hover == null) or (nh != null and (nh["p"] != hover.get("p", null) or nh.get("e", -1) != hover.get("e", -1))):
 			hover = nh
 			ed.table_dirty = true
+			if ed.tool == "sew":
+				update_hint()
 		return
 	if String(d["kind"]) == "pan":
 		ox = float(d["ox"]) + sx - float(d["sx"])
@@ -536,6 +626,7 @@ func _move(spos: Vector2) -> void:
 			p["table"] = {"x": 0.0, "y": 0.0}
 		(p["table"] as Dictionary)["x"] = snapv(w.x + float(d["dx"]))
 		(p["table"] as Dictionary)["y"] = snapv(w.y + float(d["dy"]))
+		sync_twin(ed, p)
 		d["moved"] = true
 		ed.table_dirty = true
 		ed.changed("table")
@@ -544,6 +635,7 @@ func _move(spos: Vector2) -> void:
 		var p2: Dictionary = d["p"]
 		var t2: Dictionary = p2.get("table", {"x": 0.0, "y": 0.0})
 		(p2["outline"] as Array)[int(d["vi"])] = [snapv(w2.x - float(t2.get("x", 0.0))), snapv(w2.y - float(t2.get("y", 0.0)))]
+		sync_twin(ed, p2)
 		ed.table_dirty = true
 		ed.changed("structure-drag")
 
@@ -599,6 +691,14 @@ func _unhandled_key_input(e: InputEvent) -> void:
 		return
 	if (k.ctrl_pressed or k.meta_pressed) and k.keycode == KEY_Y:
 		ed.do_redo()
+		accept_event()
+		return
+	if (k.ctrl_pressed or k.meta_pressed) and k.keycode == KEY_C:
+		ed.copy_piece()
+		accept_event()
+		return
+	if (k.ctrl_pressed or k.meta_pressed) and k.keycode == KEY_V:
+		ed.paste_piece()
 		accept_event()
 		return
 	if k.keycode == KEY_ESCAPE:
@@ -686,6 +786,10 @@ static func remove_piece(edref, pid: String) -> int:
 	var before: int = (edref.seams as Array).size()
 	edref.pieces = (edref.pieces as Array).filter(func(p) -> bool: return String(p["id"]) != pid)
 	edref.seams = (edref.seams as Array).filter(func(s) -> bool: return String(s["a"][0]) != pid and String(s["b"][0]) != pid)
+	for q in edref.pieces:  # a twin left without its piece is no longer linked
+		var sy = q.get("sym", null)
+		if sy is Dictionary and String(sy.get("twin", "")) == pid:
+			q.erase("sym")
 	if edref.sel == pid:
 		edref.sel = null
 		edref.sel_v = -1
@@ -754,6 +858,7 @@ static func duplicate_piece(edref, p: Dictionary) -> Dictionary:
 	var q: Dictionary = JSON.parse_string(JSON.stringify(p))
 	q["id"] = new_id(edref.pieces, "p")
 	q["name"] = String(p.get("name", "?")) + " copy"
+	q.erase("sym")  # a copy is not the twin of its original
 	var b := bbox_of(p["outline"])
 	(q["table"] as Dictionary)["x"] = float((q["table"] as Dictionary).get("x", 0.0)) + (b[2] - b[0]) + 0.1
 	(edref.pieces as Array).append(q)
@@ -835,6 +940,15 @@ func _draw() -> void:
 		var r := 3.0 if picked else 2.0
 		draw_circle(seg[0], r, c)
 		draw_circle(seg[1], r, c)
+	# sew mode: the first edge picked (orange) and the edge under the pointer (teal), so the pair is visible
+	# before the second click
+	if ed.tool == "sew":
+		if ed.sew_a != null:
+			_draw_edge_hl(String(ed.sew_a[0]), int(ed.sew_a[1]), Color("#ff9d4d"))
+		if hover != null and hover.has("e"):
+			var same: bool = ed.sew_a != null and String(ed.sew_a[0]) == String(hover["p"]) and int(ed.sew_a[1]) == int(hover["e"])
+			if not same:
+				_draw_edge_hl(String(hover["p"]), int(hover["e"]), Color("#3fd3c0"))
 	# labels. Each one claims its screen rectangle; a label that would overlap an earlier one is skipped, and
 	# piece names come first so they win. Names sit at the piece's area centroid and are hidden when they do
 	# not fit inside the piece's on-screen bounding box.
@@ -893,6 +1007,24 @@ func _draw() -> void:
 	var blen := 0.1 * cam_z
 	draw_line(Vector2(bx, by), Vector2(bx + blen, by), Color("#8f98a6"), 2.0)
 	draw_string(font, Vector2(bx + blen + 6.0, by), "10 cm", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color("#8f98a6"))
+
+
+func _draw_edge_hl(pid: String, e: int, col: Color) -> void:
+	for i in ed.pieces.size():
+		var p: Dictionary = ed.pieces[i]
+		if String(p["id"]) != pid:
+			continue
+		var pts: PackedVector2Array = _geo_pieces[i]["pts"]
+		if e < 0 or e >= pts.size():
+			return
+		var off := _off(p)
+		var a := to_screen(pts[e].x + off.x, pts[e].y + off.y)
+		var q: Vector2 = pts[(e + 1) % pts.size()]
+		var b := to_screen(q.x + off.x, q.y + off.y)
+		draw_line(a, b, col, 5.0)
+		draw_circle(a, 4.0, col)
+		draw_circle(b, 4.0, col)
+		return
 
 
 static func _claim(taken: Array, r: Rect2) -> bool:

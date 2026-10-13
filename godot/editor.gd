@@ -149,7 +149,7 @@ var plan_opt: OptionButton
 var quality_opt: OptionButton
 var motion_opt: OptionButton
 var status_label: Label
-var _fold_open := false     # Piece tab "Edges" section, kept across tab rebuilds
+var _fold_open := true      # Piece tab "Edges" section, kept across tab rebuilds
 @onready var tabs: TabContainer = $UI/Root/Main/Right/Tabs
 @onready var library_panel = $UI/Root/Main/Left/Library  # library_panel.gd (untyped: calls its own methods)
 
@@ -528,10 +528,13 @@ func _refresh_seams_tab() -> void:
 		var la: float = Table.edge_len(a["outline"], int(s["a"][1]))
 		var lb: float = Table.edge_len(b["outline"], int(s["b"][1]))
 		var ease: float = (lb - la) / la if la > 0.0 else 0.0
+		var chk := Table.sew_check(la, lb)
 		var t := Label.new()
 		t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		t.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		t.text = "Seam %d: %s edge %d ↔ %s edge %d\n%.1f / %.1f cm - ease %s%.1f%%%s" % [si, String(a.get("name", a["id"])), int(s["a"][1]) + 1, String(b.get("name", b["id"])), int(s["b"][1]) + 1, la * 100.0, lb * 100.0, "+" if ease >= 0.0 else "", ease * 100.0, " (large)" if absf(ease) > 0.08 else ""]
+		t.text = "Seam %d: %s edge %d (%.1f cm) ↔ %s edge %d (%.1f cm)\nease %s%.1f%%" % [si, String(a.get("name", a["id"])), int(s["a"][1]) + 1, la * 100.0, String(b.get("name", b["id"])), int(s["b"][1]) + 1, lb * 100.0, "+" if ease >= 0.0 else "", ease * 100.0]
+		if chk["warn"]:
+			t.text += "\nWarning: %.1f cm apart (%.1f%%), the drape eases the difference" % [chk["diff"], chk["pct"]]
 		row.add_child(t)
 		var flip := Button.new()
 		flip.text = "⇄"
@@ -546,7 +549,7 @@ func _refresh_seams_tab() -> void:
 		vb.add_child(row)
 	var note := Label.new()
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	note.text = "Pick the Sew tool on the cutting table, click one edge, then the edge it joins. Edge numbers (from 1) are shown beside each edge length."
+	note.text = "Pick the Sew tool on the cutting table, click one edge, then the edge it joins. Edge numbers (from 1) are shown beside each edge length. Lengths are measured on the cut outline; a warning means the drape will ease the difference."
 	vb.add_child(note)
 	_lock_editing(vb)
 
@@ -911,6 +914,12 @@ func _piece() -> Variant:
 	return Table.piece_by_id(pieces, sel) if sel != null else null
 
 
+const MIN_EDGE_M := 0.008   # table.gd valid_pieces: an edge shorter than this drops the piece from the simulation
+const SIDE_NAMES := [[0.0, "front"], [90.0, "left side"], [180.0, "back"], [270.0, "right side"]]
+var clip = null             # Ctrl+C: the copied piece (a dictionary), pasted by Ctrl+V
+var _offer := {}            # {"pid", "text", "button"}: a copy or mirror that covers its original's place on the body
+
+
 func _build_piece_tab() -> void:
 	_refresh_piece_tab()
 
@@ -930,78 +939,7 @@ func _refresh_piece_tab() -> void:
 		none.text = "Click a piece on the cutting table."
 		vb.add_child(none)
 	else:
-		var name_row := HBoxContainer.new()
-		var nl := Label.new()
-		nl.custom_minimum_size = Vector2(92, 0)
-		nl.text = "Name"
-		name_row.add_child(nl)
-		var ne := LineEdit.new()
-		ne.text = String(p.get("name", p["id"]))
-		ne.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		ne.text_submitted.connect(func(t: String) -> void: push_undo(); p["name"] = t; changed("structure"))
-		name_row.add_child(ne)
-		vb.add_child(name_row)
-		var bb := Table.bbox_of(p["outline"])
-		var kv := Label.new()
-		kv.text = "Size %.1f x %.1f cm\nArea %.0f cm²" % [(bb[2] - bb[0]) * 100.0, (bb[3] - bb[1]) * 100.0, absf(Table.signed_area(p["outline"])) * 1e4]
-		vb.add_child(kv)
-		vb.add_child(_h4("Grain (warp direction)"))
-		_slider_row(vb, "Angle", 0.0, 180.0, 1.0,
-			func() -> float: return _grain_deg(),
-			func(v: float) -> void: _sel_wrap_set("grain_deg", v),
-			func(v: float) -> String: return "%d°" % int(v), true)
-		var gb := HBoxContainer.new()
-		for g in [["Straight 90°", 90.0], ["Cross 0°", 0.0], ["Bias 45°", 45.0], ["Bias 135°", 135.0]]:
-			var b := Button.new()
-			b.text = g[0]
-			b.pressed.connect(func() -> void: push_undo(); p["grain"] = float(g[1]) * PI / 180.0; changed("structure"))
-			gb.add_child(b)
-		vb.add_child(gb)
-		vb.add_child(_h4("Placement on the body"))
-		_slider_row(vb, "Around", 0.0, 360.0, 1.0,
-			func() -> float: return float((p.get("wrap", {}) as Dictionary).get("theta", 0.0)),
-			func(v: float) -> void: (p["wrap"] as Dictionary)["theta"] = v; changed("structure-drag"),
-			func(v: float) -> String: return "%d°" % int(v), true)
-		_slider_row(vb, "Height", 0.0, 150.0, 1.0,
-			func() -> float: return float((p.get("wrap", {}) as Dictionary).get("y", 0.5)) * 100.0,
-			func(v: float) -> void: (p["wrap"] as Dictionary)["y"] = v / 100.0; changed("structure-drag"),
-			func(v: float) -> String: return "%d cm" % int(v), true)
-		_slider_row(vb, "Clearance", 0.0, 40.0, 1.0,
-			func() -> float: return float((p.get("wrap", {}) as Dictionary).get("clear", 0.012)) * 1000.0,
-			func(v: float) -> void: (p["wrap"] as Dictionary)["clear"] = v / 1000.0; changed("structure-drag"),
-			func(v: float) -> String: return "%d mm" % int(v), true)
-		_slider_row(vb, "Flare", 0.0, 6.0, 0.1,
-			func() -> float: return float((p.get("wrap", {}) as Dictionary).get("ring", 0.0)),
-			func(v: float) -> void: (p["wrap"] as Dictionary)["ring"] = v; changed("structure-drag"),
-			func(v: float) -> String: return "%.1f" % v, true)
-		var lines := []
-		for i in (p["outline"] as Array).size():
-			var mark := ""
-			for si in seams.size():
-				var s: Dictionary = seams[si]
-				if (String(s["a"][0]) == String(p["id"]) and int(s["a"][1]) == i) or (String(s["b"][0]) == String(p["id"]) and int(s["b"][1]) == i):
-					mark = " (seam %d)" % (si + 1)
-					break
-			lines.append("edge %d%s: %.1f cm" % [i + 1, mark, Table.edge_len(p["outline"], i) * 100.0])
-		vb.add_child(_fold_section("Edges (%d)" % lines.size(), lines))
-		var btns := HBoxContainer.new()
-		var mb := Button.new()
-		mb.text = "Mirror"
-		mb.pressed.connect(func() -> void: push_undo(); Table.mirror_piece(p, seams); changed("structure"))
-		btns.add_child(mb)
-		var db := Button.new()
-		db.text = "Duplicate"
-		db.pressed.connect(func() -> void: push_undo(); Table.duplicate_piece(self, p); changed("structure"))
-		btns.add_child(db)
-		var del := Button.new()
-		del.text = "Delete"
-		del.pressed.connect(func() -> void:
-			push_undo()
-			var gone := Table.remove_piece(self, String(p["id"]))
-			notify("Deleted %s%s. Ctrl+Z restores it." % [String(p.get("name", p["id"])), (" and its %d seam(s)" % gone) if gone > 0 else ""])
-			changed("structure"))
-		btns.add_child(del)
-		vb.add_child(btns)
+		_piece_rows(vb, p)
 	var add_h := Label.new()
 	add_h.text = "Add a piece"
 	vb.add_child(add_h)
@@ -1013,6 +951,529 @@ func _refresh_piece_tab() -> void:
 		add_row.add_child(b)
 	vb.add_child(add_row)
 	_lock_editing(vb)
+
+
+func _piece_rows(vb: VBoxContainer, p: Dictionary) -> void:
+	var name_row := HBoxContainer.new()
+	var nl := Label.new()
+	nl.custom_minimum_size = Vector2(92, 0)
+	nl.text = "Name"
+	name_row.add_child(nl)
+	var ne := LineEdit.new()
+	ne.text = String(p.get("name", p["id"]))
+	ne.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	ne.text_submitted.connect(func(t: String) -> void: push_undo(); p["name"] = t; changed("structure"))
+	name_row.add_child(ne)
+	vb.add_child(name_row)
+	# size of the whole piece, typed in cm: width keeps the left edge, height keeps the bottom edge
+	var bb := Table.bbox_of(p["outline"])
+	vb.add_child(_h4("Size of the piece (cm), Enter to apply"))
+	var sz := HBoxContainer.new()
+	sz.add_child(_caption("Width"))
+	var sw := _line_edit("SizeW", "%.1f" % ((bb[2] - bb[0]) * 100.0))
+	sw.text_submitted.connect(func(t: String) -> void: _on_size(p, 0, t, sw))
+	sz.add_child(sw)
+	sz.add_child(_caption("Height"))
+	var sh := _line_edit("SizeH", "%.1f" % ((bb[3] - bb[1]) * 100.0))
+	sh.text_submitted.connect(func(t: String) -> void: _on_size(p, 1, t, sh))
+	sz.add_child(sh)
+	vb.add_child(sz)
+	var area := Label.new()
+	area.text = "Area %.0f cm²" % (absf(Table.signed_area(p["outline"])) * 1e4)
+	vb.add_child(area)
+	vb.add_child(_h4("Grain (warp direction)"))
+	_slider_row(vb, "Angle", 0.0, 180.0, 1.0,
+		func() -> float: return _grain_deg(),
+		func(v: float) -> void: _sel_wrap_set("grain_deg", v),
+		func(v: float) -> String: return "%d°" % int(v),
+		"Direction of the threads, shown as the arrow on the table.", true)
+	var gb := HBoxContainer.new()
+	for g in [["Straight 90°", 90.0], ["Cross 0°", 0.0], ["Bias 45°", 45.0], ["Bias 135°", 135.0]]:
+		var b := Button.new()
+		b.text = g[0]
+		b.pressed.connect(func() -> void: push_undo(); p["grain"] = float(g[1]) * PI / 180.0; _sym_sync(p); changed("structure"))
+		gb.add_child(b)
+	vb.add_child(gb)
+	# corners and edges: typed values
+	var n := (p["outline"] as Array).size()
+	if sel_v >= 0 and sel_v < n:
+		vb.add_child(_h4("Corner %d (x, y in cm)" % sel_v))
+		_corner_row(vb, p, sel_v)
+	vb.add_child(_edge_fold(p))
+	# placement on the body, with plain labels
+	vb.add_child(_h4("Placement on the body"))
+	var pb := HBoxContainer.new()
+	for pl in [["Front", 0.0], ["Back", 180.0], ["Left side", 90.0], ["Right side", 270.0]]:
+		var b := Button.new()
+		b.name = "Place" + String(pl[0]).replace(" ", "")
+		b.text = pl[0]
+		b.tooltip_text = "Puts the piece on the %s of the body (Around %d°)." % [String(pl[0]).to_lower(), int(pl[1])]
+		b.pressed.connect(func() -> void: _place(p, float(pl[1])))
+		pb.add_child(b)
+	vb.add_child(pb)
+	if not _offer.is_empty() and String(_offer.get("pid", "")) == String(p["id"]):
+		var ol := Label.new()
+		ol.text = String(_offer["text"])
+		ol.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		vb.add_child(ol)
+		var orow := HBoxContainer.new()
+		var fb := Button.new()
+		fb.name = "FlipOffer"
+		fb.text = String(_offer["button"])
+		fb.pressed.connect(func() -> void: _flip_placement(p))
+		orow.add_child(fb)
+		var kb := Button.new()
+		kb.text = "Keep it here"
+		kb.pressed.connect(func() -> void: _offer = {}; changed("ui"))
+		orow.add_child(kb)
+		vb.add_child(orow)
+	_slider_row(vb, "Around", 0.0, 360.0, 1.0,
+		func() -> float: return float((p["wrap"] as Dictionary).get("theta", 0.0)),
+		func(v: float) -> void: _wrap_set(p, "theta", v),
+		func(v: float) -> String: return "%d°" % int(v),
+		"Where the piece sits around the body: 0° front, 90° the body's left side, 180° back, 270° right side.", true)
+	_slider_row(vb, "Height from floor", 0.0, 150.0, 1.0,
+		func() -> float: return float((p["wrap"] as Dictionary).get("y", 0.5)) * 100.0,
+		func(v: float) -> void: _wrap_set(p, "y", v / 100.0),
+		func(v: float) -> String: return "%d cm" % int(v),
+		"Height of the piece's lowest edge above the floor, in cm.", true)
+	_slider_row(vb, "Clearance to body", 0.0, 40.0, 1.0,
+		func() -> float: return float((p["wrap"] as Dictionary).get("clear", 0.012)) * 1000.0,
+		func(v: float) -> void: _wrap_set(p, "clear", v / 1000.0),
+		func(v: float) -> String: return "%d mm" % int(v),
+		"Gap between the fabric and the body surface, in mm. Each layer over another garment adds 8 mm on its own.", true)
+	_slider_row(vb, "Flare", 0.0, 6.0, 0.1,
+		func() -> float: return float((p["wrap"] as Dictionary).get("ring", 0.0)),
+		func(v: float) -> void: _wrap_set(p, "ring", v),
+		func(v: float) -> String: return "%.1f" % v,
+		"How far the piece flares out from the body: 0 hugs it, higher values open it out, like a skirt.", true)
+	_twin_section(vb, p)
+	var btns := HBoxContainer.new()
+	var mb := Button.new()
+	mb.text = "Mirror"
+	mb.tooltip_text = "Flips the piece over its own centre line, in place."
+	mb.pressed.connect(func() -> void: _mirror(p))
+	btns.add_child(mb)
+	var db := Button.new()
+	db.text = "Duplicate"
+	db.tooltip_text = "Adds a copy beside this piece."
+	db.pressed.connect(func() -> void: _duplicate(p))
+	btns.add_child(db)
+	var del := Button.new()
+	del.text = "Delete"
+	del.tooltip_text = "Deletes the piece and any seams on it. Ctrl+Z restores it."
+	del.pressed.connect(func() -> void:
+		push_undo()
+		var gone := Table.remove_piece(self, String(p["id"]))
+		notify("Deleted %s%s. Ctrl+Z restores it." % [String(p.get("name", p["id"])), (" and its %d seam(s)" % gone) if gone > 0 else ""])
+		changed("structure"))
+	btns.add_child(del)
+	vb.add_child(btns)
+	var cbtns := HBoxContainer.new()
+	var cp := Button.new()
+	cp.text = "Copy"
+	cp.tooltip_text = "Copies the piece (Ctrl+C). Paste with Ctrl+V or the Paste button."
+	cp.pressed.connect(func() -> void: copy_piece())
+	cbtns.add_child(cp)
+	var pa := Button.new()
+	pa.text = "Paste"
+	pa.tooltip_text = "Pastes a copy of the copied piece to the right of the table (Ctrl+V)."
+	pa.disabled = clip == null
+	pa.pressed.connect(func() -> void: paste_piece())
+	cbtns.add_child(pa)
+	vb.add_child(cbtns)
+
+
+func _caption(text: String) -> Label:
+	var l := Label.new()
+	l.text = text
+	l.custom_minimum_size = Vector2(36, 0)
+	return l
+
+
+func _line_edit(node_name: String, value_text: String) -> LineEdit:
+	var le := LineEdit.new()
+	le.name = node_name
+	le.text = value_text
+	le.custom_minimum_size = Vector2(44, 0)
+	le.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	le.select_all_on_focus = true
+	return le
+
+
+# A typed number (commas allowed). NAN when it is not one; _parse_cm also rejects zero and below.
+static func _parse_num(t: String) -> float:
+	var s := t.replace(",", ".").strip_edges()
+	return s.to_float() if s.is_valid_float() else NAN
+
+
+static func _parse_cm(t: String) -> float:
+	var v := _parse_num(t)
+	return v if v > 0.0 else NAN
+
+
+func _corner_row(vb: VBoxContainer, p: Dictionary, vi: int) -> void:
+	var q: Array = p["outline"][vi]
+	var row := HBoxContainer.new()
+	row.add_child(_caption("x"))
+	var fx := _line_edit("CornerX", "%.1f" % (float(q[0]) * 100.0))
+	var fy := _line_edit("CornerY", "%.1f" % (float(q[1]) * 100.0))
+	var on_enter := func(_t: String) -> void: _on_corner(p, vi, fx, fy)
+	fx.text_submitted.connect(on_enter)
+	fy.text_submitted.connect(on_enter)
+	row.add_child(fx)
+	row.add_child(_caption("y"))
+	row.add_child(fy)
+	vb.add_child(row)
+
+
+# Numeric entry. A change is checked before anything moves: every edge it touches must stay at least 8 mm.
+# An accepted entry is one undo step; a rejected one puts the old text back and says why in the status line.
+func _try_outline(p: Dictionary, outline: Array, edges: Array, why: String) -> bool:
+	if not _outline_ok(outline, edges):
+		status_label.text = why
+		return false
+	push_undo()
+	p["outline"] = outline
+	_sym_sync(p)
+	changed("structure")
+	return true
+
+
+func _outline_ok(o: Array, edges: Array) -> bool:
+	for e in edges:
+		if Table.edge_len(o, int(e)) < MIN_EDGE_M:
+			return false
+	return true
+
+
+# Edge length: the corner after the edge moves along the edge's own direction; the near corner stays put.
+func _on_edge_len(p: Dictionary, e: int, t: String, le: LineEdit) -> void:
+	var o: Array = p["outline"]
+	var cur := Table.edge_len(o, e)
+	var restore := "%.1f" % (cur * 100.0)
+	var cm := _parse_cm(t)
+	if is_nan(cm) or cur < 1e-9:
+		status_label.text = "Edge %d: type a length in cm, for example 62.5" % (e + 1)
+		le.text = restore
+		return
+	if absf(cm / 100.0 - cur) < 1e-6:
+		le.text = restore
+		return
+	var n := o.size()
+	var bi := (e + 1) % n
+	var a: Array = o[e]
+	var b: Array = o[bi]
+	var ux := (float(b[0]) - float(a[0])) / cur
+	var uy := (float(b[1]) - float(a[1])) / cur
+	var out: Array = o.duplicate(true)
+	out[bi] = [float(a[0]) + ux * cm / 100.0, float(a[1]) + uy * cm / 100.0]
+	if not _try_outline(p, out, [e, bi], "Edge %d: %.1f cm would leave an edge shorter than 0.8 cm" % [e + 1, cm]):
+		le.text = restore
+
+
+func _on_corner(p: Dictionary, vi: int, fx: LineEdit, fy: LineEdit) -> void:
+	var o: Array = p["outline"]
+	var q: Array = o[vi]
+	var x := _parse_num(fx.text)
+	var y := _parse_num(fy.text)
+	if is_nan(x) or is_nan(y):
+		status_label.text = "Corner %d: type x and y in cm" % vi
+		fx.text = "%.1f" % (float(q[0]) * 100.0)
+		fy.text = "%.1f" % (float(q[1]) * 100.0)
+		return
+	var out: Array = o.duplicate(true)
+	out[vi] = [x / 100.0, y / 100.0]
+	var n := o.size()
+	if not _try_outline(p, out, [(vi - 1 + n) % n, vi], "Corner %d would make an edge shorter than 0.8 cm" % vi):
+		fx.text = "%.1f" % (float(q[0]) * 100.0)
+		fy.text = "%.1f" % (float(q[1]) * 100.0)
+
+
+# Width (axis 0) or height (axis 1) of the whole piece, scaled about its left or bottom edge.
+func _on_size(p: Dictionary, axis: int, t: String, le: LineEdit) -> void:
+	var b := Table.bbox_of(p["outline"])
+	var cur: float = (b[2] - b[0]) if axis == 0 else (b[3] - b[1])
+	var restore := "%.1f" % (cur * 100.0)
+	var cm := _parse_cm(t)
+	if is_nan(cm) or cur < 1e-9:
+		status_label.text = "Type the %s in cm, for example 40" % ("width" if axis == 0 else "height")
+		le.text = restore
+		return
+	var k := (cm / 100.0) / cur
+	var out: Array = (p["outline"] as Array).duplicate(true)
+	var all := []
+	for i in out.size():
+		all.append(i)
+		var q: Array = out[i]
+		if axis == 0:
+			q[0] = b[0] + (float(q[0]) - float(b[0])) * k
+		else:
+			q[1] = b[1] + (float(q[1]) - float(b[1])) * k
+	if not _try_outline(p, out, all, "That size would make an edge shorter than 0.8 cm"):
+		le.text = restore
+
+
+# Edges section: one row per edge with a cm field. Open by default.
+func _edge_fold(p: Dictionary) -> VBoxContainer:
+	var o: Array = p["outline"]
+	var body := VBoxContainer.new()
+	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var tip := Label.new()
+	tip.text = "Type a length and press Enter. The corner after the edge moves along it."
+	tip.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	body.add_child(tip)
+	for i in o.size():
+		var r := HBoxContainer.new()
+		var l := _caption("Edge %d" % (i + 1))
+		l.custom_minimum_size = Vector2(60, 0)
+		r.add_child(l)
+		var le := _line_edit("EdgeLen_%d" % (i + 1), "%.1f" % (Table.edge_len(o, i) * 100.0))
+		le.text_submitted.connect(func(t: String) -> void: _on_edge_len(p, i, t, le))
+		r.add_child(le)
+		r.add_child(_caption("cm"))
+		var partner := _seam_partner(p, i)
+		if partner != "":
+			var sl := _caption(partner)
+			sl.custom_minimum_size = Vector2(0, 0)
+			sl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			r.add_child(sl)
+		body.add_child(r)
+	return _fold_box("Edges (%d)" % o.size(), body, o.size())
+
+
+func _seam_partner(p: Dictionary, e: int) -> String:
+	var pid := String(p["id"])
+	for si in seams.size():
+		var s: Dictionary = seams[si]
+		for pair in [["a", "b"], ["b", "a"]]:
+			if String(s[pair[0]][0]) == pid and int(s[pair[0]][1]) == e:
+				var other = Table.piece_by_id(pieces, String(s[pair[1]][0]))
+				var oname := String(other.get("name", "?")) if other != null else "?"
+				return "Seam %d: sewn to %s edge %d" % [si + 1, oname, int(s[pair[1]][1]) + 1]
+	return ""
+
+
+func _fold_box(title: String, body: Control, rows: int) -> VBoxContainer:
+	var box := VBoxContainer.new()
+	var head := Button.new()
+	head.toggle_mode = true
+	head.button_pressed = _fold_open
+	head.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	head.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.text = ("[-] " if _fold_open else "[+] ") + title
+	box.add_child(head)
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.custom_minimum_size = Vector2(0, 26.0 * minf(float(rows), 8.0) + 8.0)
+	scroll.visible = _fold_open
+	scroll.add_child(body)
+	box.add_child(scroll)
+	head.toggled.connect(func(on: bool) -> void:
+		_fold_open = on
+		head.text = ("[-] " if on else "[+] ") + title
+		scroll.visible = on)
+	return box
+
+
+# ------------------------------------------------------------------ placement
+func _place(p: Dictionary, theta: float) -> void:
+	if String(_offer.get("pid", "")) == String(p["id"]):
+		_offer = {}
+	push_undo()
+	(p["wrap"] as Dictionary)["theta"] = fposmod(theta, 360.0)
+	_sym_sync(p)
+	changed("structure")
+
+
+func _flip_placement(p: Dictionary) -> void:
+	_place(p, float((p["wrap"] as Dictionary).get("theta", 0.0)) + 180.0)
+
+
+func _wrap_set(p: Dictionary, key: String, v: float) -> void:
+	(p["wrap"] as Dictionary)[key] = v
+	_sym_sync(p)
+	changed("structure-drag")
+
+
+static func _angle_gap(a: float, b: float) -> float:
+	var d := fposmod(absf(a - b), 360.0)
+	return minf(d, 360.0 - d)
+
+
+static func _side_name(theta: float) -> String:
+	var best := "front"
+	var bd := 1e9
+	for s in SIDE_NAMES:
+		var d := _angle_gap(theta, float(s[0]))
+		if d < bd:
+			bd = d
+			best = String(s[1])
+	return best
+
+
+# vertical extent of a piece on the body: from its height from the floor to that plus its height
+func _band(p: Dictionary) -> Array:
+	var b := Table.bbox_of(p["outline"])
+	var y0 := float((p["wrap"] as Dictionary).get("y", 0.5))
+	return [y0, y0 + (float(b[3]) - float(b[1]))]
+
+
+# two placements cover the same part of the body: within 45 degrees round, and overlapping in height
+func _placed_over(a: Dictionary, ta: float, b: Dictionary, tb: float) -> bool:
+	if _angle_gap(ta, tb) >= 45.0:
+		return false
+	var ya := _band(a)
+	var yb := _band(b)
+	return float(ya[0]) < float(yb[1]) and float(yb[0]) < float(ya[1])
+
+
+# after a copy or a mirror: if the piece now covers its original's place, offer to flip it to the other side
+func _offer_flip(a: Dictionary, ta: float, b: Dictionary, tb: float, what: String) -> void:
+	if not _placed_over(a, ta, b, tb):
+		return
+	var target := fposmod(tb + 180.0, 360.0)
+	_offer = {"pid": String(b["id"]),
+		"text": "%s covers the same part of the body as the original (Around %d°)." % [what, int(round(tb))],
+		"button": "Flip to the %s (Around %d°)" % [_side_name(target), int(round(target))]}
+
+
+func _duplicate(p: Dictionary) -> void:
+	var theta := float((p["wrap"] as Dictionary).get("theta", 0.0))
+	push_undo()
+	var q := Table.duplicate_piece(self, p)
+	_offer_flip(p, theta, q, float((q["wrap"] as Dictionary).get("theta", 0.0)), "The copy")
+	changed("structure")
+
+
+func _mirror(p: Dictionary) -> void:
+	var before := float((p["wrap"] as Dictionary).get("theta", 0.0))
+	push_undo()
+	Table.mirror_piece(p, seams)
+	_sym_sync(p)
+	_offer_flip(p, before, p, float((p["wrap"] as Dictionary).get("theta", 0.0)), "The mirrored piece")
+	changed("structure")
+
+
+# ------------------------------------------------------------------ copy, paste, symmetric twin
+func copy_piece() -> void:
+	var p = _piece()
+	if p == null:
+		return
+	clip = JSON.parse_string(JSON.stringify(p))
+	clip.erase("sym")
+	status_label.text = "Copied %s. Ctrl+V pastes a copy." % String(p.get("name", p["id"]))
+
+
+func paste_piece() -> void:
+	if clip == null or active_locked():
+		return
+	push_undo()
+	var q: Dictionary = JSON.parse_string(JSON.stringify(clip))
+	q["id"] = Table.new_id(pieces, "p")
+	q["name"] = String(clip.get("name", "?")) + " copy"
+	q.erase("sym")
+	var b := Table.bbox_of(q["outline"])
+	var x := 0.0
+	if not pieces.is_empty():
+		var right := -1e9
+		for other in pieces:
+			var ob := Table.bbox_of(other["outline"])
+			right = maxf(right, float(ob[2]) + float((other.get("table", {}) as Dictionary).get("x", 0.0)))
+		x = right + 0.12 - float(b[0])
+	q["table"] = {"x": x, "y": 0.0}
+	pieces.append(q)
+	sel = q["id"]
+	sel_v = -1
+	changed("structure")
+
+
+func _sym_sync(p: Dictionary) -> void:
+	Table.sync_twin(self, p)
+
+
+func _twin_of(p: Dictionary):
+	var sy = p.get("sym", null)
+	if not (sy is Dictionary):
+		return null
+	return Table.piece_by_id(pieces, String(sy.get("twin", "")))
+
+
+func _set_link_on(p: Dictionary, on: bool) -> void:
+	if p.get("sym") is Dictionary:
+		(p["sym"] as Dictionary)["on"] = on
+
+
+func _make_twin(p: Dictionary) -> void:
+	push_undo()
+	var b := Table.bbox_of(p["outline"])
+	var pid := String(p["id"])
+	var tid := Table.new_id(pieces, "p")
+	var tw: Dictionary = JSON.parse_string(JSON.stringify(p))
+	tw["id"] = tid
+	tw["name"] = String(p.get("name", pid)) + " (mirror)"
+	tw.erase("sym")
+	pieces.append(tw)
+	var axis := (float(b[0]) + float(b[2])) * 0.5
+	var dx := (float(b[2]) - float(b[0])) + 0.1
+	p["sym"] = {"twin": tid, "axis": axis, "dx": dx, "on": true}
+	tw["sym"] = {"twin": pid, "axis": axis, "dx": dx, "on": true}
+	Table.sync_twin(self, p)
+	changed("structure")
+
+
+func _set_sym_on(p: Dictionary, on: bool) -> void:
+	var tw = _twin_of(p)
+	if tw == null:
+		return
+	push_undo()
+	_set_link_on(p, on)
+	_set_link_on(tw, on)
+	if on:
+		_sym_sync(p)
+	changed("structure")
+
+
+func _unlink_twin(p: Dictionary) -> void:
+	push_undo()
+	var tw = _twin_of(p)
+	p.erase("sym")
+	if tw != null:
+		tw.erase("sym")
+	changed("structure")
+
+
+func _twin_section(vb: VBoxContainer, p: Dictionary) -> void:
+	vb.add_child(_h4("Mirror twin"))
+	var tw = _twin_of(p)
+	if tw == null:
+		var mt := Button.new()
+		mt.name = "MakeTwin"
+		mt.text = "Make a mirror twin"
+		mt.tooltip_text = "Adds the mirror image of this piece beside it. With Symmetric edits on, a change to either piece is copied to the other."
+		mt.pressed.connect(func() -> void: _make_twin(p))
+		vb.add_child(mt)
+		return
+	var tl := Label.new()
+	tl.text = "Twin: %s" % String(tw.get("name", tw["id"]))
+	vb.add_child(tl)
+	var cb := CheckBox.new()
+	cb.name = "SymToggle"
+	cb.text = "Symmetric edits"
+	cb.tooltip_text = "Copies every change (corners, edge lengths, size, grain, placement) to the twin, as a mirror image."
+	cb.button_pressed = bool((p["sym"] as Dictionary).get("on", false))
+	cb.toggled.connect(func(on: bool) -> void: _set_sym_on(p, on))
+	vb.add_child(cb)
+	if (tw["outline"] as Array).size() != (p["outline"] as Array).size():
+		var warn := Label.new()
+		warn.text = "Out of step: the two pieces have different numbers of corners, so changes are not copied."
+		warn.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		vb.add_child(warn)
+	var ul := Button.new()
+	ul.text = "Unlink twin"
+	ul.pressed.connect(func() -> void: _unlink_twin(p))
+	vb.add_child(ul)
 
 
 func _grain_deg() -> float:
@@ -1028,15 +1489,18 @@ func _sel_wrap_set(which: String, v: float) -> void:
 		return
 	if which == "grain_deg":
 		p["grain"] = v * PI / 180.0
+		_sym_sync(p)
 	changed("structure-drag")
 
 
-# undo_step: each drag, or each key step, is one undo step. Piece sliders pass true; body and fabric sliders do not.
-func _slider_row(parent: VBoxContainer, label_text: String, minv: float, maxv: float, step: float, get: Callable, set: Callable, fmt: Callable, undo_step := false) -> HSlider:
+# tip: hover text for the label and slider. undo_step: each drag, or each key step, is one undo step. Piece sliders pass true; body and fabric sliders do not.
+func _slider_row(parent: VBoxContainer, label_text: String, minv: float, maxv: float, step: float, get: Callable, set: Callable, fmt: Callable, tip: String = "", undo_step := false) -> HSlider:
 	var h := HBoxContainer.new()
 	var l := Label.new()
 	l.custom_minimum_size = Vector2(92, 0)
 	l.text = label_text
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	l.tooltip_text = tip
 	h.add_child(l)
 	var s := HSlider.new()
 	s.min_value = minv
@@ -1060,6 +1524,7 @@ func _slider_row(parent: VBoxContainer, label_text: String, minv: float, maxv: f
 		if undo_step and not dragging[0]:
 			push_undo()  # keyboard step
 		set.call(v))
+	s.tooltip_text = tip
 	parent.add_child(h)
 	return s
 
@@ -1142,35 +1607,6 @@ func _h4(text: String) -> Label:
 # Collapsed-by-default section: a toggle header and a scroll box that shows about six rows when
 # open. Long lists (one row per edge) stay available without stretching the side panel. The
 # open/closed state survives the tab rebuilds that happen on every edit.
-func _fold_section(title: String, rows: Array) -> VBoxContainer:
-	var box := VBoxContainer.new()
-	var head := Button.new()
-	head.toggle_mode = true
-	head.button_pressed = _fold_open
-	head.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	head.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	head.text = ("[-] " if _fold_open else "[+] ") + title
-	box.add_child(head)
-	var scroll := ScrollContainer.new()
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	scroll.visible = _fold_open
-	box.add_child(scroll)
-	var body := Label.new()
-	body.text = "\n".join(rows)
-	body.autowrap_mode = TextServer.AUTOWRAP_OFF
-	scroll.add_child(body)
-	# about six rows tall (the label's measured height per row, plus room for the scrollbar); set
-	# once the label has its theme font, i.e. after this box is in the tree
-	(func() -> void:
-		var per_row := body.get_minimum_size().y / float(maxi(rows.size(), 1))
-		scroll.custom_minimum_size = Vector2(0, per_row * 6.0 + 4.0)).call_deferred()
-	head.toggled.connect(func(on: bool) -> void:
-		_fold_open = on
-		head.text = ("[-] " if on else "[+] ") + title
-		scroll.visible = on)
-	return box
-
-
 func _sync_sec_row(key: String, s: HSlider, o: Label, auto: Button) -> void:
 	var v = meas.get(key, null)
 	var is_auto: bool = v == null
@@ -1751,7 +2187,7 @@ func _build_table_bar() -> void:
 	bar.add_child(snap_box)
 	var hint := Label.new()
 	hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	hint.clip_text = true
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART  # sew lengths and the warning need the full line
 	hint.add_theme_font_size_override("font_size", 12)
 	($UI/Root/Main/TablePane as VBoxContainer).add_child(hint)
 	table.hint_label = hint
