@@ -17,6 +17,9 @@ func _ready() -> void:
 	get_tree().create_timer(180.0).timeout.connect(func() -> void:
 		print("RESULT: watchdog timeout")
 		get_tree().quit(2))
+	# headless starts the root window at a tiny size (85 x 85), which puts the view pane off-screen; the
+	# pointer events below would then never reach it. Size it like the project's 1280 x 720 window.
+	get_window().size = Vector2i(1280, 720)
 	ed = load("res://editor.tscn").instantiate()
 	add_child(ed)
 	await _frames(3)

@@ -298,9 +298,9 @@ func _run() -> void:
 	await _frame()
 	var seen := false
 	for lab in ed.find_children("*", "Label", true, false):
-		if lab is Label and (lab as Label).text.find("edge 0 (") >= 0 and (lab as Label).text.find("↔") >= 0:
+		if lab is Label and (lab as Label).text.find("Seam 1: ") >= 0 and (lab as Label).text.find("edge 1 (") >= 0 and (lab as Label).text.find("↔") >= 0:
 			seen = true
-	_check(seen, "seams tab lists 'piece edge n (cm) ↔ twin edge n (cm)'")
+	_check(seen, "seams tab lists 'Seam 1: piece edge 1 (cm) ↔ twin edge 1 (cm)' (1-based)")
 
 	print("EDIT done, %d failures" % fails)
 
