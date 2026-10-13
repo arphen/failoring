@@ -12,6 +12,8 @@
 class_name FailoringWrap
 extends RefCounted
 
+const BodyGen = preload("res://body_gen.gd")
+
 const NA := 180        # polar samples (shared.js NA)
 const MS := 48         # arc samples (shared.js MS)
 const ARC_N := 720     # arc-length table samples (shared.js N)
@@ -54,8 +56,6 @@ static func _norm3(a: Array) -> Array:
 func _init(piece: Dictionary, sections: Dictionary, arms: Dictionary) -> void:
 	_piece = piece
 	_wrap = piece.get("wrap", {})
-	if String(_wrap.get("mode", "")) == "":
-		push_error("FailoringWrap: piece '%s' has no wrap.mode" % piece.get("id", "?"))
 	_outline = piece["outline"]
 	_bb = bbox_of(_outline)
 	_uc = (_bb[0] + _bb[2]) * 0.5
@@ -426,5 +426,181 @@ func _pos_at(u: float, v: float) -> Array:
 
 # Start position of the solver mesh vertex with pattern coordinates (u, v).
 func point(u: float, v: float) -> Vector3:
+	var mode := String(_wrap.get("mode", ""))
+	if mode == "":
+		var g := _generic()
+		var ring: float = float(_wrap.get("ring", 0.0))
+		var width: float = _row_t(u, v)[1]
+		var f := 1.0
+		if ring > 0.0:
+			f = maxf(1.0, ring * width / float(g["per"]))
+		var p := _gen_phi_of(float(g["sc"]) + (u - _uc) / f)
+		var r := _gen_rad(p) * f
+		return Vector3(r * sin(p), float(_wrap.get("y", 0.0)) + (v - _bb[1]), float(g["cz"]) + r * cos(p))
 	var p := _pos_at(u, v)
 	return Vector3(p[0], p[1], p[2])
+
+
+# Exploded pose (worker.js P1): upright and flat, tangent to the envelope at the piece
+# centre, pushed outward by d. Used by the timeline stages, not the simulation.
+func flat_point(u: float, v: float, d: float) -> Vector3:
+	var mode := String(_wrap.get("mode", ""))
+	if mode == "":
+		var g := _generic()
+		var tx: float = g["tx"]
+		var tz: float = g["tz"]
+		var c0: Array = g["c0"]
+		return Vector3(c0[0] - tz * d + tx * (u - _uc), float(_wrap.get("y", 0.0)) + (v - _bb[1]), c0[1] + tx * d + tz * (u - _uc))
+	if mode == "arm":
+		var side := String(_wrap.get("side", "L"))
+		var adv: Dictionary = _arms[side]
+		var sg := 1.0 if side == "L" else -1.0
+		var sTop: float = 0.06 if _wrap.get("sTop", null) == null else float(_wrap["sTop"])
+		var s: float = clampf(minf(float(adv["total"]), sTop + (_bb[3] - v)), 0.0, float(adv["total"]))
+		var k := 0 if s < float(adv["len"][0]) else 1
+		var l: float = s - (float(adv["len"][0]) if k == 1 else 0.0)
+		var seg: Array = adv["seg"][k]
+		var pts: Array = adv["pts"][k]
+		var rad: Array = adv["rad"]
+		var ra: float = rad[mini(rad.size() - 1, int(round(s / 0.01)))]
+		return Vector3(pts[0] + seg[0] * l + sg * (ra + clear_dist() + d), pts[1] + seg[1] * l, pts[2] + seg[2] * l - sg * (u - _uc))
+	var fb := _flat_basis()
+	return Vector3(fb[0] - fb[3] * d + fb[2] * (u - _uc), float(_wrap.get("y", 0.0)) + (v - _bb[1]), fb[1] + fb[2] * d + fb[3] * (u - _uc))
+
+
+# Tangent basis at the piece centre for the exploded pose (cached per piece).
+func _flat_basis() -> Array:
+	if _flat != null:
+		return _flat
+	var vc: float = (_bb[1] + _bb[3]) * 0.5
+	var c0 := _pos_at(_uc, vc)
+	var ca := _pos_at(_uc - 0.005, vc)
+	var cb := _pos_at(_uc + 0.005, vc)
+	var tx: float = cb[0] - ca[0]
+	var tz: float = cb[2] - ca[2]
+	var tl: float = sqrt(tx * tx + tz * tz)
+	if tl == 0.0:
+		tl = 1.0
+	_flat = [c0[0], c0[2], tx / tl, tz / tl]
+	return _flat
+
+
+var _flat = null
+var _env = null
+
+
+# Generic envelope wrap for pieces without wrap.mode (port of FL.makeWrap): convex hull of
+# the body sections the piece spans, arc-length parametrised.
+func _generic() -> Dictionary:
+	if _env != null:
+		return _env
+	var w: Dictionary = _wrap
+	var dy: float = _sections["dy"]
+	var ny: int = _sections["ny"]
+	var h0: float = float(w.get("y", 0.0))
+	var h1: float = h0 + (_bb[3] - _bb[1])
+	var k0 := maxi(0, int(floor(h0 / dy)))
+	var k1 := mini(ny - 1, int(ceil(h1 / dy)))
+	var pts := []
+	for k in range(k0, k1 + 1):
+		var h = _sections["hulls"][k]
+		if h != null:
+			for q in (h as Array):
+				pts.append(float(q))
+	if pts.size() < 6:
+		pts = []
+		for a in 16:
+			pts.append(0.05 * sin(float(a) * PI / 8.0))
+			pts.append(0.05 * cos(float(a) * PI / 8.0))
+	var hull := BodyGen.hull2(PackedFloat32Array(pts), pts.size() / 2)
+	var n: int = hull.size() / 2
+	var a := 0.0
+	var cz := 0.0
+	for i in n:
+		var j := (i + 1) % n
+		var cr: float = hull[2 * i] * hull[2 * j + 1] - hull[2 * j] * hull[2 * i + 1]
+		a += cr
+		cz += (hull[2 * i + 1] + hull[2 * j + 1]) * cr
+	cz = cz / (3.0 * a) if absf(a) > 1e-12 else 0.0
+	var r := PackedFloat64Array()
+	r.resize(361)
+	for x in 360:
+		var p := TAU * float(x) / 360.0
+		var dx := sin(p)
+		var dz := cos(p)
+		var best := 0.02
+		for i in n:
+			var j := (i + 1) % n
+			var px: float = hull[2 * i]
+			var pz: float = hull[2 * i + 1] - cz
+			var ex: float = hull[2 * j] - hull[2 * i]
+			var ez: float = hull[2 * j + 1] - hull[2 * i + 1]
+			var den: float = dx * ez - dz * ex
+			if absf(den) < 1e-12:
+				continue
+			var t: float = (px * ez - pz * ex) / den
+			var s: float = (px * dz - pz * dx) / den
+			if t > best and s >= -1e-9 and s <= 1.0 + 1e-9:
+				best = t
+		r[x] = best + clear_dist()
+	r[360] = r[0]
+	_env = {"cz": cz, "R": r, "hull_n": n}
+	_build_gen_tables()
+	return _env
+
+
+func _gen_rad(phi: float) -> float:
+	var g: Dictionary = _env
+	var r: PackedFloat64Array = g["R"]
+	var f := fposmod(phi / TAU, 1.0) * 360.0
+	var i := mini(359, int(floor(f)))
+	return r[i] + (r[i + 1] - r[i]) * (f - float(i))
+
+
+func _gen_curve(phi: float) -> Array:
+	var r := _gen_rad(phi)
+	return [r * sin(phi), float(_env["cz"]) + r * cos(phi)]
+
+
+func _build_gen_tables() -> void:
+	var st := PackedFloat64Array()
+	st.resize(721)
+	var prev := _gen_curve(0.0)
+	for i in range(1, 721):
+		var c := _gen_curve(TAU * float(i) / 720.0)
+		st[i] = st[i - 1] + sqrt((c[0] - prev[0]) * (c[0] - prev[0]) + (c[1] - prev[1]) * (c[1] - prev[1]))
+		prev = c
+	var phi0: float = float(_wrap.get("theta", 0.0)) * PI / 180.0
+	var f := fposmod(phi0 / TAU, 1.0) * 720.0
+	var i := mini(719, int(floor(f)))
+	var sc: float = st[i] + (st[i + 1] - st[i]) * (f - float(i))
+	var c0 := _gen_curve(phi0)
+	var ca := _gen_curve(phi0 - 1e-3)
+	var cb := _gen_curve(phi0 + 1e-3)
+	var tx: float = cb[0] - ca[0]
+	var tz: float = cb[1] - ca[1]
+	var tl: float = sqrt(tx * tx + tz * tz)
+	if tl == 0.0:
+		tl = 1.0
+	_env["st"] = st
+	_env["per"] = st[720]
+	_env["sc"] = sc
+	_env["phi0"] = phi0
+	_env["c0"] = c0
+	_env["tx"] = tx / tl
+	_env["tz"] = tz / tl
+
+
+func _gen_phi_of(s: float) -> float:
+	var st: PackedFloat64Array = _env["st"]
+	var per: float = _env["per"]
+	s = fposmod(s, per)
+	var lo := 0
+	var hi := 720
+	while hi - lo > 1:
+		var mid := (lo + hi) >> 1
+		if st[mid] <= s:
+			lo = mid
+		else:
+			hi = mid
+	return (float(lo) + (s - st[lo]) / (st[lo + 1] - st[lo])) / 720.0 * TAU

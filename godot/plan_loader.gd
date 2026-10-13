@@ -7,11 +7,7 @@ extends RefCounted
 
 const Wrap = preload("res://wrap.gd")
 
-const QUALITY := {"edge": 0.040, "sub": 2, "newton": 8, "frames": 48}
-const SEAM_STIFFNESS := 20000.0
-const RAMP_FRAMES := 20
 const DISPLAY_MARGIN := 0.0008
-const GRAVITY := -9.81
 
 
 static func load_json(path: String) -> Dictionary:
@@ -20,6 +16,38 @@ static func load_json(path: String) -> Dictionary:
 		return {}
 	var v = JSON.parse_string(text)
 	return v if v is Dictionary else {}
+
+
+static func signed_area(outline: Array) -> float:
+	var a := 0.0
+	for i in outline.size():
+		var q: Array = outline[(i + 1) % outline.size()]
+		a += float(outline[i][0]) * float(q[1]) - float(q[0]) * float(outline[i][1])
+	return a * 0.5
+
+
+# Mirrors App.loadPattern: counter-clockwise outlines (remapping seam edges when a
+# clockwise outline is reversed) plus piece defaults. Returns a deep copy.
+static func normalize_plan(plan: Dictionary) -> Dictionary:
+	var o: Dictionary = plan.duplicate(true)
+	var seams: Array = o.get("seams", [])
+	for p in o.get("pieces", []):
+		var n: int = (p["outline"] as Array).size()
+		if signed_area(p["outline"]) < 0.0:
+			(p["outline"] as Array).reverse()
+			for s in seams:
+				for side in ["a", "b"]:
+					if String(s[side][0]) == String(p["id"]):
+						s[side][1] = ((n - 2 - int(s[side][1])) % n + n) % n
+						s["reverse"] = not bool(s.get("reverse", false))
+		p["grain"] = float(p.get("grain", 0.0))
+		if not (p.get("table") is Dictionary):
+			p["table"] = {"x": 0.0, "y": 0.0}
+		if not (p.get("wrap") is Dictionary):
+			p["wrap"] = {"theta": 0.0, "y": 0.5, "clear": 0.012}
+		p["name"] = String(p.get("name", p.get("id", "?")))
+	o["seams"] = seams.filter(func(s) -> bool: return s.has("a") and s.has("b"))
+	return o
 
 
 # plan pieces use [x, y] pairs; the sim takes PackedVector2Array.
@@ -32,16 +60,16 @@ static func to_outline(raw: Array) -> PackedVector2Array:
 
 
 # Mirrors worker.js build(): returns {sim, order, first, n} or {} on error.
-static func build(plan: Dictionary, sections: Dictionary, arms: Dictionary, standing: PackedVector3Array, body_tris: PackedInt32Array, fabric_id: String) -> Dictionary:
+static func build(plan: Dictionary, sections: Dictionary, arms: Dictionary, standing: PackedVector3Array, body_tris: PackedInt32Array, fabric_id: String, quality: Dictionary, seam_stiffness: float, ramp_frames: int, self_collision: bool) -> Dictionary:
 	var sim := FailoringSim.new()
 	if not sim.load_materials("res://materials/fabrics.json"):
 		push_error("plan_loader: cannot load materials")
 		return {}
-	sim.set_param("substeps", QUALITY["sub"])
-	sim.set_param("newton_iterations", QUALITY["newton"])
-	sim.set_param("seam_stiffness", SEAM_STIFFNESS)
-	sim.set_param("seam_ramp_frames", RAMP_FRAMES)
-	sim.set_param("self_collision", 0)
+	sim.set_param("substeps", quality["sub"])
+	sim.set_param("newton_iterations", quality["newton"])
+	sim.set_param("seam_stiffness", seam_stiffness)
+	sim.set_param("seam_ramp_frames", ramp_frames)
+	sim.set_param("self_collision", 1 if self_collision else 0)
 	sim.set_param("tension_stiffness", 1)  # the browser turns this on for garments
 	sim.add_plane(Vector3.ZERO, Vector3.UP)  # feet stand on y = 0, like the browser floor
 	if sim.set_body_mesh(standing, body_tris, 0.007) < 0.0:
@@ -51,7 +79,7 @@ static func build(plan: Dictionary, sections: Dictionary, arms: Dictionary, stan
 	var order: Array = []
 	var first := {}
 	for pc in plan["pieces"]:
-		var idx := sim.add_polygon_panel(to_outline(pc["outline"]), QUALITY["edge"], fabric_id,
+		var idx := sim.add_polygon_panel(to_outline(pc["outline"]), quality["edge"], fabric_id,
 			Vector3.ZERO, Vector3.RIGHT, Vector3.UP, float(pc.get("grain", 0.0)), String(pc.get("id", "?")))
 		if idx < 0:
 			push_error("plan_loader: panel failed: " + String(pc.get("id", "?")))
@@ -71,13 +99,25 @@ static func build(plan: Dictionary, sections: Dictionary, arms: Dictionary, stan
 		sim.add_seam(index_of[a], int(s["a"][1]), index_of[b], int(s["b"][1]), bool(s.get("reverse", false)))
 	# Start positions: the wrap evaluated at the solver's own mesh vertices (worker.js P2).
 	var pos := sim.get_positions()
+	var uvs := {}
+	var ranges := {}
 	for pc in plan["pieces"]:
 		var pid := String(pc["id"])
 		var wrap := Wrap.new(pc, sections, arms)
 		var uv := sim.get_panel_vertices_2d(index_of[pid])
 		var f0: int = first[pid]
+		uvs[pid] = uv
+		ranges[pid] = {"first": f0, "count": uv.size()}
 		for i in uv.size():
 			pos[f0 + i] = wrap.point(uv[i].x, uv[i].y)
 	sim.set_positions(pos)
 	sim.setup_display()
-	return {"sim": sim, "order": order, "first": first, "n": sim.get_vertex_count(), "warn": sim.get_warnings()}
+	var chains := {}
+	for pc in plan["pieces"]:
+		var pid := String(pc["id"])
+		var edge_lists := []
+		for e in (pc["outline"] as Array).size():
+			edge_lists.append(sim.get_edge_chain(index_of[pid], e))
+		chains[pid] = edge_lists
+	return {"sim": sim, "order": order, "first": first, "n": sim.get_vertex_count(), "warn": sim.get_warnings(),
+		"uv": uvs, "ranges": ranges, "chains": chains, "p2": pos.duplicate(), "tris": sim.get_indices()}

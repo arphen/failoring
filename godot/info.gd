@@ -3,6 +3,8 @@
 # piece pair with lengths and ease, suggested sewing order, measurements.
 class_name FailoringInfo
 
+const Wrap = preload("res://wrap.gd")
+
 
 static func _words(s: String) -> String:
 	var out := s
@@ -149,8 +151,9 @@ static func _fabric_name(material: Variant, fallback: String) -> String:
 	return String(material)
 
 
-# Full panel text. pieces = plan pieces (for names), fabric_name = current fabric display name.
-static func format(info: Dictionary, pieces: Array, fabric_name: String) -> String:
+# Full panel text. pieces = plan pieces (for names), fabric_name = current fabric
+# display name, meas = body measurements (for plans without info).
+static func format(info: Dictionary, pieces: Array, fabric_name: String, meas: Dictionary) -> String:
 	var lines: Array = []
 	var info_pieces: Array = info.get("pieces", [])
 	var title := String(info.get("title", ""))
@@ -211,10 +214,29 @@ static func format(info: Dictionary, pieces: Array, fabric_name: String) -> Stri
 			n += 1
 		lines.append("")
 		lines.append("[b]Measurements[/b]")
-		var meas: Dictionary = info.get("measurements", {})
-		for k in meas.keys():
-			if meas[k] is float or meas[k] is int:
-				lines.append("• %s: %s cm" % [_words(String(k)), _f1(float(meas[k]) / 10.0)])
+		var mmeas: Dictionary = info.get("measurements", {})
+		for k in mmeas.keys():
+			if mmeas[k] is float or mmeas[k] is int:
+				lines.append("• %s: %s cm" % [_words(String(k)), _f1(float(mmeas[k]) / 10.0)])
 	else:
-		lines.append("[b]No pattern info in this plan.[/b]")
+		lines.append("[b]Hand-drafted pattern[/b]")
+		lines.append("[color=#8f98a6]Drafted in this app, not from a published pattern.[/color]")
+		lines.append("")
+		lines.append("[b]Pieces[/b]")
+		for p in pieces:
+			var bb := Wrap.bbox_of(_outlines(p))
+			lines.append("• [b]%s[/b] %s x %s cm" % [String(p.get("name", p.get("id", "?"))), _f1((bb[2] - bb[0]) * 100.0), _f1((bb[3] - bb[1]) * 100.0)])
+		lines.append("")
+		lines.append("[b]Body measurements in use[/b]")
+		for k in ["height", "bust", "waist", "hip", "shoulder", "arm", "inseam", "neck", "thigh", "upperarm", "back"]:
+			if meas.has(k):
+				var v = meas[k]
+				lines.append("• %s: %s" % [_words(k), "auto" if v == null else "%s cm" % _f1(float(v) * 100.0)])
 	return "\n".join(lines)
+
+
+static func _outlines(p: Dictionary) -> Array:
+	var out := []
+	for q in p.get("outline", []):
+		out.append(Vector2(float(q[0]), float(q[1])))
+	return out

@@ -62,6 +62,15 @@ func show_pose(v: PackedVector3Array) -> void:
 	_build(v)
 
 
+# Uses caller-supplied mesh data instead of files (live generated bodies).
+func use_custom(verts: PackedVector3Array, tris: PackedInt32Array) -> void:
+	standing = verts
+	indices = tris
+	frames = []
+	mesh = _mesh
+	_build(standing)
+
+
 func _process(delta: float) -> void:
 	if not walking or frames.is_empty():
 		return
