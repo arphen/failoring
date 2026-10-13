@@ -14,6 +14,7 @@ const Info = preload("res://info.gd")
 const Builtin = preload("res://builtin_plans.gd")
 const Table = preload("res://table.gd")
 const Look = preload("res://look.gd")
+const ClothShade = preload("res://cloth_shade.gd")
 const Library = preload("res://library.gd")
 const Outfit = preload("res://outfit.gd")
 
@@ -30,6 +31,10 @@ const RAMP := 24.0
 var sim: FailoringSim
 var body_node: BodyView
 var cloth_node: MeshInstance3D
+var render_q := "medium"                 # Look.QUALITY_LEVELS: low, medium, high (settings.cfg [render] quality)
+var render_env: Environment
+var render_sun: DirectionalLight3D
+var _shade := ClothShade.new()           # cloth normals, UVs, strain, contact occlusion, fabric surfaces
 var cam_pivot: Node3D
 var cam: Camera3D
 var debounce: Timer
@@ -168,6 +173,7 @@ func _ready() -> void:
 	M = BodyGen.load_data(PlanLoader.load_json("res://assets/body_data.json"))
 	meas = (BodyGen.PRESETS["average"] as Dictionary).duplicate()
 	_build_scene()
+	_apply_render_quality()
 	_apply_auto_env()
 	_build_ui()
 	_build_table_bar()
@@ -229,7 +235,11 @@ func _load_settings() -> void:
 	var cf := ConfigFile.new()
 	if cf.load(SETTINGS_PATH) == OK:
 		ui_scale_pref = clampf(float(cf.get_value("ui", "scale", 0.0)), 0.0, UI_SCALE_MAX)
-	# a missing or unreadable file keeps the default (auto)
+		var rq := String(cf.get_value("render", "quality", "medium"))
+		render_q = rq if Look.QUALITY_LEVELS.has(rq) else "medium"
+	# a missing or unreadable file keeps the defaults (auto scale, medium render quality)
+	if OS.has_environment("FL_RENDER") and Look.QUALITY_LEVELS.has(OS.get_environment("FL_RENDER")):
+		render_q = OS.get_environment("FL_RENDER")
 
 
 func _save_settings() -> void:
@@ -239,6 +249,26 @@ func _save_settings() -> void:
 	var err := cf.save(SETTINGS_PATH)
 	if err != OK:
 		push_warning("could not save %s (error %d)" % [SETTINGS_PATH, err])
+
+
+# Render quality (Look.QUALITY): applies to the scene at once and is kept in [render] quality.
+func _apply_render_quality() -> void:
+	if render_env == null:
+		return
+	Look.apply_quality(render_q, render_env, render_sun, sub_view, body_node.material_override as StandardMaterial3D)
+	_shade.set_quality(render_q)
+
+
+func _cycle_render_quality() -> void:
+	var i := Look.QUALITY_LEVELS.find(render_q)
+	render_q = Look.QUALITY_LEVELS[(i + 1) % Look.QUALITY_LEVELS.size()]
+	_apply_render_quality()
+	var cf := ConfigFile.new()
+	cf.load(SETTINGS_PATH)
+	cf.set_value("render", "quality", render_q)
+	if cf.save(SETTINGS_PATH) != OK:
+		push_warning("could not save %s" % SETTINGS_PATH)
+	notify("Render quality: " + render_q.capitalize())
 
 
 # Effective factor for a window of win physical pixels: the user's fixed choice, or auto from the window size.
@@ -344,10 +374,13 @@ func _build_scene() -> void:
 	env.environment = Environment.new()
 	Look.environment(env.environment)
 	stage.add_child(env)
+	render_env = env.environment
 	var sun := DirectionalLight3D.new()
 	sun.rotation_degrees = Vector3(-50, 30, 0)
 	Look.key_light(sun)
 	stage.add_child(sun)
+	render_sun = sun
+	stage.add_child(Look.contact_shadow())
 	Look.fill_light(stage)
 	var floor_node := MeshInstance3D.new()
 	var disc := CylinderMesh.new()
@@ -369,8 +402,7 @@ func _build_scene() -> void:
 	body_node.material_override = Look.body_material()
 	stage.add_child(body_node)
 	cloth_node = MeshInstance3D.new()
-	cloth_node.extra_cull_margin = 0.5
-	cloth_node.material_override = Look.cloth_material()
+	cloth_node.extra_cull_margin = 0.5   # one material per fabric surface: see cloth_shade.gd
 	stage.add_child(cloth_node)
 
 
@@ -2553,6 +2585,7 @@ func rebuild() -> void:
 	for pid in built["order"]:
 		wraps[pid] = Wrap.new(Table.piece_by_id(_sim_pieces, pid), body_stand["sections"], body_stand["arms"])
 	_build_mesh_edges()
+	_shade.setup(meta, mesh_edges, _sim_pieces, fabric_id, _stand_v3, _disp_idx)
 	_col_key = []  # colours depend on the new meta/mesh_edges
 	_build_stitches()
 	_build_mat()
@@ -2835,16 +2868,8 @@ var cur_cloth := PackedVector3Array()
 func _set_cloth_mesh(disp: PackedVector3Array) -> void:
 	if disp.is_empty() or _disp_idx.is_empty():
 		return
-	var arr := []
-	arr.resize(Mesh.ARRAY_MAX)
-	arr[Mesh.ARRAY_VERTEX] = disp
-	arr[Mesh.ARRAY_INDEX] = _disp_idx
-	arr[Mesh.ARRAY_COLOR] = _cloth_colors()
-	arr[Mesh.ARRAY_NORMAL] = Look.cloth_normals(disp, _disp_idx)
-	# one ArrayMesh for the whole session: reset its surface instead of allocating a new mesh per update
-	_cloth_am.clear_surfaces()
-	_cloth_am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
-	cloth_node.mesh = _cloth_am
+	# one ArrayMesh for the whole session, rebuilt per update with one surface per fabric (cloth_shade.gd)
+	_shade.fill(_cloth_am, cloth_node, disp, _cloth_colors())
 
 
 var _mid_panel := PackedInt32Array()
@@ -3340,6 +3365,9 @@ func _unhandled_key_input(e: InputEvent) -> void:
 	if e.keycode == KEY_F or e.keycode == KEY_HOME:
 		_touch_user_cam()
 		_reset_view()
+		get_viewport().set_input_as_handled()
+	elif e.keycode == KEY_G:
+		_cycle_render_quality()
 		get_viewport().set_input_as_handled()
 
 
