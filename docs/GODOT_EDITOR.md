@@ -80,6 +80,26 @@ sew-edge highlights. Undo/redo (60), snap 5 mm, keyboard as in the browser.
 Deviations: no grain hatch (arrow only), no per-edge thick sew highlight on the table
 (the sew edge still highlights in the edge labels row).
 
+Numeric entry (Piece tab, Enter applies, one undo step each): the piece's width and height
+(cm, scaled about its left and bottom edges); each edge's length in cm (the corner after the
+edge moves along it); a selected corner's x and y in cm from the piece's origin. Any change
+that leaves an edge under 8 mm is refused with a message in the status line.
+
+Placement: Front, Back, Left side and Right side set Around to 0, 180, 90 and 270 degrees.
+Duplicate and Mirror offer a flip to the other side (Around +180) when the new placement
+covers the old one.
+
+Sewing: the first edge and the candidate edge are highlighted while the Sew tool is active.
+The hint line names the next click and, once an edge is picked, shows both lengths. A pair
+that differs by more than 5 % or 1 cm is flagged (the drape eases the difference). Seams
+tab rows list both pieces and their lengths.
+
+Copy and paste: Ctrl+C copies the selected piece, Ctrl+V pastes it to the right of the table.
+Mirror twin: "Make a mirror twin" adds the mirror image of a piece beside it, linked both ways.
+With Symmetric edits on, a change to either piece (corners, edges, size, grain, placement) is
+copied to the other. The twin needs the same number of corners; a twin that is out of step is
+left alone and the Piece tab says so. Seam allowance is not implemented.
+
 ## Timeline
 
 `T` in [0, 4]: cut, move, sew, drape; scrub slider, stage and ±0.1 step buttons, speed
