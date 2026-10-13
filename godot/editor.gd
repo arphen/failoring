@@ -68,6 +68,21 @@ var playing := false
 var bake_ms := 0.0
 var step_ms := 0.0
 
+# Background step: one worker thread runs bake + sim.step + display copy for the NEXT frame while the main thread draws
+# the previous one (see _submit_step). Only the worker calls into `sim` while a step is in flight. The main thread calls
+# sim only after _drain(), and takes results only through _result under _mutex.
+var _worker: Thread
+var _mutex := Mutex.new()
+var _work_sem := Semaphore.new()   # main -> worker: a job is posted, or quit is requested
+var _done_sem := Semaphore.new()   # worker -> main: the posted job is finished and _result holds it
+var _job := {}
+var _result := {}
+var _quit := false
+var _in_flight := false
+var _use_worker := false
+var _solver_stats := {}            # cached after each collected step (sim must not be queried mid-step)
+var _vcount := 0
+
 # timeline (mirrors the browser footer + V.T stages 0-4)
 var tl_t := 0.0
 var tl_speed := 1.0
@@ -116,6 +131,12 @@ func _ready() -> void:
 	debounce.wait_time = 0.25
 	debounce.timeout.connect(_on_debounce)
 	add_child(debounce)
+	# Headless runs and tests keep the synchronous path (no threads, identical results). FL_THREAD=1 forces the worker
+	# under headless (for tests); FL_SYNC=1 forces the synchronous path.
+	_use_worker = (DisplayServer.get_name() != "headless" or OS.has_environment("FL_THREAD")) and not OS.has_environment("FL_SYNC")
+	if _use_worker:
+		_worker = Thread.new()
+		_worker.start(_worker_main)
 	regen_and_rebuild()
 	if OS.has_environment("FL_DEMO"):
 		_demo_toggle()
@@ -1069,6 +1090,7 @@ func _fix_selection() -> void:
 func changed(kind: String) -> void:
 	table_dirty = true
 	if kind == "load":
+		_drain()  # the worker may be stepping the old sim: let it finish before the sim is dropped
 		sim = null
 		playing = false
 		undo.clear()
@@ -1102,6 +1124,21 @@ func _process(_delta: float) -> void:
 
 func _on_debounce() -> void:
 	regen_and_rebuild()
+
+
+# Stops the worker before the editor leaves the tree. A step still in flight is finished and its result dropped
+# (no UI runs here, so nothing reads the frame).
+func _exit_tree() -> void:
+	if _in_flight:
+		_done_sem.wait()
+		_in_flight = false
+	if _worker != null:
+		_mutex.lock()
+		_quit = true
+		_mutex.unlock()
+		_work_sem.post()
+		_worker.wait_to_finish()
+		_worker = null
 
 
 func _build_table_bar() -> void:
@@ -1274,6 +1311,7 @@ func _reset_working() -> void:
 
 
 func regen_and_rebuild() -> void:
+	_drain()  # body regen and rebuild replace the sim: no step may be running
 	if M.is_empty():
 		return
 	body_rest = BodyGen.generate(M, meas, prev_body)
@@ -1318,6 +1356,7 @@ static func _to_v3a(p: PackedFloat32Array) -> PackedVector3Array:
 
 
 func rebuild() -> void:
+	_drain()
 	sim = null
 	frame = 0
 	walk_k = 0.0
@@ -1335,6 +1374,8 @@ func rebuild() -> void:
 		return
 	sim = built["sim"]
 	_disp_idx = sim.get_display_indices()  # topology is fixed for this sim: read it once
+	_solver_stats = sim.get_solver_stats()
+	_vcount = sim.get_vertex_count()
 	meta = built
 	wraps.clear()
 	for pid in built["order"]:
@@ -1371,6 +1412,7 @@ func _physics_process(_delta: float) -> void:
 	_update_camera()
 	if sim == null:
 		return
+	_poll_step(false)  # collect a step the worker has finished; never blocks the draw loop (paused or playing)
 	if playing:
 		_advance()
 	_show_current()
@@ -1393,10 +1435,11 @@ func _advance() -> void:
 			playing = false
 	else:
 		var need := target if tl_t >= 4.0 else mini(target, _frame_idx() + 1)
-		# one bake+step (0.1-0.25 s on the main thread) per tick and per rendered frame. Playback time still
-		# advances below, so a slow sim makes playback slower instead of freezing the UI in bursts.
-		if frames.size() < need and _may_step():
-			_step_frame()
+		# at most one step in flight. Threaded: the next step starts as soon as the last one is collected. Synchronous
+		# (headless/tests): one step per drawn frame, as before. Playback time still advances below, so a slow sim makes
+		# playback slower instead of freezing the UI in bursts.
+		if not _in_flight and frames.size() < need and (_use_worker or _may_step()):
+			_submit_step(_make_job())
 		tl_t = minf(4.0, tl_t + tl_speed / 60.0 / maxf(1.5, float(target) / 24.0))
 		if tl_t >= 4.0 and frames.size() >= target:
 			playing = false
@@ -1425,32 +1468,107 @@ func _frame_idx() -> int:
 	return mini(int(round(clampf(tl_t - 3.0, 0.0, 1.0) * float(n - 1))), frames.size() - 1)
 
 
-func _step_frame() -> void:
+# Main thread: decides what the next frame needs (the body pose and the gravity ramp are computed here, from main-thread
+# state, and handed to the worker as plain data). Must run with no step in flight, so `frame` and `walk_k` stay in step.
+func _make_job() -> Dictionary:
 	var q: Dictionary = QUALITIES[quality]
 	var settle: int = q["frames"]
-	var t0 := Time.get_ticks_usec()
-	bake_ms = 0.0
-	var pose_pos := _stand_v3
 	frame = frames.size() + 1
+	var job := {"body": _stand_v3, "move": false}
 	if motion == "walk" and frame > settle:
 		walk_k += 1.0
 		var stride: float = _smooth(minf(1.0, walk_k / RAMP))
 		var phase: float = fposmod(walk_k / CYCLE, 1.0)
 		var pose := BodyGen.pose(M, body_rest, phase, {"stride": stride, "arms": stride})
-		pose_pos = _to_v3a(pose["pos"])
-		bake_ms = sim.set_body_positions(pose_pos)
+		job["body"] = _to_v3a(pose["pos"])
+		job["move"] = true
 	var f := float(frame)
 	if f <= float(ramp_frames) + 1.0 and ramp_frames > 0:
-		sim.set_param("gravity_y", -9.81 * minf(1.0, pow(f / float(ramp_frames), 2.0)))
+		job["gravity"] = -9.81 * minf(1.0, pow(f / float(ramp_frames), 2.0))
+	return job
+
+
+# Worker side: the body bake, the gravity, one solver frame and the copies of the display and cloth positions. This is
+# the only code that calls `sim` while a step is in flight. It reads the job and writes only its return value.
+func _run_step(job: Dictionary) -> Dictionary:
+	var t0 := Time.get_ticks_usec()
+	var bake := 0.0
+	if job["move"]:
+		bake = sim.set_body_positions(job["body"])
+	if job.has("gravity"):
+		sim.set_param("gravity_y", job["gravity"])
 	var t1 := Time.get_ticks_usec()
 	sim.step(1)
 	var t2 := Time.get_ticks_usec()
-	step_ms = (t2 - t1) / 1000.0
-	frames.append({"pos": sim.get_display_positions(0.0008), "cloth": sim.get_positions(),
-		"body": pose_pos, "ke": sim.get_kinetic_energy(), "gap": sim.get_max_seam_gap(),
-		"clear": sim.get_min_body_clearance(), "ms": (t2 - t1) / 1000.0, "bake": bake_ms})
+	var fr := {"pos": sim.get_display_positions(0.0008), "cloth": sim.get_positions(),
+		"body": job["body"], "ke": sim.get_kinetic_energy(), "gap": sim.get_max_seam_gap(),
+		"clear": sim.get_min_body_clearance(), "ms": (t2 - t1) / 1000.0, "bake": bake}
+	return {"frame": fr, "stats": sim.get_solver_stats(), "vcount": sim.get_vertex_count(),
+		"total_ms": (t2 - t0) / 1000.0}
+
+
+# Worker thread body: waits for a posted job, runs it, publishes the result, signals the main thread.
+func _worker_main() -> void:
+	while true:
+		_work_sem.wait()
+		_mutex.lock()
+		var quit := _quit
+		var job := _job
+		_job = {}
+		_mutex.unlock()
+		if quit:
+			return
+		var res := _run_step(job)
+		_mutex.lock()
+		_result = res
+		_mutex.unlock()
+		_done_sem.post()
+
+
+# Main thread: starts a step. Threaded, it returns at once and the step runs on the worker; synchronous, it runs inline.
+func _submit_step(job: Dictionary) -> void:
+	if not _use_worker:
+		_collect(_run_step(job))
+		return
+	_mutex.lock()
+	_job = job
+	_mutex.unlock()
+	_in_flight = true
+	_work_sem.post()
+
+
+# Main thread: collects the step in flight if it has finished. block = true waits for it (used by _drain).
+func _poll_step(block: bool) -> void:
+	if not _in_flight:
+		return
+	if block:
+		_done_sem.wait()
+	elif not _done_sem.try_wait():
+		return
+	_in_flight = false
+	_mutex.lock()
+	var res := _result
+	_result = {}
+	_mutex.unlock()
+	_collect(res)
+
+
+# Blocks until no step is in flight. Call before anything that touches `sim` on the main thread (rebuild, body regen,
+# plan change, restart, free). Seeks call it too: they stop playback, so the wait happens at most once.
+func _drain() -> void:
+	_poll_step(true)
+
+
+# Main thread: appends a finished frame and caches what the UI reads from sim (so the UI never calls sim mid-step).
+func _collect(res: Dictionary) -> void:
+	frames.append(res["frame"])
+	_solver_stats = res["stats"]
+	_vcount = res["vcount"]
+	var fr: Dictionary = frames[frames.size() - 1]
+	bake_ms = float(fr["bake"])
+	step_ms = float(fr["ms"])
 	if frames.size() % 30 == 0:
-		_render_stats((t2 - t0) / 1000.0, frames[frames.size() - 1])
+		_render_stats(float(res["total_ms"]), fr)
 		print("EDITOR ", status_label.text.replace("\n", " | "))
 	if OS.has_environment("FL_AUTO"):
 		var parts := OS.get_environment("FL_AUTO").split(",")
@@ -1833,12 +1951,12 @@ func _build_timeline_bar() -> void:
 	var start := Button.new()
 	start.text = "|<"
 	start.tooltip_text = "Back to the start"
-	start.pressed.connect(func() -> void: tl_t = 0.0; playing = false; _sync_tl_ui(); _show_current())
+	start.pressed.connect(func() -> void: _drain(); tl_t = 0.0; playing = false; _sync_tl_ui(); _show_current())
 	bar.add_child(start)
 	var back := Button.new()
 	back.text = "<<"
 	back.tooltip_text = "Step back"
-	back.pressed.connect(func() -> void: tl_t = clampf(tl_t - 0.1, 0.0, 4.0); playing = false; _sync_tl_ui(); _show_current())
+	back.pressed.connect(func() -> void: _drain(); tl_t = clampf(tl_t - 0.1, 0.0, 4.0); playing = false; _sync_tl_ui(); _show_current())
 	bar.add_child(back)
 	tl_play_btn = Button.new()
 	tl_play_btn.text = ">"
@@ -1849,7 +1967,7 @@ func _build_timeline_bar() -> void:
 	var fwd := Button.new()
 	fwd.text = ">>"
 	fwd.tooltip_text = "Step forward"
-	fwd.pressed.connect(func() -> void: tl_t = clampf(tl_t + 0.1, 0.0, 4.0); playing = false; _sync_tl_ui(); _show_current())
+	fwd.pressed.connect(func() -> void: _drain(); tl_t = clampf(tl_t + 0.1, 0.0, 4.0); playing = false; _sync_tl_ui(); _show_current())
 	bar.add_child(fwd)
 	var spd := OptionButton.new()
 	spd.add_item("0.5x", 0)
@@ -1862,14 +1980,14 @@ func _build_timeline_bar() -> void:
 		var b := Button.new()
 		b.text = "%d" % (s + 1)
 		b.tooltip_text = ["Cut pieces", "Move to body", "Sew seams", "Drape"][s]
-		b.pressed.connect(func() -> void: tl_t = float(s); playing = false; _sync_tl_ui(); _show_current())
+		b.pressed.connect(func() -> void: _drain(); tl_t = float(s); playing = false; _sync_tl_ui(); _show_current())
 		bar.add_child(b)
 	tl_range = HSlider.new()
 	tl_range.min_value = 0.0
 	tl_range.max_value = 4000.0
 	tl_range.step = 1.0
 	tl_range.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	tl_range.value_changed.connect(func(v: float) -> void: tl_t = v / 1000.0; playing = false; _sync_tl_ui(); _show_current())
+	tl_range.value_changed.connect(func(v: float) -> void: _drain(); tl_t = v / 1000.0; playing = false; _sync_tl_ui(); _show_current())
 	bar.add_child(tl_range)
 	tl_stage_label = Label.new()
 	tl_stage_label.custom_minimum_size = Vector2(150, 0)
@@ -1917,13 +2035,12 @@ static func _smooth(x: float) -> float:
 
 
 func _render_stats(_m: float, fr: Dictionary) -> void:
-	var st: Dictionary = sim.get_solver_stats()
 	var done := " - done" if frames.size() >= target and target > 0 else ""
 	_set_text_if_changed(status_label, "%s / %s   frame %d/%d   verts %d   KE %s J   gap %.1f mm   clear %.1f mm\nbake %.0f ms   step %.0f ms (newton %d, ls-fail %d)%s" % [
-		plan_name, fabric_id, frames.size(), target, sim.get_vertex_count(), str(fr.get("ke", 0.0)),
+		plan_name, fabric_id, frames.size(), target, _vcount, str(fr.get("ke", 0.0)),
 		float(fr.get("gap", 0.0)) * 1000.0, float(fr.get("clear", 0.0)) * 1000.0,
 		float(fr.get("bake", 0.0)), float(fr.get("ms", 0.0)),
-		int(st.get("newton_iterations", 0)), int(st.get("line_search_failures", 0)), done])
+		int(_solver_stats.get("newton_iterations", 0)), int(_solver_stats.get("line_search_failures", 0)), done])
 	if frames.size() % 30 == 0 and not frames.is_empty():
 		print("EDITOR ", status_label.text.replace("\n", " | "))
 
