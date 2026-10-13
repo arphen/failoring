@@ -2,8 +2,16 @@ config_version=5
 
 [application]
 config/name="Failoring"
-run/main_scene="res://main.tscn"
+run/main_scene="res://editor.tscn"
 config/features=PackedStringArray("4.3")
 
 [rendering]
 renderer/rendering_method="forward_plus"
+lights_and_shadows/directional_shadow/size=2048
+
+[display]
+window/size/viewport_width=1280
+window/size/viewport_height=720
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+window/stretch/scale_mode="fractional"

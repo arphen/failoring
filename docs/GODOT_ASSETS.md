@@ -102,6 +102,19 @@ Plan format: `{ name, fabric, notes, pieces, seams, info }`, as the browser app'
 `{ id, name, outline, grain, table, wrap }` and each seam is `{ a, b, reverse }`. `info` has the seam summary and
 coverage (debug data). Coordinates are in metres on the standing body's axes.
 
+Holes (cutting table, step 2): a piece may carry `holes: [outline, ...]`, each hole a closed outline `[[x, y], ...]` in
+the piece's own metres, inside the piece's outline and clear of the other holes (`Table.holes_ok`). The mesher cuts
+the cloth out of each hole (`cloth_core` `meshPolygon(outline, holes, h)`: the hole's corners are exact boundary
+vertices, and its edges are free edges with no seam chains). The plan builder passes holes through
+`FailoringSim.add_polygon_panel_with_holes(outline, holes, ...)`; a piece without holes uses `add_polygon_panel` as
+before. The browser app does not read `holes` yet.
+
+Seam sides (step 4): a seam is `{a, b, reverse}` and a side is `[piece id, edge index]` (the whole edge, the old form) or
+`[piece id, edge index, t0, t1]`, a part of the edge from fraction t0 to t1 (0 is the edge's first corner). Two ranges on
+one edge must not overlap. The editor's rebuild splits each piece's outline at the range ends (`godot/seams.gd`,
+`Seams.expand`) and gives the simulator whole edges, so the solver never sees a range. The browser app reads only whole
+sides.
+
 Garments: `teagan` (t-shirt), `penelope` (pencil skirt), `charlie` (chinos). Each is drafted for each preset.
 
 ## Loader (godot/scripts/body_loader.gd)

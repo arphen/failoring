@@ -1,0 +1,3 @@
+# Godot editor import cache and generated import sidecars; the editor recreates both.
+.godot/
+*.import

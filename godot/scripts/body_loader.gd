@@ -24,6 +24,8 @@ var fps: float = 22.5
 var _t: float = 0.0
 var _last_frame: float = -1.0
 var _mesh: ArrayMesh = ArrayMesh.new()
+var _draw_idx: PackedInt32Array = PackedInt32Array()     # indices as drawn (winding flipped once, not per frame)
+var _shown: PackedVector3Array = PackedVector3Array()    # positions currently in the mesh, to skip repeat poses
 
 
 func _ready() -> void:
@@ -38,7 +40,7 @@ func load_preset(name: String) -> bool:
 	if obj.is_empty():
 		return false
 	standing = obj["vertices"]
-	indices = obj["indices"]
+	_set_topology(obj["indices"])
 	mesh = _mesh
 	_build(standing)
 	frames = []
@@ -52,6 +54,24 @@ func load_preset(name: String) -> bool:
 
 func show_standing() -> void:
 	walking = false
+	_build(standing)
+
+
+# Shows an explicit pose (the editor drives the walk clock itself so the rendered
+# body and the collider stay in sync).
+func show_pose(v: PackedVector3Array) -> void:
+	walking = false
+	if v.size() == _shown.size() and v == _shown:
+		return
+	_build(v)
+
+
+# Uses caller-supplied mesh data instead of files (live generated bodies).
+func use_custom(verts: PackedVector3Array, tris: PackedInt32Array) -> void:
+	standing = verts
+	_set_topology(tris)
+	frames = []
+	mesh = _mesh
 	_build(standing)
 
 
@@ -147,16 +167,25 @@ func _build(verts: PackedVector3Array) -> void:
 		n[c] += fn
 	for i in n.size():
 		n[i] = n[i].normalized()
-	var idx := indices.duplicate()
-	if flip_winding:
-		for t in range(0, idx.size(), 3):
-			var tmp := idx[t + 1]
-			idx[t + 1] = idx[t + 2]
-			idx[t + 2] = tmp
+	if _draw_idx.size() != indices.size():
+		_draw_idx = indices.duplicate()
+		if flip_winding:
+			for t in range(0, _draw_idx.size(), 3):
+				var tmp := _draw_idx[t + 1]
+				_draw_idx[t + 1] = _draw_idx[t + 2]
+				_draw_idx[t + 2] = tmp
 	var arrays: Array = []
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = verts
 	arrays[Mesh.ARRAY_NORMAL] = n
-	arrays[Mesh.ARRAY_INDEX] = idx
+	arrays[Mesh.ARRAY_INDEX] = _draw_idx
 	_mesh.clear_surfaces()
 	_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	_shown = verts
+
+
+# Triangle topology changed: the flipped draw order is rebuilt on the next _build.
+func _set_topology(tris: PackedInt32Array) -> void:
+	indices = tris
+	_draw_idx = PackedInt32Array()
+	_shown = PackedVector3Array()

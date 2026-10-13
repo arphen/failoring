@@ -107,8 +107,14 @@ std::vector<std::array<int, 3>> delaunay(std::vector<Vec2> pts) {
 }  // namespace
 
 PanelMesh meshPolygon(const std::vector<Vec2>& outline, Real h) {
+    return meshPolygon(outline, {}, h);
+}
+
+PanelMesh meshPolygon(const std::vector<Vec2>& outline, const std::vector<std::vector<Vec2>>& holes, Real h) {
     if (outline.size() < 3) FL_THROW(std::invalid_argument, "meshPolygon: need at least 3 outline points");
     if (h <= 0) FL_THROW(std::invalid_argument, "meshPolygon: edge length must be positive");
+    for (const auto& hole : holes)
+        if (hole.size() < 3) FL_THROW(std::invalid_argument, "meshPolygon: a hole needs at least 3 points");
 
     PanelMesh m;
     std::vector<Vec2>& P = m.verts;
@@ -131,8 +137,25 @@ PanelMesh meshPolygon(const std::vector<Vec2>& outline, Real h) {
         }
     }
     const int nBoundary = static_cast<int>(P.size());
+    // hole loops: the same exact boundary points, closed on themselves
+    for (const auto& hole : holes) {
+        const size_t nh = hole.size();
+        const int holeFirst = static_cast<int>(P.size());
+        for (size_t i = 0; i < nh; ++i) {
+            const Vec2 a = hole[i], b = hole[(i + 1) % nh];
+            const int nseg = std::max(1, static_cast<int>(std::lround(length(b - a) / h)));
+            const int start = static_cast<int>(P.size());
+            for (int k = 0; k < nseg; ++k) P.push_back(a + (b - a) * (Real(k) / nseg));
+            const int cnt = static_cast<int>(P.size()) - start;
+            for (int k = 0; k < cnt; ++k) {
+                const int v0 = start + k;
+                const int v1 = (k + 1 < cnt) ? start + k + 1 : (i + 1 < nh ? static_cast<int>(P.size()) : holeFirst);
+                boundarySegs.push_back({v0, v1});
+            }
+        }
+    }
 
-    // 2. interior hex lattice, kept away from the boundary
+    // 2. interior hex lattice, kept away from the boundary and out of the holes
     Vec2 lo = outline[0], hi = outline[0];
     for (const auto& p : outline) {
         lo.x = std::min(lo.x, p.x); lo.y = std::min(lo.y, p.y);
@@ -145,17 +168,28 @@ PanelMesh meshPolygon(const std::vector<Vec2>& outline, Real h) {
         for (Real x = lo.x + off + h * 0.25; x < hi.x; x += h) {
             Vec2 p(x, y);
             if (!pointInPolygon(p, outline)) continue;
+            bool inHole = false;
+            for (const auto& hole : holes)
+                if (pointInPolygon(p, hole)) { inHole = true; break; }
+            if (inHole) continue;
             Real dmin = 1e30;
             for (size_t i = 0; i < no; ++i) dmin = std::min(dmin, distToSegment(p, outline[i], outline[(i + 1) % no]));
+            for (const auto& hole : holes)
+                for (size_t i = 0; i < hole.size(); ++i)
+                    dmin = std::min(dmin, distToSegment(p, hole[i], hole[(i + 1) % hole.size()]));
             if (dmin > 0.6 * h) P.push_back(p);
         }
     }
 
-    // 3. Delaunay, clip to polygon
+    // 3. Delaunay, clip to polygon and out of the holes
     auto all = delaunay(P);
     for (auto t : all) {
         Vec2 c = (P[t[0]] + P[t[1]] + P[t[2]]) / 3.0;
         if (!pointInPolygon(c, outline)) continue;
+        bool inHole = false;
+        for (const auto& hole : holes)
+            if (pointInPolygon(c, hole)) { inHole = true; break; }
+        if (inHole) continue;
         Real ar = cross(P[t[1]] - P[t[0]], P[t[2]] - P[t[0]]);
         if (std::fabs(ar) < 1e-14) continue;
         if (ar < 0) std::swap(t[1], t[2]);
