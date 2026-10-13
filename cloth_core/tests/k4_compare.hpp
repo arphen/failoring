@@ -1,5 +1,5 @@
 #pragma once
-// Shared by test_sdf_incremental.cpp and the real-mesh tool k4_gate.cpp: query-point sets and the accuracy metrics of
+// Shared by test_sdf_lazy.cpp and the real-mesh tool k4_gate.cpp: query-point sets and the accuracy metrics of
 // an incremental SDF against a full re-bake of the same pose.
 #include <algorithm>
 #include <array>
