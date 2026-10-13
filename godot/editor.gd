@@ -109,6 +109,7 @@ var _planned := {}   # the job of the step after the one in flight, made early s
 var _jobs_made := 0  # jobs made since the sim was built: the index of the next job's frame is _jobs_made + 1
 var body_h_override := 0.0  # > 0: the body grid spacing for every quality (debug and benchmark; see rebuild)
 var playing := false
+var _showcase: ShowcasePanel = null  # the Showcase tab (scenario_panel.gd)
 var bake_ms := 0.0
 var step_ms := 0.0
 
@@ -522,7 +523,7 @@ func _display_name(key: String, p: Dictionary) -> String:
 
 
 func _build_tabs() -> void:
-	for tab in ["Outfit", "Piece", "Seams", "History", "Body", "Fabric", "Pattern", "Shoot"]:
+	for tab in ["Outfit", "Piece", "Seams", "History", "Body", "Fabric", "Pattern", "Shoot", "Showcase"]:
 		var sc := ScrollContainer.new()
 		sc.name = tab
 		sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -542,6 +543,7 @@ func _build_tabs() -> void:
 	_build_seams_tab()
 	_build_history_tab()
 	_build_shoot_tab()
+	_showcase = ShowcasePanel.new(self, _tab_vbox("Showcase"))  # scenario_panel.gd (docs/SCENARIOS.md)
 	_refresh_outfit_tab()
 
 
@@ -901,6 +903,23 @@ var shoot_busy := false
 var shoot_done := false
 var gallery: Window
 var gallery_grid: GridContainer
+
+
+# Inputs of a Showcase render (scenario_panel.gd): the garment as the last build made it (the plan the solver got), the body
+# and the quality key. Copies, so that edits made while a render runs do not change it. {} when there is no garment.
+func showcase_inputs(qkey: String) -> Dictionary:
+	if body_stand == null or body_rest == null or _sim_pieces.is_empty() or not QUALITIES.has(qkey):
+		return {}
+	var n_shown := 0
+	for e in outfit:
+		if bool(e["visible"]):
+			n_shown += 1
+	var q: Dictionary = QUALITIES[qkey]
+	return {"plan": {"pieces": _sim_pieces.duplicate(true), "seams": _sim_seams.duplicate(true)},
+		"sections": body_stand["sections"], "arms": body_stand["arms"], "stand": _stand_v3, "tris": _tris(),
+		"fabric_id": fabric_id, "quality": q, "quality_key": qkey, "seam_stiffness": seam_stiffness, "ramp_frames": ramp_frames,
+		"collide": self_collision or bool(q.get("self", false)) or n_shown > 1, "M": M, "body_rest": body_rest,
+		"body_key": JSON.stringify(meas)}
 
 
 func _build_shoot_tab() -> void:
@@ -2714,6 +2733,8 @@ func _on_debounce() -> void:
 # Stops the worker before the editor leaves the tree. A step still in flight is finished and its result dropped
 # (no UI runs here, so nothing reads the frame).
 func _exit_tree() -> void:
+	if _showcase != null:
+		_showcase.shutdown()  # a Showcase render in flight is cancelled and joined
 	if _in_flight:
 		_done_sem.wait()
 		_in_flight = false
@@ -3195,6 +3216,9 @@ func _tris() -> PackedInt32Array:
 
 func _physics_process(_delta: float) -> void:
 	_update_camera()
+	# the Showcase's playback owns the 3D view while it is on (cached frames, no solver); the orbit camera still works
+	if _showcase != null and _showcase.drive(_delta):
+		return
 	if sim == null:
 		return
 	_poll_step(false)  # collect a step the worker has finished; never blocks the draw loop (paused or playing)
