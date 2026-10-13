@@ -132,8 +132,8 @@ func _physics_process(_delta: float) -> void:
 
 
 func _draw_cloth() -> void:
-	var disp := sim.get_display_positions(0.0008)
-	var idx := sim.get_display_indices()
+	var disp: PackedVector3Array = sim.get_display_positions(0.0008)
+	var idx: PackedInt32Array = sim.get_display_indices()
 	var arr := []
 	arr.resize(Mesh.ARRAY_MAX)
 	arr[Mesh.ARRAY_VERTEX] = disp
