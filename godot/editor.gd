@@ -917,7 +917,7 @@ func _piece() -> Variant:
 	return Table.piece_by_id(pieces, sel) if sel != null else null
 
 
-const MIN_EDGE_M := 0.008   # table.gd valid_pieces: an edge shorter than this drops the piece from the simulation
+const MIN_EDGE_M := 0.008   # edit guard: an edit that leaves an edge shorter than this is refused (table.gd MIN_SIM_EDGE is the sim gate)
 const SIDE_NAMES := [[0.0, "front"], [90.0, "left side"], [180.0, "back"], [270.0, "right side"]]
 var clip = null             # Ctrl+C: the copied piece (a dictionary), pasted by Ctrl+V
 var _offer := {}            # {"pid", "text", "button"}: a copy or mirror that covers its original's place on the body

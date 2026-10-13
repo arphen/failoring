@@ -77,7 +77,14 @@ static func bbox_of(o: Array) -> Array:
 	return [x0, y0, x1, y1]
 
 
-# validity before sending to the simulator (mirrors App.validPieces)
+# Shortest edge the simulator accepts. The editor keeps every edit at MIN_EDGE_M (8 mm, editor.gd) or more, but a loaded
+# FreeSewing pattern is not an edit: its dart tips are 6 mm on some sizes (penelope, average). With the 8 mm rule here the
+# whole back half was dropped from the simulation and the skirt had no back (godot/tests/skirt_cover_check.gd). Only
+# edges too short to mesh are refused now. Edges shorter than 6 mm were not tested.
+const MIN_SIM_EDGE := 0.002
+
+
+# validity before sending to the simulator (App.validPieces in the browser keeps the 8 mm rule)
 static func valid_pieces(pieces: Array) -> Dictionary:
 	var out := []
 	var bad := {}
@@ -92,8 +99,8 @@ static func valid_pieces(pieces: Array) -> Dictionary:
 			why = "outline crosses itself"
 		else:
 			for i in o.size():
-				if edge_len(o, i) < 0.008:
-					why = "edge shorter than 8 mm"
+				if edge_len(o, i) < MIN_SIM_EDGE:
+					why = "edge shorter than 2 mm"
 					break
 		if why != null:
 			bad[String(p["id"])] = why
