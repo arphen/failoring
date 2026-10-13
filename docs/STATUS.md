@@ -96,6 +96,25 @@ The tee, the weak garment, has its own page with the root cause and next steps: 
    Standard quality (4 cm, the app default) the same walk, looked at close up in the browser, shows only a few specks.
    13 agent worktrees (`git worktree list`) are left to remove; `_leftovers-safe-to-delete/` on the user's side can go.
 
+## Godot editor (merged 2026-10-13 night)
+
+`godot/editor` (the local agent's port) plus six rounds of fixes by sub-agents are in main: camera orbit/pan/zoom, UI scaling,
+garment Library and multi-garment Outfit, edit robustness (edited flag, undo, confirmations), numeric entry and placement
+buttons, garment health warnings, per-fabric shading and shadows, native speedups (body bake overlapped with the solver,
+normals in C++, Preview quality default), cutting-table v2 (action history and History tab, shared selection model, shapes,
+holes with mesher support, Poncho, Split/Rotate/Measure/curves/scale/align, partial seams) and a Showcase system (Catwalk,
+Pick up a box, Sit on a chair as baked bone sequences with box/chair colliders, pre-render on demand with a cache).
+Product spec for what is wanted next: `docs/EDITOR_V2_SPEC.md`; reports: `docs/DOGFOOD_REPORT.md`, `docs/PERF_NOTES.md`,
+`docs/SCENARIOS.md`, `docs/VANISH_NOTES.md`.
+* Checked: all godot/tests scenes pass headless on Godot 4.3 (Linux, library rebuilt locally), cloth_core test_basics and
+  test_garment pass, the browser build is unchanged.
+* Not done: right-click context menu and richer hover/selection feedback on the table; 3D to 2D two-way picking and highlight;
+  an always-available Sew button that pulls the arranged garment onto the mannequin and feeds the Showcase render; the
+  tutorial overlay and help hovers. Not verified: anything in a real window (all runs headless, no GPU), the Mac dylib
+  (`godot/bin/libfailoring.so` and the dylib are stale: run `tools/build_gdext.sh`), real frame rates (the Mac figure is an
+  estimate), Forward+ effects (SSAO, TAA).
+* The editor still shows the tee failing (docs/TEE_NOTES.md), and the editor's built-in pencil skirt is too small for the plus body.
+
 ## Maintenance
 
 A scheduled task ("Failoring browser build upkeep", daily 06:47 Europe/Berlin) rebuilds `failoring.html`, runs the smoke
