@@ -84,6 +84,29 @@ fill with selection and validity tint, fabric tint, grain arrow, name and edge l
 (index + cm), vertex handles, seam edge pairs with match ticks, scale bar, hover and
 sew-edge highlights. Snap 5 mm, keyboard as in the browser (undo and redo: see below).
 
+## Edit tools (`godot/cut_geom.gd`, `godot/table.gd`, the Piece tab)
+
+* **Corners.** Drag a corner, type its x and y (Piece tab), double-click an edge or use the **Split** tool (press on an
+  edge) to add one, Delete removes the selected corner. Seams on a split edge are dropped with a message, as before.
+* **Curves.** The Piece tab's edge rows have **Curve**: the edge becomes 8 segments on a quadratic Bezier that bows 12 %
+  of its length outward (positive bulge = outward for a counter-clockwise outline). The curve is stored as its corners
+  plus a record `{a, b, bulge, n}` on the piece; the bulge field re-bends it, **Straighten** removes the record and keeps
+  the corners. A curve whose end corners were moved can no longer be re-bent (the message says so).
+* **Rotate.** The Rotate tool turns the picked pieces (or the one pressed) about the centre of the group; the grain turns
+  with them. Shift snaps to 15 degrees. The Piece tab's **Turn by** field turns by a typed angle.
+* **Scale.** The Piece tab's **Scale to** field scales the picked pieces about the group's centre (per cent of size).
+  Refused, with a message, when an edge would get shorter than 0.8 cm.
+* **Align and distribute.** With two or more pieces picked, the last picked piece is the reference: Left, Right, Top,
+  Bottom, Centre across and Centre up move the others to it. With three or more, Distribute across or up keeps the two
+  outermost and spaces the rest evenly.
+* **Measure.** The Measure tool: two clicks; the distance in cm, across and up, shows in the status line and as a line
+  on the table. Esc clears it.
+* **Mirror** is per piece (the piece's own Mirror button, flipping it in place). A selection is not mirrored as a group.
+* Every one of these is one named action in the History tab, and undo and redo work on each.
+
+Not done: a selection-wide mirror, grading, and a rotation handle on the piece itself (the Rotate tool turns by
+dragging anywhere on the piece).
+
 ## Shapes, holes and the Poncho (`godot/shapes.gd`, `godot/table.gd`)
 
 **Add shape** (table bar menu, or the Piece tab's buttons) opens a size dialog in cm: Rectangle (width, height),

@@ -20,6 +20,7 @@ const Outfit = preload("res://outfit.gd")
 const History = preload("res://history.gd")
 const CutSelection = preload("res://selection.gd")
 const Shapes = preload("res://shapes.gd")
+const Geom = preload("res://cut_geom.gd")
 
 # body_h: spacing (m) of the body's signed-distance grid, baked for every walking frame. 7 mm is the reference (the
 # numbers in docs/PERF_NOTES.md are measured with it). Draft and Preview use 10 mm: the bake takes about 1.8x less CPU,
@@ -1097,6 +1098,7 @@ func _piece_rows(vb: VBoxContainer, p: Dictionary) -> void:
 	if sel_v >= 0 and sel_v < n:
 		vb.add_child(_h4("Corner %d (x, y in cm)" % sel_v))
 		_corner_row(vb, p, sel_v)
+	vb.add_child(_transform_box(p))
 	vb.add_child(_edge_fold(p))
 	# placement on the body, with plain labels
 	vb.add_child(_h4("Placement on the body"))
@@ -1180,6 +1182,190 @@ func _piece_rows(vb: VBoxContainer, p: Dictionary) -> void:
 	pa.pressed.connect(func() -> void: paste_piece())
 	cbtns.add_child(pa)
 	vb.add_child(cbtns)
+
+
+# ------------------------------------------------------------------ transform and curve actions (cut_geom.gd)
+# The pieces a transform acts on: the selection, or the primary piece when nothing else is picked.
+func _group() -> Array:
+	var out := []
+	for id in selection.items("piece"):
+		var q = Table.piece_by_id(pieces, String(id))
+		if q != null:
+			out.append(q)
+	if out.is_empty() and _piece() != null:
+		out.append(_piece())
+	return out
+
+
+# True when every edge of the outline is at least MIN_EDGE_M long (the edit guard, as for typed lengths).
+static func _edges_long_enough(o: Array) -> bool:
+	for i in o.size():
+		if Table.edge_len(o, i) < MIN_EDGE_M:
+			return false
+	return true
+
+
+func rotate_selection(deg: float) -> void:
+	var g := _group()
+	if g.is_empty() or active_locked() or absf(deg) < 0.001:
+		return
+	push_undo("Turn %s by %d°" % ["pieces" if g.size() > 1 else "piece", int(round(deg))])
+	Geom.rotate_pieces(g, deg_to_rad(deg), Geom.group_centre(g))
+	for p in g:
+		_sym_sync(p)
+	changed("structure")
+
+
+# Scales the pieces to pct per cent of their size about the centre of the group. Refused when an edge would get too short.
+func scale_selection(pct: float) -> void:
+	var g := _group()
+	var f := pct / 100.0
+	if g.is_empty() or active_locked() or f <= 0.0 or absf(f - 1.0) < 0.0005:
+		return
+	var trial: Array = []
+	var c := Geom.group_centre(g)
+	for p in g:
+		var q: Dictionary = (p as Dictionary).duplicate(true)
+		trial.append(q)
+	Geom.scale_pieces(trial, f, c)
+	for q in trial:
+		if not _edges_long_enough(q["outline"]):
+			notify("That scale would make an edge shorter than 0.8 cm.")
+			return
+	push_undo("Scale %s to %d%%" % ["pieces" if g.size() > 1 else "piece", int(round(pct))])
+	Geom.scale_pieces(g, f, c)
+	for p in g:
+		_sym_sync(p)
+	changed("structure")
+
+
+# Lines the other selected pieces up with the primary (last picked) piece. mode: left, right, top, bottom, centre_x, centre_y.
+func align_selection(mode: String) -> void:
+	var g := _group()
+	var ref = _piece()
+	if g.size() < 2 or ref == null or active_locked():
+		return
+	var others: Array = g.filter(func(q) -> bool: return String(q["id"]) != String(ref["id"]))
+	push_undo("Align pieces: %s" % mode.replace("_", " "))
+	Geom.align_pieces(others, mode, Geom.world_box(ref))
+	for p in others:
+		_sym_sync(p)
+	changed("structure")
+
+
+# Spaces the selected pieces evenly along an axis (0 across, 1 up), keeping the outermost two.
+func distribute_selection(axis: int) -> void:
+	var g := _group()
+	if g.size() < 3 or active_locked():
+		return
+	push_undo("Distribute pieces %s" % ("across" if axis == 0 else "up"))
+	Geom.distribute_pieces(g, axis)
+	for p in g:
+		_sym_sync(p)
+	changed("structure")
+
+
+# Turns edge e of p into a curve: the edge gets Geom.CURVE_SEGMENTS segments on a Bezier that bows 12 % of its length
+# outward. Seams on the edge are dropped (with a message), as a split drops them.
+func _curve_edge(p: Dictionary, e: int) -> void:
+	if active_locked():
+		return
+	var o: Array = p["outline"]
+	var a: Array = o[e]
+	var b: Array = o[(e + 1) % o.size()]
+	var va := Vector2(float(a[0]), float(a[1]))
+	var vb := Vector2(float(b[0]), float(b[1]))
+	var bulge := 0.12 * va.distance_to(vb)
+	push_undo("Curve edge %d" % (e + 1))
+	var dropped := Table.insert_points(self, p, e, Geom.bezier_points(va, vb, bulge, Geom.CURVE_SEGMENTS))
+	var curves: Array = p.get("curves", [])
+	curves.append({"a": [va.x, va.y], "b": [vb.x, vb.y], "bulge": bulge, "n": Geom.CURVE_SEGMENTS})
+	p["curves"] = curves
+	_sym_sync(p)
+	if dropped > 0:
+		notify("Curving that edge removed %d seam(s). Ctrl+Z restores them." % dropped)
+	changed("structure")
+
+
+# Sets the bulge of curve idx of p (cm, outward positive) from the edge row's field.
+func _set_curve_bulge(p: Dictionary, idx: int, text: String) -> void:
+	if active_locked():
+		return
+	push_undo("Set curve bulge")
+	if Geom.rebend(p, idx, float(text) / 100.0):
+		_sym_sync(p)
+		changed("structure")
+	else:
+		discard_pending()
+		notify("This curve's end corners have moved, so it cannot be re-bent. Straighten it, or undo.")
+
+
+# Makes curve idx of p a straight edge again (its corners stay, on the straight line).
+func _straighten_curve(p: Dictionary, idx: int) -> void:
+	if active_locked():
+		return
+	push_undo("Straighten curve")
+	Geom.rebend(p, idx, 0.0)
+	(p.get("curves", []) as Array).remove_at(idx)
+	_sym_sync(p)
+	changed("structure")
+
+
+# The Turn, Scale and Align box of the Piece tab. Align and distribute show once two or three pieces are picked.
+func _transform_box(p: Dictionary) -> VBoxContainer:
+	var body := VBoxContainer.new()
+	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var tip := Label.new()
+	tip.text = "Acts on the picked pieces (all of them, or this one). Turning keeps the grain with the piece."
+	tip.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	body.add_child(tip)
+	var rr := HBoxContainer.new()
+	rr.add_child(_caption("Turn by"))
+	var rle := _line_edit("TurnDeg", "90")
+	rle.text_submitted.connect(func(t: String) -> void: rotate_selection(float(t)))
+	rr.add_child(rle)
+	rr.add_child(_caption("degrees"))
+	var rb := Button.new()
+	rb.name = "TurnBtn"
+	rb.text = "Turn"
+	rb.pressed.connect(func() -> void: rotate_selection(float(rle.text)))
+	rr.add_child(rb)
+	body.add_child(rr)
+	var sr := HBoxContainer.new()
+	sr.add_child(_caption("Scale to"))
+	var sle := _line_edit("ScalePct", "100")
+	sle.text_submitted.connect(func(t: String) -> void: scale_selection(float(t)))
+	sr.add_child(sle)
+	sr.add_child(_caption("% of size"))
+	var sb := Button.new()
+	sb.name = "ScaleBtn"
+	sb.text = "Scale"
+	sb.pressed.connect(func() -> void: scale_selection(float(sle.text)))
+	sr.add_child(sb)
+	body.add_child(sr)
+	if _group().size() >= 2:
+		body.add_child(_h4("Align to the last picked piece"))
+		var grid := GridContainer.new()
+		grid.columns = 3
+		for m in [["Left", "left"], ["Right", "right"], ["Top", "top"], ["Bottom", "bottom"], ["Centre across", "centre_x"], ["Centre up", "centre_y"]]:
+			var ab := Button.new()
+			ab.text = String(m[0])
+			var mode := String(m[1])
+			ab.pressed.connect(func() -> void: align_selection(mode))
+			grid.add_child(ab)
+		body.add_child(grid)
+		if _group().size() >= 3:
+			var dr := HBoxContainer.new()
+			var da := Button.new()
+			da.text = "Distribute across"
+			da.pressed.connect(func() -> void: distribute_selection(0))
+			dr.add_child(da)
+			var du := Button.new()
+			du.text = "Distribute up"
+			du.pressed.connect(func() -> void: distribute_selection(1))
+			dr.add_child(du)
+			body.add_child(dr)
+	return _fold_box("Turn, scale, align", body, 1)
 
 
 # ------------------------------------------------------------------ shapes and holes
@@ -1467,6 +1653,25 @@ func _edge_fold(p: Dictionary) -> VBoxContainer:
 		le.text_submitted.connect(func(t: String) -> void: _on_edge_len(p, i, t, le))
 		r.add_child(le)
 		r.add_child(_caption("cm"))
+		var ci := Geom.curve_at_edge(p, i)
+		if ci >= 0:
+			# a curve: its bulge (cm, outward positive) and Straighten
+			var bl := _line_edit("CurveBulge_%d" % i, "%.1f" % (float((p["curves"][ci] as Dictionary)["bulge"]) * 100.0))
+			bl.tooltip_text = "How far the curve bows out, in cm (negative bows in). Enter applies."
+			bl.text_submitted.connect(func(t: String) -> void: _set_curve_bulge(p, ci, t))
+			r.add_child(bl)
+			r.add_child(_caption("cm bulge"))
+			var sb := Button.new()
+			sb.text = "Straighten"
+			sb.pressed.connect(func() -> void: _straighten_curve(p, ci))
+			r.add_child(sb)
+		else:
+			var cb := Button.new()
+			cb.name = "CurveBtn_%d" % i
+			cb.text = "Curve"
+			cb.tooltip_text = "Turns this edge into a curve that bows 12 % of its length outward"
+			cb.pressed.connect(func() -> void: _curve_edge(p, i))
+			r.add_child(cb)
 		var partner := _seam_partner(p, i)
 		if partner != "":
 			var sl := _caption(partner)
@@ -2472,6 +2677,16 @@ func _build_table_bar() -> void:
 	sew_btn.text = "Sew"
 	sew_btn.pressed.connect(func() -> void: table.set_tool("sew"))
 	bar.add_child(sew_btn)
+	for tool_def in [["Split", "split", "SplitToolBtn", "Split tool: press on an edge to add a corner there"],
+			["Rotate", "rotate", "RotateToolBtn", "Rotate tool: drag a piece (or the selection) around its centre. Shift snaps to 15 degrees"],
+			["Measure", "measure", "MeasureToolBtn", "Measure tool: click two points to read the distance in cm"]]:
+		var tb := Button.new()
+		tb.name = String(tool_def[2])
+		tb.text = String(tool_def[0])
+		tb.tooltip_text = String(tool_def[3])
+		var tname := String(tool_def[1])
+		tb.pressed.connect(func() -> void: table.set_tool(tname))
+		bar.add_child(tb)
 	var fit_btn := Button.new()
 	fit_btn.text = "Fit"
 	fit_btn.pressed.connect(func() -> void: table.fit())

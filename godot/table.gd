@@ -4,6 +4,7 @@
 # it and translates mouse and keys into edits, then calls ed.changed(kind).
 extends Control
 
+const Geom = preload("res://cut_geom.gd")
 const SEAM_COLORS := ["#3fd3c0", "#ff9d4d", "#c792ea", "#82aaff", "#f07178", "#c3e88d", "#ffcb6b", "#89ddff"]
 const FABRIC_COLORS := {"cotton_poplin": "#6f93c4", "denim_12oz": "#3d5c8c", "linen_medium": "#c2b184",
 	"wool_suiting": "#566175", "silk_charmeuse": "#a8405c", "polyester_chiffon": "#dc94ac",
@@ -18,6 +19,8 @@ var fitted := false  # kept for the editor, which resets it on load; fit() is wh
 var hint_label: Label
 var _fit_pending := false   # fit() is deferred to the next draw, once the control has a real size
 var _sew_note := ""         # what the last sew said (lengths, warning), shown in the hint line until the next click
+var measure_pts: Array = []  # Measure tool: the first point (and the second once clicked), world metres
+var _pointer := Vector2.ZERO  # the last pointer position in world metres (the measure line follows it)
 
 
 # The hovered edge as {"p": piece id, "e": edge index} while the sew tool is on, or null. Hover and picks live in the
@@ -520,6 +523,7 @@ func set_tool(t: String) -> void:
 	ed.tool = t
 	ed.sew_a = null
 	_sew_note = ""
+	measure_pts = []  # a measurement belongs to the Measure tool that made it
 	update_hint()
 	ed.table_dirty = true
 
@@ -542,6 +546,12 @@ func update_hint() -> void:
 		hint_label.text = text
 	elif ed.tool == "hole":
 		hint_label.text = "Hole: press inside a piece and drag. " + ("A circle, centred on the press point." if ed.hole_shape == "circle" else "A rectangle, corner to corner.") + " Esc cancels."
+	elif ed.tool == "split":
+		hint_label.text = "Split: press on an edge to add a corner there. Seams on that edge are dropped (Ctrl+Z restores them)."
+	elif ed.tool == "rotate":
+		hint_label.text = "Rotate: press on a piece and drag around the centre point. Shift snaps to 15 degrees. The Piece tab turns by a typed angle."
+	elif ed.tool == "measure":
+		hint_label.text = "Measure: click two points. The distance shows in cm. Esc clears."
 	else:
 		hint_label.text = "Drag pieces and corners to reshape them"
 
@@ -600,6 +610,15 @@ func _down(spos: Vector2, button: int) -> void:
 		return
 	if ed.tool == "hole":
 		_hole_down(spos)
+		return
+	if ed.tool == "split":
+		_split_down(spos)
+		return
+	if ed.tool == "rotate":
+		_rotate_down(spos)
+		return
+	if ed.tool == "measure":
+		_measure_down(spos)
 		return
 	if ed.tool == "sew":
 		var best: Variant = null
@@ -680,6 +699,9 @@ func _move(spos: Vector2) -> void:
 	var sx := spos.x
 	var sy := spos.y
 	var d = drag
+	_pointer = to_world(sx, sy)
+	if measure_pts.size() == 1:
+		ed.table_dirty = true  # the measure line follows the pointer until the second click
 	if d == null:
 		var hk := ""
 		var hid = null
@@ -724,6 +746,104 @@ func _move(spos: Vector2) -> void:
 		var th: Vector2 = _off(d["p"])
 		d["b"] = Vector2(wh.x - th.x, wh.y - th.y)
 		ed.table_dirty = true
+	elif String(d["kind"]) == "rotate":
+		var wr := to_world(sx, sy)
+		var ang: float = (wr - d["centre"]).angle() - float(d["a0"])
+		if Input.is_key_pressed(KEY_SHIFT):
+			ang = snappedf(ang, deg_to_rad(15.0))
+		d["angle"] = ang
+		_apply_rotate(d)
+		ed.table_dirty = true
+
+
+# Split tool: a press on an edge adds a corner there (snapped when snap is on). Seams on that edge are dropped, with a
+# message (Ctrl+Z restores them), as double-clicking an edge does.
+func _split_down(spos: Vector2) -> void:
+	var best: Variant = null
+	for p in ed.pieces:
+		var h := hit_edge(p, spos.x, spos.y, 12.0)
+		if not h.is_empty():
+			best = {"p": p, "e": h["edge"], "t": h["t"]}
+	if best == null:
+		ed.notify("Split: press on an edge to add a corner there.")
+		return
+	split_edge_at(best["p"], int(best["e"]), float(best["t"]))
+
+
+# Adds a corner on edge e of p at fraction t along it. Returns the number of seams dropped.
+func split_edge_at(p: Dictionary, e: int, t: float) -> int:
+	var o: Array = p["outline"]
+	var a: Array = o[e]
+	var b: Array = o[(e + 1) % o.size()]
+	var pt := [snapv(float(a[0]) + (float(b[0]) - float(a[0])) * t), snapv(float(a[1]) + (float(b[1]) - float(a[1])) * t)]
+	ed.push_undo("Split edge %d" % (e + 1))
+	var dropped := insert_vertex(ed, p, e, pt)
+	ed.sel = String(p["id"])
+	ed.sel_v = e + 1
+	if dropped > 0:
+		ed.notify("Splitting that edge removed %d seam(s). Ctrl+Z restores them." % dropped)
+	ed.changed("structure")
+	return dropped
+
+
+# Rotate tool: a press on a piece turns it (and the other selected pieces) about the centre of the group. Shift snaps the
+# turn to 15 degrees. The rotation handle is the centre point; the line from it shows the angle.
+func _rotate_down(spos: Vector2) -> void:
+	var hit: Variant = hit_piece(spos.x, spos.y)
+	if hit == null:
+		ed.notify("Rotate: press on a piece and drag around it (hold Shift to snap to 15 degrees).")
+		return
+	var hp: Dictionary = hit
+	if not ed.selection.contains("piece", String(hp["id"])):
+		ed.sel = String(hp["id"])
+	var group := _group_pieces()
+	var centre := Geom.group_centre(group)
+	var w := to_world(spos.x, spos.y)
+	var orig := {}
+	for p in group:
+		orig[String(p["id"])] = (p as Dictionary).duplicate(true)
+	ed.push_undo("Rotate %s" % ("pieces" if group.size() > 1 else "piece"))
+	drag = {"kind": "rotate", "centre": centre, "a0": (w - centre).angle(), "orig": orig, "angle": 0.0}
+	ed.table_dirty = true
+
+
+# The pieces of the selection (or the primary piece), as the editor's dictionaries.
+func _group_pieces() -> Array:
+	var out := []
+	for id in ed.selection.items("piece"):
+		var q = piece_by_id(ed.pieces, String(id))
+		if q != null:
+			out.append(q)
+	return out
+
+
+# Puts every rotating piece back to its state at the press, then turns it by the drag's angle about the centre.
+func _apply_rotate(d: Dictionary) -> void:
+	var group := []
+	for id in d["orig"]:
+		var q = piece_by_id(ed.pieces, String(id))
+		if q == null:
+			continue
+		var src: Dictionary = (d["orig"][id] as Dictionary).duplicate(true)
+		q.merge(src, true)
+		group.append(q)
+	Geom.rotate_pieces(group, float(d["angle"]), d["centre"])
+	for q in group:
+		sync_twin(ed, q)
+
+
+# Measure tool: two clicks give the distance between them in cm, across, and up. A third click starts again.
+func _measure_down(spos: Vector2) -> void:
+	var w := to_world(spos.x, spos.y)
+	var pt := Vector2(snapv(w.x), snapv(w.y))
+	if measure_pts.size() != 1:
+		measure_pts = [pt]
+		ed.notify("Measure: click the second point.")
+	else:
+		measure_pts.append(pt)
+		var d: Vector2 = measure_pts[1] - measure_pts[0]
+		ed.notify("Measured %.1f cm: %.1f cm across, %.1f cm up (Esc clears)" % [d.length() * 100.0, absf(d.x) * 100.0, absf(d.y) * 100.0])
+	ed.table_dirty = true
 
 
 # Hole tool: a press inside a piece starts a hole there (its centre for a circle, a corner for a rectangle).
@@ -784,6 +904,8 @@ func _up() -> void:
 		ed.discard_pending()  # a click on a piece without a move is not an action
 	elif d != null and String(d.get("kind", "")) == "hole":
 		_finish_hole(d)
+	elif d != null and String(d.get("kind", "")) == "rotate":
+		ed.changed("structure")  # a turn that moved nothing records nothing (the pattern is unchanged)
 
 
 func _dbl(spos: Vector2) -> void:
@@ -841,6 +963,7 @@ func _unhandled_key_input(e: InputEvent) -> void:
 	if k.keycode == KEY_ESCAPE:
 		if drag != null and String(drag.get("kind", "")) == "hole":
 			drag = null  # Esc cancels a hole being drawn
+		measure_pts = []
 		ed.sew_a = null
 		ed.selection.clear_kind("seam")
 		update_hint()
@@ -875,7 +998,16 @@ func _unhandled_key_input(e: InputEvent) -> void:
 # Splits edge e of p at pt (the new corner is e + 1). Seams on the split edge cannot follow either half, so they are
 # dropped. Returns how many were dropped (the caller warns and the edit is undoable).
 static func insert_vertex(edref, p: Dictionary, e: int, pt: Array) -> int:
-	(p["outline"] as Array).insert(e + 1, pt)
+	return insert_points(edref, p, e, [pt])
+
+
+# Inserts the points pts after corner e of p (they become corners e+1 .. e+k). Seams on edge e cannot follow the new
+# corners, so they are dropped; seams on the later edges move on by k. Returns how many seams were dropped.
+static func insert_points(edref, p: Dictionary, e: int, pts: Array) -> int:
+	var k := pts.size()
+	var ol: Array = p["outline"]
+	for i in k:
+		ol.insert(e + 1 + i, pts[i])
 	var dropped := 0
 	var kept := []
 	for s in edref.seams:
@@ -885,7 +1017,7 @@ static func insert_vertex(edref, p: Dictionary, e: int, pt: Array) -> int:
 				if int(s[side][1]) == e:
 					kill = true
 				elif int(s[side][1]) > e:
-					s[side][1] = int(s[side][1]) + 1
+					s[side][1] = int(s[side][1]) + k
 		if kill:
 			dropped += 1
 		else:
@@ -1203,6 +1335,20 @@ func _draw() -> void:
 			var erect := Rect2(Vector2(pp.x, pp.y - asc), Vector2(tw, lh))
 			if view.intersects(erect) and _claim(taken, erect):
 				draw_string(font, pp, String(e["txt"]), HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color("#ffb877") if is_sel else Color("#8f98a6"))
+	# the rotation pivot while a Rotate drag runs, and the measure line (from the first point to the second or the pointer)
+	if drag != null and String(drag.get("kind", "")) == "rotate":
+		var pc := to_screen(float(drag["centre"].x), float(drag["centre"].y))
+		draw_circle(pc, 5.0, Color("#ff9d4d"))
+		draw_arc(pc, 28.0, 0.0, TAU, 40, Color("#ff9d4d"), 1.5)
+	if ed.tool == "measure" and measure_pts.size() >= 1:
+		var ma := to_screen(float(measure_pts[0].x), float(measure_pts[0].y))
+		var mb_w: Vector2 = measure_pts[1] if measure_pts.size() == 2 else _pointer
+		var mb := to_screen(mb_w.x, mb_w.y)
+		draw_line(ma, mb, Color("#89ddff"), 2.0)
+		draw_circle(ma, 4.0, Color("#89ddff"))
+		draw_circle(mb, 4.0, Color("#89ddff"))
+		var md: Vector2 = mb_w - measure_pts[0]
+		draw_string(font, (ma + mb) * 0.5 + Vector2(6, -6), "%.1f cm" % (md.length() * 100.0), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color("#89ddff"))
 	# the hole a Hole-tool drag is drawing, in its piece's place
 	if drag != null and String(drag.get("kind", "")) == "hole":
 		var hpre: Array = _drag_hole(drag)
