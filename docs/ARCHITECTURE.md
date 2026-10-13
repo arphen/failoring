@@ -190,6 +190,10 @@ the alternatives considered are in `docs/BODY_DESIGN.md`.
   swing and elbow flexion. The curves follow typical adult sagittal-plane gait, **plausible, not measured on a person**.
 * Walk in place, as on a treadmill: the lowest foot vertex is put on y = 0 every frame, which gives the pelvis bob.
   A small lateral sway is added at the root.
+* Arm clearance (`G.stand`, `ARM_ABDUCT 0.14`, `ARM_GAP 0.02`, `ARM_MAX 0.5` in `gait.js`): the shoulder abduction is raised from the
+  default 0.14 rad until the arms hang at least 2 cm clear of the torso section hulls below the armpit (curvy 0.202, plus 0.333, the
+  others stay at 0.14), and `body.armAbduct` carries it into the walk spec (`main.js`, `tools/walk_sim.js`) and the Godot exporter
+  (`tools/export_godot_assets.js`) so the gait poses use the same arms. So the arms hang clear of the body on the wide presets and a sleeve has room between arm and torso.
 * `main.js`: one gait cycle is **64 frames** (about 1.07 s at 60 Hz); the stride eases in over **24 frames** (smoothstep)
   after the garment has settled standing; the run is the settle frames plus 1.5 cycles.
 * Each walk frame, the worker poses the body, **re-bakes the collider** (`fl_set_body_mesh`, paying the bake time
@@ -221,6 +225,17 @@ Three ways a pattern reaches the app:
      mannequin* (`draft.measures`), and `waistHeight` 1 (top edge on the natural waist). Tuning `waistHeight` so the
      finished band lands exactly on the waist line makes the top edge 10-13% longer than the waist, and the trousers
      slide below it.
+   * Rise ease (`WALK_RISE`, 1.04): the two cross-seam measurements get 4% on top of the standing values. The taut crotch path
+     (centre front waist, crotch, centre back waist) is 3 to 7% longer while the body walks (the pelvis tips and the thighs swing:
+     minimum about +3%, maximum +4.7 to +6.8% over the gait cycle on the six presets); trousers drafted on the standing length are
+     pulled down by the legs until the band is taut, ride 5 to 13 cm below the waist, and on the plus body fall to the knees. 7 to
+     8% leaves the band slack and the seat baggy.
+   * Hem lift (`HEM_LIFT`, 30 mm; `lengthBonus = -30 / waistToFloor`): Charlie's default (+2%) puts the hem 1.7 to 2.6 cm *below* the
+     floor. A hem on the floor or under a foot is stepped on while walking and drags the whole garment off the waist (tall and plus),
+     so full-length legs stop 30 mm above the floor (an ankle bone is about 70 mm up).
+   * Fly trim (`raw.store.waistbandFly`, 30.5 mm on average): the band is drafted with a button tab beyond the centre front. The tab
+     overlaps the other end, it does not add to the ring, so the importer clips the band at it (`y = max(y, fly)`); the band is then
+     as long as the trouser top edges together (77.8 cm on average).
    * `charlie.front` and `charlie.back` are both drawn for the same leg seen from outside: the front has the fork on the
      right, the back has the centre back and crotch curve on the left. Both therefore use `origSide: 'R'`; with `'L'` the
      back piece is crossed with the front.
@@ -234,7 +249,12 @@ Three ways a pattern reaches the app:
    * Band seams: the band's upper long edge (the fold) is never sewn; the trousers' top-edge chains are sewn to its lower
      edge end to end in the order they meet it, each taking the stretch as long as it is in the pattern. The start pose only
      decides *which* chains and in which order. The band is cut on the fold, so one finished layer (half the cut width) is
-     modelled.
+     modelled (`folded: true` in the recipe; the pencil skirt's band is modelled the same way, 3 cm finished). Chains of at least
+     1 cm count as top edge (`minTop`); a sliver shorter than 4% of the band chain keeps its share of the band but is not sewn
+     (seam intervals merge below 3% of a chain, which produced a 1 cm against 11.4 cm seam and a 34 mm gap before the rule).
+   * Judging trousers while walking: compare the band's *top edge with the posed waist landmark* (`frames[f].body` in the dump,
+     `PIECESTAT` in `tools/walk_sim.js`), not with the standing waist; the walking body drops a few centimetres, which once looked like
+     "pants creep 6 to 13 cm down".
 
 `makeWrapRows` (`shared.js`) is the row-wise wrap that all of these use. Its `wrap.mode` values:
 
@@ -243,7 +263,7 @@ Three ways a pattern reaches the app:
 | `torso` | no caller found in the repository | each row laid on the trunk section at its height; the row width spread over `span` degrees of the section by fraction |
 | `leg` | `draft.pants`, FreeSewing chinos | tubes below the crotch, half the pelvis above; blended between the two over a 10 cm band centred on the crotch. `wrap.lift` levels a sloping top edge for the row extents |
 | `arc` | `draft.tank` | pattern x = arc length on the body section (no stretching) |
-| `arm` | sleeves (`draft.shirt`, FreeSewing sleeves) | tube round the arm axis from the shoulder and elbow joints |
+| `arm` | sleeves (`draft.shirt`, FreeSewing sleeves) | tube round the arm axis from the shoulder and elbow joints. Experimental, off by default (`opt.sleeveCap`): `wrap.cap` gives the cap rows the underarm row's angular scale and `sTop` is calibrated to the armholes (`docs/TEE_NOTES.md`) |
 | `fit` | FreeSewing body parts and band | pattern x = arc length, on a section inflated to the girth the whole garment covers at that height. A band with `wrap.tilt` follows the trousers' top edge |
 
 Anything without `wrap.mode` uses the envelope wrap (`FL.makeWrap`, the first pattern format).

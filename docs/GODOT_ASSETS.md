@@ -32,8 +32,8 @@ Sizes for `average` at 24 frames: total 3.08 MB (the six presets are about the s
 | `skeleton.json` | 269 KB | 23 bones, 29 joints, top-4 skin weights per vertex |
 | `walk.bin` | 2039 KB | one gait cycle, 24 frames, plus the bind pose |
 | `plan_teagan.json` | 18 KB | FreeSewing t-shirt plan (4 pieces, 72 seams) |
-| `plan_penelope.json` | 25 KB | FreeSewing pencil skirt plan (4 pieces, 113 seams) |
-| `plan_charlie.json` | 35 KB | FreeSewing chinos plan (5 pieces: two front legs, two back legs, waistband; 186 seams) |
+| `plan_penelope.json` | 24 KB | FreeSewing pencil skirt plan (4 pieces, 111 seams) |
+| `plan_charlie.json` | 35 KB | FreeSewing chinos plan (5 pieces: two front legs, two back legs, waistband; 180 seams) |
 
 ### body.obj
 
