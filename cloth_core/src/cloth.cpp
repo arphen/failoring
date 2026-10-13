@@ -405,13 +405,20 @@ void ClothSolver::solveBody() {
         if (phi >= 0) continue;
         x_[i] -= n * phi;  // push out to the surface
         const Real pen = -phi;
+        ++cstats_.bodyProjections;
+        cstats_.bodyProjectionDistance += pen;
         Vec3 disp = x_[i] - xPrev_[i];
         if (movingCollider) disp = disp - colliderDisp_[i] * invS;   // motion relative to the surface
         const Vec3 tang = disp - n * dot(disp, n);
         const Real dl = length(tang);
         if (dl > 1e-14) {
-            if (dl < muS_[i] * pen) x_[i] -= tang;                                  // static friction: stick
-            else x_[i] -= tang * std::min(muK_[i] * pen / dl, Real(1));              // kinetic friction
+            if (dl < muS_[i] * pen) { x_[i] -= tang; ++cstats_.frictionStick; cstats_.frictionDistance += dl; }  // static friction: stick
+            else {                                                                                                  // kinetic friction
+                const Real k = std::min(muK_[i] * pen / dl, Real(1));
+                x_[i] -= tang * k;
+                ++cstats_.frictionSlide;
+                cstats_.frictionDistance += dl * k;
+            }
         }
     }
 }
@@ -500,7 +507,7 @@ void ClothSolver::solveSelfCollision() {
 
 void ClothSolver::step() {
     if (!finalized_) finalize();
-    if (p_.integrator == Integrator::Implicit) stepImplicit(); else stepXpbd();
+    if (p_.integrator == Integrator::Implicit) { if (p_.contactAL) stepImplicitAL(); else stepImplicit(); } else stepXpbd();
 }
 
 void ClothSolver::stepXpbd() {

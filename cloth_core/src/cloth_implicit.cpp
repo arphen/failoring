@@ -371,15 +371,22 @@ void ClothSolver::stepImplicit() {
         for (int n = 0; n < std::max(1, p_.newtonIterations); ++n) {
             nUsed = n + 1;
             // Contact inside the solve: lift penetrating vertices onto the body surface first ...
+            const bool diagE = p_.contactDiagnostics && n > 0;
+            const Real Epre = diagE ? variationalEnergy(invH2, seamScale) : 0;
             for (int i = 0; i < N; ++i) {
                 contactPhi_[i] = 1e30;
                 if (!collider_ || w_[i] == 0) continue;
                 Vec3 nrm;
                 Real phi = collider_->eval(x_[i], nrm) - radius_[i];
-                if (phi < 0) { x_[i] -= nrm * phi; phi = 0; }
+                if (phi < 0) {
+                    x_[i] -= nrm * phi;
+                    if (n > 0) { ++cstats_.projections; cstats_.projectionDistance += -phi; }
+                    phi = 0;
+                }
                 contactN_[i] = nrm;
                 contactPhi_[i] = phi;
             }
+            if (diagE) cstats_.projectionEnergy += variationalEnergy(invH2, seamScale) - Epre;
             assembleEnergy(seamScale);
             for (int i = 0; i < N; ++i)
                 rhs_[i] = w_[i] == 0 ? Vec3(0, 0, 0) : -((x_[i] - xTilde_[i]) * (mass_[i] * invH2) + grad_[i]);
@@ -400,6 +407,7 @@ void ClothSolver::stepImplicit() {
                 }
                 filt_[i] = P;
             }
+            diagIterationActive(n);
             {
                 int used = -1;
                 if (p_.linearSolver == LinearSolver::CholeskyPCG) used = solveCholPcg(invH2, rhs_, dx_);
@@ -441,6 +449,8 @@ void ClothSolver::stepImplicit() {
                         std::fprintf(stderr, "    step %.0e: dE = %.3e\n", st, variationalEnergy(invH2, seamScale) - E0);
                     }
                 }
+                if (p_.contactDiagnostics) diagLineSearchFailure(invH2, seamScale, E0);
+                else ++cstats_.lineSearchFailures;
                 x_ = xBackup_;
                 ++lineSearchFailures_;
                 break;
@@ -454,12 +464,29 @@ void ClothSolver::stepImplicit() {
         lastCgIterations_ = cg;
         newtonIterations_ += nUsed;
         ++substepsDone_;
+        cstats_.newtonIterations += nUsed;
         if (std::getenv("FL_NEWTON")) std::fprintf(stderr, "[newton frame %d] iters=%d lastMaxDx=%.2e\n", frame_, nUsed, lastDx);
+        diagSubstepEnd();
+        if (collider_)
+            for (int i = 0; i < N; ++i) {
+                if (w_[i] == 0) continue;
+                Vec3 nrm;
+                cstats_.maxPenetration = std::max(cstats_.maxPenetration, -(collider_->eval(x_[i], nrm) - radius_[i]));
+            }
 
+        const bool diagKE = p_.contactDiagnostics;
+        const Real ke0 = diagKE ? kineticEnergyOf(x_, h) : 0;
         solveBody();
+        const Real ke1 = diagKE ? kineticEnergyOf(x_, h) : 0;
         if (p_.selfCollision) {
             solveSelfCollision();
             solveBody();
+        }
+        if (diagKE) {
+            const Real ke2 = kineticEnergyOf(x_, h);
+            cstats_.keAfterNewton += ke0;
+            cstats_.keBodyPass += ke1 - ke0;
+            cstats_.keSelfPass += ke2 - ke1;
         }
         for (int i = 0; i < N; ++i) {
             if (w_[i] == 0) continue;
