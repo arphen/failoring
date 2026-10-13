@@ -16,8 +16,10 @@ var oy := 0.0
 var drag = null
 var hover = null
 var space_down := false
-var fitted := false
+var fitted := false  # kept for the editor, which resets it on load; fit() is what matters now
 var hint_label: Label
+var _fit_pending := false   # fit() is deferred to the next draw, once the control has a real size
+var _sel_seam_key := ""     # "a:e-b:e" of the seam picked on the table, "" when none
 
 
 func _ready() -> void:
@@ -26,9 +28,8 @@ func _ready() -> void:
 
 
 func _on_resized() -> void:
-	if not fitted and size.x > 50.0:
-		fitted = true
-		fit()
+	_fit_pending = true
+	queue_redraw()
 
 
 # ------------------------------------------------------------------ geometry helpers
@@ -101,23 +102,128 @@ static func valid_pieces(pieces: Array) -> Dictionary:
 	return {"pieces": out, "bad": bad}
 
 
-var _valid_sig := []      # ids + outlines that _valid_res was computed from
-var _valid_res := {"pieces": [], "bad": {}}
+# Derived geometry for drawing, in piece-local coordinates (the table offset is added at draw time, so a drag
+# does not rebuild it). Rebuilt only when ids, names, grain, outlines or seams change. The signature is compared
+# exactly, not hashed. valid_pieces() is O(n^2) per piece, so validity lives here too.
+var _geo_sig := []
+var _geo_pieces := []   # per piece: id, name, nw, bad, bad_w, pts, lc, bb, gc, edges
+var _geo_seams := []    # per seam (same index as ed.seams): ai, am, bi, bm, col, key
 
 
-# valid_pieces() is O(n^2) per piece and _draw runs on every redraw (drags included). Validity only depends on
-# ids and outlines, so recompute only when those change. The signature is compared exactly, not hashed.
-func _valid_cached() -> Dictionary:
+func _ensure_geo() -> void:
+	if ed == null or ed.pieces == null:
+		return
 	var sig := []
 	for p in ed.pieces:
 		sig.append(String(p["id"]))
+		sig.append(String(p.get("name", "")))
+		sig.append(float(p.get("grain", 1.5708)))
 		for q in p["outline"]:
 			sig.append(float(q[0]))
 			sig.append(float(q[1]))
-	if sig != _valid_sig:
-		_valid_sig = sig
-		_valid_res = valid_pieces(ed.pieces)
-	return _valid_res
+	sig.append("#seams")
+	for s in ed.seams:
+		sig.append(String(s["a"][0]))
+		sig.append(int(s["a"][1]))
+		sig.append(String(s["b"][0]))
+		sig.append(int(s["b"][1]))
+	if sig == _geo_sig:
+		return
+	_geo_sig = sig
+	var fnt := ThemeDB.fallback_font
+	var bad: Dictionary = valid_pieces(ed.pieces)["bad"]
+	_geo_pieces = []
+	var index := {}
+	for i in ed.pieces.size():
+		var p: Dictionary = ed.pieces[i]
+		var o: Array = p["outline"]
+		var n := o.size()
+		var pts := PackedVector2Array()
+		var gc := Vector2.ZERO
+		var bx0 := 1e9
+		var by0 := 1e9
+		var bx1 := -1e9
+		var by1 := -1e9
+		for q in o:
+			var v := Vector2(float(q[0]), float(q[1]))
+			pts.append(v)
+			gc += v
+			bx0 = minf(bx0, v.x)
+			by0 = minf(by0, v.y)
+			bx1 = maxf(bx1, v.x)
+			by1 = maxf(by1, v.y)
+		if n > 0:
+			gc /= float(n)
+		# area centroid for the label anchor, falling back to the vertex average for odd shapes
+		var area := 0.0
+		var acc := Vector2.ZERO
+		for k in n:
+			var a: Vector2 = pts[k]
+			var b: Vector2 = pts[(k + 1) % n]
+			var cr := a.x * b.y - b.x * a.y
+			area += cr
+			acc += (a + b) * cr
+		var lc := gc
+		if absf(area) > 1e-9:
+			var cand := acc / (3.0 * area)
+			if point_in(o, cand.x, cand.y):
+				lc = cand
+		var edges := []
+		for k in n:
+			var a2: Vector2 = pts[k]
+			var b2: Vector2 = pts[(k + 1) % n]
+			var el := a2.distance_to(b2)
+			var d := (b2 - a2) / el if el > 0.0 else Vector2.ZERO
+			var txt := "%d: %.1f" % [k, el * 100.0]
+			edges.append({"mid": (a2 + b2) * 0.5, "n": Vector2(d.y, d.x), "txt": txt,
+				"tw": fnt.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, LABEL_FS).x})
+		var pid := String(p["id"])
+		var pname := String(p.get("name", p["id"]))
+		var why = bad.get(pid, null)
+		var bad_w := 0.0
+		if why != null:
+			bad_w = fnt.get_string_size(String(why), HORIZONTAL_ALIGNMENT_LEFT, -1, LABEL_FS).x
+		index[pid] = i
+		_geo_pieces.append({"id": pid, "name": pname, "nw": fnt.get_string_size(pname, HORIZONTAL_ALIGNMENT_LEFT, -1, LABEL_FS).x,
+			"bad": why, "bad_w": bad_w, "pts": pts, "lc": lc, "gc": gc,
+			"bb": Rect2(Vector2(bx0, by0), Vector2(bx1 - bx0, by1 - by0)), "edges": edges,
+			"grain": float(p.get("grain", 1.5708))})
+	_geo_seams = []
+	for si in ed.seams.size():
+		var s: Dictionary = ed.seams[si]
+		var ea := _seam_side(s["a"], index)
+		var eb := _seam_side(s["b"], index)
+		var col := Color(SEAM_COLORS[si % SEAM_COLORS.size()])
+		var key := "%s:%d-%s:%d" % [String(s["a"][0]), int(s["a"][1]), String(s["b"][0]), int(s["b"][1])]
+		_geo_seams.append({"ai": ea[0], "am": ea[1], "bi": eb[0], "bm": eb[1], "col": col, "key": key})
+
+
+# [piece index, edge midpoint in local coords], or [-1, zero] when the piece is missing
+func _seam_side(side: Array, index: Dictionary) -> Array:
+	var pid := String(side[0])
+	if not index.has(pid):
+		return [-1, Vector2.ZERO]
+	var i: int = index[pid]
+	var edges: Array = _geo_pieces[i]["edges"]
+	if edges.is_empty():
+		return [-1, Vector2.ZERO]
+	var e: int = ((int(side[1]) % edges.size()) + edges.size()) % edges.size()
+	return [i, edges[e]["mid"]]
+
+
+func _off(p: Dictionary) -> Vector2:
+	var t: Dictionary = p.get("table", {"x": 0.0, "y": 0.0})
+	return Vector2(float(t.get("x", 0.0)), float(t.get("y", 0.0)))
+
+
+# screen endpoints of seam k, or [] when one of its pieces is gone
+func _seam_ends(k: int) -> Array:
+	var s: Dictionary = _geo_seams[k]
+	if int(s["ai"]) < 0 or int(s["bi"]) < 0:
+		return []
+	var pa: Vector2 = s["am"] + _off(ed.pieces[int(s["ai"])])
+	var pb: Vector2 = s["bm"] + _off(ed.pieces[int(s["bi"])])
+	return [to_screen(pa.x, pa.y), to_screen(pb.x, pb.y)]
 
 
 static func piece_by_id(pieces: Array, pid: String):
@@ -143,8 +249,18 @@ func to_world(sx: float, sy: float) -> Vector2:
 	return Vector2((sx - ox) / cam_z, (oy - sy) / cam_z)
 
 
+# Fit all pieces (with a margin) into the view. Deferred to the next draw: on plan load the pieces may not be
+# placed yet, and the control may not have its final size until layout has run.
 func fit() -> void:
-	if ed.pieces.is_empty() or size.x < 50.0:
+	_fit_pending = true
+	queue_redraw()
+
+
+func _apply_fit() -> void:
+	if size.x < 50.0 or size.y < 50.0:
+		return  # keep it pending until the control has its real size
+	_fit_pending = false
+	if ed == null or ed.pieces.is_empty():
 		return
 	var x0 := 1e9
 	var y0 := 1e9
@@ -152,17 +268,17 @@ func fit() -> void:
 	var y1 := -1e9
 	for p in ed.pieces:
 		var b := bbox_of(p["outline"])
-		x0 = minf(x0, b[0] + float((p.get("table", {}) as Dictionary).get("x", 0.0)))
-		x1 = maxf(x1, b[2] + float((p.get("table", {}) as Dictionary).get("x", 0.0)))
-		y0 = minf(y0, b[1] + float((p.get("table", {}) as Dictionary).get("y", 0.0)))
-		y1 = maxf(y1, b[3] + float((p.get("table", {}) as Dictionary).get("y", 0.0)))
+		var off := _off(p)
+		x0 = minf(x0, b[0] + off.x)
+		x1 = maxf(x1, b[2] + off.x)
+		y0 = minf(y0, b[1] + off.y)
+		y1 = maxf(y1, b[3] + off.y)
 	var w: float = maxf(0.3, x1 - x0)
 	var h: float = maxf(0.3, y1 - y0)
-	var sz := size
-	cam_z = minf((sz.x - 150.0) / w, (sz.y - 150.0) / h)
-	ox = (sz.x - w * cam_z) * 0.5 - x0 * cam_z
-	oy = (sz.y + h * cam_z) * 0.5 + y0 * cam_z
-	ed.table_dirty = true
+	var avail := Vector2(maxf(40.0, size.x - 150.0), maxf(40.0, size.y - 150.0))
+	cam_z = clampf(minf(avail.x / w, avail.y / h), 40.0, 3000.0)
+	ox = (size.x - w * cam_z) * 0.5 - x0 * cam_z
+	oy = (size.y + h * cam_z) * 0.5 + y0 * cam_z
 
 
 func snapv(v: float) -> float:
@@ -227,6 +343,27 @@ func hit_piece(sx: float, sy: float):
 		if point_in(ps[i]["outline"], w.x - float(t.get("x", 0.0)), w.y - float(t.get("y", 0.0))):
 			return ps[i]
 	return null
+
+
+# index into ed.seams of the seam drawn nearest the point (within 7 px), or -1
+func hit_seam(sx: float, sy: float) -> int:
+	_ensure_geo()
+	var pt := Vector2(sx, sy)
+	var best := -1
+	var bd := 7.0
+	for k in _geo_seams.size():
+		var seg: Array = _seam_ends(k)
+		if seg.is_empty():
+			continue
+		var a: Vector2 = seg[0]
+		var d: Vector2 = seg[1] - a
+		var l2: float = maxf(d.length_squared(), 1e-9)
+		var t: float = clampf((pt - a).dot(d) / l2, 0.0, 1.0)
+		var dd: float = (a + d * t).distance_to(pt)
+		if dd < bd:
+			bd = dd
+			best = k
+	return best
 
 
 # ------------------------------------------------------------------ tools
@@ -335,11 +472,18 @@ func _down(spos: Vector2, button: int) -> void:
 		ed.push_undo()
 		ed.sel = hp["id"]
 		ed.sel_v = -1
+		_sel_seam_key = ""
 		var w := to_world(sx, sy)
 		var t: Dictionary = hp.get("table", {"x": 0.0, "y": 0.0})
 		drag = {"kind": "piece", "p": hp, "dx": float(t.get("x", 0.0)) - w.x, "dy": float(t.get("y", 0.0)) - w.y, "moved": false}
 		ed.changed("ui")
 	else:
+		var ks := hit_seam(sx, sy)
+		if ks >= 0:
+			_sel_seam_key = String(_geo_seams[ks]["key"])
+			ed.table_dirty = true
+			return
+		_sel_seam_key = ""
 		ed.sel = null
 		ed.sel_v = -1
 		drag = {"kind": "pan", "sx": sx, "sy": sy, "ox": ox, "oy": oy}
@@ -448,6 +592,7 @@ func _unhandled_key_input(e: InputEvent) -> void:
 		return
 	if k.keycode == KEY_ESCAPE:
 		ed.sew_a = null
+		_sel_seam_key = ""
 		update_hint()
 		ed.changed("ui")
 	elif k.keycode == KEY_V:
@@ -589,9 +734,15 @@ static func duplicate_piece(edref, p: Dictionary) -> Dictionary:
 
 
 # ------------------------------------------------------------------ drawing
+const LABEL_FS := 10
+
+
 func _draw() -> void:
 	if ed == null or ed.pieces == null:
 		return
+	if _fit_pending:
+		_apply_fit()
+	_ensure_geo()
 	var font := ThemeDB.fallback_font
 	# grid: 10 cm lines, 50 cm heavier
 	var w0 := to_world(0.0, 0.0)
@@ -608,81 +759,106 @@ func _draw() -> void:
 		var sy := to_screen(0.0, y).y
 		draw_line(Vector2(0.0, sy), Vector2(size.x, sy), Color("#232a35") if heavy2 else Color("#1a1f27"))
 		y += step
-	var val := _valid_cached()
 	var fcol := Color(FABRIC_COLORS.get(ed.fabric_id, "#9fb7d6"))
-	# seams: edge pairs + match ticks
-	var si := 0
-	for s in ed.seams:
-		var a = piece_by_id(ed.pieces, String(s["a"][0]))
-		var b = piece_by_id(ed.pieces, String(s["b"][0]))
-		si += 1
-		if a == null or b == null:
-			continue
-		var col := Color(SEAM_COLORS[(si - 1) % SEAM_COLORS.size()])
-		var ea := _edge_ends(a, int(s["a"][1]))
-		var eb := _edge_ends(b, int(s["b"][1]))
-		for e in [ea, eb]:
-			draw_line(to_screen(e[0][0], e[0][1]), to_screen(e[1][0], e[1][1]), col, 3.5)
-		var kk := 5
-		for k in kk + 1:
-			var t: float = float(k) / float(kk)
-			var pa := [ea[0][0] + (ea[1][0] - ea[0][0]) * t, ea[0][1] + (ea[1][1] - ea[0][1]) * t]
-			var tb: float = (1.0 - t) if bool(s.get("reverse", false)) else t
-			var pb := [eb[0][0] + (eb[1][0] - eb[0][0]) * tb, eb[0][1] + (eb[1][1] - eb[0][1]) * tb]
-			draw_dashed_line(to_screen(pa[0], pa[1]), to_screen(pb[0], pb[1]), Color(col, 0.4), 1.5, 5.0)
-	# pieces
-	for p in ed.pieces:
-		var o: Array = p["outline"]
-		var t: Dictionary = p.get("table", {"x": 0.0, "y": 0.0})
-		var tx: float = float(t.get("x", 0.0))
-		var ty: float = float(t.get("y", 0.0))
+	# pieces: fill, outline, fabric tint, grain arrow, corner handles
+	for i in ed.pieces.size():
+		var p: Dictionary = ed.pieces[i]
+		var g: Dictionary = _geo_pieces[i]
+		var off := _off(p)
 		var is_sel: bool = ed.sel == String(p["id"])
-		var bad = (val["bad"] as Dictionary).get(String(p["id"]), null)
+		var bad = g["bad"]
+		var lpts: PackedVector2Array = g["pts"]
 		var pts := PackedVector2Array()
-		for q in o:
-			pts.append(to_screen(float(q[0]) + tx, float(q[1]) + ty))
+		for q in lpts:
+			pts.append(to_screen(q.x + off.x, q.y + off.y))
 		var fill := Color("#5a2328cc") if bad != null else (Color("#ece6d6") if is_sel else Color("#d9d1bd"))
 		fill.a *= 0.93
 		draw_colored_polygon(pts, fill)
 		var poly := PackedVector2Array(pts)
-		poly.append(pts[0])
+		if pts.size() > 0:
+			poly.append(pts[0])
 		draw_polyline(poly, Color("#ff6b6b") if bad != null else (Color("#ff9d4d") if is_sel else Color("#6e674f")), 2.5 if is_sel else 1.6)
-		# fabric tint
 		draw_colored_polygon(pts, Color(fcol, 0.22))
-		# grain arrow
-		var bb := bbox_of(o)
-		var g: float = float(p.get("grain", 1.5708))
-		var gx := cos(g)
-		var gy := sin(g)
-		var gc := [0.0, 0.0]
-		for q in o:
-			gc[0] += float(q[0]) / o.size()
-			gc[1] += float(q[1]) / o.size()
-		var a0 := to_screen(gc[0] + tx - gx * 0.07, gc[1] + ty - gy * 0.07)
-		var a1 := to_screen(gc[0] + tx + gx * 0.07, gc[1] + ty + gy * 0.07)
+		# grain arrow at the vertex centroid
+		var gc: Vector2 = g["gc"]
+		var gang: float = float(g["grain"])
+		var gx := cos(gang)
+		var gy := sin(gang)
+		var a0 := to_screen(gc.x + off.x - gx * 0.07, gc.y + off.y - gy * 0.07)
+		var a1 := to_screen(gc.x + off.x + gx * 0.07, gc.y + off.y + gy * 0.07)
 		draw_line(a0, a1, Color("#2b2b2b"), 1.5)
 		var ang := (a1 - a0).angle()
 		draw_colored_polygon(PackedVector2Array([a1, a1 - Vector2(cos(ang - 0.4), sin(ang - 0.4)) * 8.0, a1 - Vector2(cos(ang + 0.4), sin(ang + 0.4)) * 8.0]), Color("#2b2b2b"))
-		draw_string(font, to_screen(gc[0] + tx, gc[1] + ty - 0.04) + Vector2(-20, 0), String(p.get("name", p["id"])), HORIZONTAL_ALIGNMENT_LEFT, 120, 11, Color("#3a3426"))
-		if bad != null:
-			draw_string(font, to_screen(gc[0] + tx, gc[1] + ty + 0.06), String(bad), HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color("#ffd0d0"))
-		# edge labels
-		for i in o.size():
-			var ea2: Array = o[i]
-			var eb2: Array = o[(i + 1) % o.size()]
-			var mx: float = (float(ea2[0]) + float(eb2[0])) * 0.5 + tx
-			var my: float = (float(ea2[1]) + float(eb2[1])) * 0.5 + ty
-			var el: float = edge_len(o, i)
-			var pp := to_screen(mx, my)
-			var ex: float = (float(eb2[0]) - float(ea2[0])) / el if el > 0.0 else 0.0
-			var ey: float = (float(eb2[1]) - float(ea2[1])) / el if el > 0.0 else 0.0
-			if is_sel or ed.tool == "sew" or cam_z > 200.0:
-				draw_string(font, pp + Vector2(ey, ex) * 15.0, "%d: %.1f" % [i, el * 100.0], HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color("#ffb877") if is_sel else Color("#8f98a6"))
 		if is_sel:
-			for i in o.size():
-				var hp := to_screen(float(o[i][0]) + tx, float(o[i][1]) + ty)
-				draw_rect(Rect2(hp - Vector2(5, 5), Vector2(10, 10)), Color("#ff9d4d") if ed.sel_v == i else Color("#14171c"), true)
+			for vi in pts.size():
+				var hp := pts[vi]
+				draw_rect(Rect2(hp - Vector2(5, 5), Vector2(10, 10)), Color("#ff9d4d") if ed.sel_v == vi else Color("#14171c"), true)
 				draw_rect(Rect2(hp - Vector2(5, 5), Vector2(10, 10)), Color("#ff9d4d"), false, 2.0)
+	# seams: one thin semi-transparent line between the two edge midpoints, a dot at each end.
+	# Only the picked seam is drawn heavier.
+	for k in _geo_seams.size():
+		var seg := _seam_ends(k)
+		if seg.is_empty():
+			continue
+		var sg: Dictionary = _geo_seams[k]
+		var picked: bool = String(sg["key"]) == _sel_seam_key
+		var c := Color(sg["col"], 0.95 if picked else 0.5)
+		draw_line(seg[0], seg[1], c, 2.5 if picked else 1.0)
+		var r := 3.0 if picked else 2.0
+		draw_circle(seg[0], r, c)
+		draw_circle(seg[1], r, c)
+	# labels. Each one claims its screen rectangle; a label that would overlap an earlier one is skipped, and
+	# piece names come first so they win. Names sit at the piece's area centroid and are hidden when they do
+	# not fit inside the piece's on-screen bounding box.
+	var fs := LABEL_FS
+	var asc := font.get_ascent(fs)
+	var lh := font.get_height(fs)
+	var view := Rect2(Vector2.ZERO, size)
+	var taken := []
+	var order := []
+	for i in ed.pieces.size():
+		if ed.sel == String(ed.pieces[i]["id"]):
+			order.push_front(i)
+		else:
+			order.append(i)
+	for i in order:
+		var p: Dictionary = ed.pieces[i]
+		var g: Dictionary = _geo_pieces[i]
+		var off := _off(p)
+		var lc: Vector2 = g["lc"]
+		var sc := to_screen(lc.x + off.x, lc.y + off.y)
+		var bb: Rect2 = g["bb"]
+		var top_left := to_screen(bb.position.x + off.x, bb.end.y + off.y)
+		var bot_right := to_screen(bb.end.x + off.x, bb.position.y + off.y)
+		var nw: float = g["nw"]
+		var screen_w := bot_right.x - top_left.x
+		var screen_h := bot_right.y - top_left.y
+		if nw + 8.0 <= screen_w and lh + 4.0 <= screen_h:
+			var nrect := Rect2(sc - Vector2(nw, lh) * 0.5, Vector2(nw, lh))
+			if view.intersects(nrect) and _claim(taken, nrect):
+				draw_string(font, Vector2(nrect.position.x, nrect.position.y + asc), String(g["name"]), HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color("#3a3426"))
+		var why = g["bad"]
+		if why != null:
+			var bw: float = g["bad_w"]
+			var brect := Rect2(Vector2(sc.x - bw * 0.5, sc.y + lh * 0.5 + 2.0), Vector2(bw, lh))
+			if view.intersects(brect) and _claim(taken, brect):
+				draw_string(font, Vector2(brect.position.x, brect.position.y + asc), String(why), HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color("#ffd0d0"))
+	# edge length labels: selected piece, sew mode, or zoomed in
+	for i in ed.pieces.size():
+		var p: Dictionary = ed.pieces[i]
+		var is_sel: bool = ed.sel == String(p["id"])
+		if not (is_sel or ed.tool == "sew" or cam_z > 200.0):
+			continue
+		var g: Dictionary = _geo_pieces[i]
+		var off := _off(p)
+		for e in g["edges"]:
+			var m: Vector2 = e["mid"]
+			var n: Vector2 = e["n"]
+			var pp := to_screen(m.x + off.x, m.y + off.y) + n * 15.0
+			var tw: float = e["tw"]
+			var erect := Rect2(Vector2(pp.x, pp.y - asc), Vector2(tw, lh))
+			if view.intersects(erect) and _claim(taken, erect):
+				draw_string(font, pp, String(e["txt"]), HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color("#ffb877") if is_sel else Color("#8f98a6"))
 	# scale bar
 	var bx := 14.0
 	var by := size.y - 18.0
@@ -691,9 +867,9 @@ func _draw() -> void:
 	draw_string(font, Vector2(bx + blen + 6.0, by), "10 cm", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color("#8f98a6"))
 
 
-func _edge_ends(p: Dictionary, e: int) -> Array:
-	var o: Array = p["outline"]
-	var t: Dictionary = p.get("table", {"x": 0.0, "y": 0.0})
-	var a: Array = o[e % o.size()]
-	var b: Array = o[(e + 1) % o.size()]
-	return [[float(a[0]) + float(t.get("x", 0.0)), float(a[1]) + float(t.get("y", 0.0))], [float(b[0]) + float(t.get("x", 0.0)), float(b[1]) + float(t.get("y", 0.0))]]
+static func _claim(taken: Array, r: Rect2) -> bool:
+	for t in taken:
+		if (t as Rect2).intersects(r):
+			return false
+	taken.append(r)
+	return true
