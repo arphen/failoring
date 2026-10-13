@@ -50,8 +50,13 @@ static func merge(garments: Array) -> Dictionary:
 		col_x += _table_width(pieces) + COLUMN_GAP
 		for s in g.get("seams", []):
 			var m: Dictionary = (s as Dictionary).duplicate(true)
-			m["a"] = [pre + String(s["a"][0]), int(s["a"][1])]
-			m["b"] = [pre + String(s["b"][0]), int(s["b"][1])]
+			# the sides keep their range (a part of an edge): only the piece id gets the prefix
+			var sa: Array = (s["a"] as Array).duplicate()
+			sa[0] = pre + String(sa[0])
+			var sb: Array = (s["b"] as Array).duplicate()
+			sb[0] = pre + String(sb[0])
+			m["a"] = sa
+			m["b"] = sb
 			out_seams.append(m)
 	return {"pieces": out_pieces, "seams": out_seams, "layer": layer_of, "count": out_pieces.size()}
 

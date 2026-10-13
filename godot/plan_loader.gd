@@ -6,6 +6,7 @@ class_name FailoringPlanLoader
 extends RefCounted
 
 const Wrap = preload("res://wrap.gd")
+const Seams = preload("res://seams.gd")
 
 const DISPLAY_MARGIN := 0.0008
 
@@ -38,7 +39,7 @@ static func normalize_plan(plan: Dictionary) -> Dictionary:
 			for s in seams:
 				for side in ["a", "b"]:
 					if String(s[side][0]) == String(p["id"]):
-						s[side][1] = ((n - 2 - int(s[side][1])) % n + n) % n
+						s[side] = Seams.reversed_side(s[side], n)
 						s["reverse"] = not bool(s.get("reverse", false))
 		p["grain"] = float(p.get("grain", 0.0))
 		if not (p.get("table") is Dictionary):

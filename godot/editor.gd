@@ -21,6 +21,7 @@ const History = preload("res://history.gd")
 const CutSelection = preload("res://selection.gd")
 const Shapes = preload("res://shapes.gd")
 const Geom = preload("res://cut_geom.gd")
+const Seams = preload("res://seams.gd")
 
 # body_h: spacing (m) of the body's signed-distance grid, baked for every walking frame. 7 mm is the reference (the
 # numbers in docs/PERF_NOTES.md are measured with it). Draft and Preview use 10 mm: the bake takes about 1.8x less CPU,
@@ -610,45 +611,103 @@ func _refresh_seams_tab() -> void:
 		var none := Label.new()
 		none.text = "No seams yet."
 		vb.add_child(none)
-	var si := 0
-	for s in seams:
-		si += 1
+	for k in seams.size():
+		var s: Dictionary = seams[k]
 		var a = Table.piece_by_id(pieces, String(s["a"][0]))
 		var b = Table.piece_by_id(pieces, String(s["b"][0]))
 		if a == null or b == null:
 			continue
-		var row := HBoxContainer.new()
-		var sw := ColorRect.new()
-		sw.color = Color(Table.SEAM_COLORS[(si - 1) % Table.SEAM_COLORS.size()])
-		sw.custom_minimum_size = Vector2(12, 12)
-		row.add_child(sw)
-		var la: float = Table.edge_len(a["outline"], int(s["a"][1]))
-		var lb: float = Table.edge_len(b["outline"], int(s["b"][1]))
-		var ease: float = (lb - la) / la if la > 0.0 else 0.0
-		var chk := Table.sew_check(la, lb)
-		var t := Label.new()
-		t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		t.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		t.text = "Seam %d: %s edge %d (%.1f cm) ↔ %s edge %d (%.1f cm)\nease %s%.1f%%" % [si, String(a.get("name", a["id"])), int(s["a"][1]) + 1, la * 100.0, String(b.get("name", b["id"])), int(s["b"][1]) + 1, lb * 100.0, "+" if ease >= 0.0 else "", ease * 100.0]
-		if chk["warn"]:
-			t.text += "\nWarning: %.1f cm apart (%.1f%%), the drape eases the difference" % [chk["diff"], chk["pct"]]
-		row.add_child(t)
-		var flip := Button.new()
-		flip.text = "⇄"
-		flip.tooltip_text = "Flip direction"
-		flip.pressed.connect(func() -> void: push_undo("Flip seam direction"); s["reverse"] = not bool(s.get("reverse", false)); changed("structure"))
-		row.add_child(flip)
-		var del := Button.new()
-		del.text = "✕"
-		del.tooltip_text = "Delete seam"
-		del.pressed.connect(func() -> void: push_undo("Delete seam"); seams.erase(s); notify("Deleted seam %d. Ctrl+Z restores it." % si); changed("structure"))
-		row.add_child(del)
-		vb.add_child(row)
+		vb.add_child(_seam_row(k, s, a, b))
 	var note := Label.new()
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	note.text = "Pick the Sew tool on the cutting table, click one edge, then the edge it joins. Edge numbers (from 1) are shown beside each edge length. Lengths are measured on the cut outline; a warning means the drape will ease the difference."
+	note.text = "Pick the Sew tool on the cutting table, click one edge, then the edge it joins. A seam joins the whole of both edges unless you change its start and end below (cm from the edge's first corner); the parts of an edge outside the seam stay open. Lengths are measured on the cut outline; a warning means the drape will ease the difference."
 	vb.add_child(note)
 	_lock_editing(vb)
+
+
+# One seam: its colour, its two sides with their lengths and ease, flip and delete, and for each side the start and end
+# of its range in cm (Enter applies; Whole edge joins the whole edge).
+func _seam_row(k: int, s: Dictionary, a: Dictionary, b: Dictionary) -> VBoxContainer:
+	var box := VBoxContainer.new()
+	var row := HBoxContainer.new()
+	var sw := ColorRect.new()
+	sw.color = Color(Table.SEAM_COLORS[k % Table.SEAM_COLORS.size()])
+	sw.custom_minimum_size = Vector2(12, 12)
+	row.add_child(sw)
+	var la: float = Seams.range_length(a["outline"], s["a"])
+	var lb: float = Seams.range_length(b["outline"], s["b"])
+	var ease: float = (lb - la) / la if la > 0.0 else 0.0
+	var chk := Table.sew_check(la, lb)
+	var t := Label.new()
+	t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	t.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	t.text = "Seam %d: %s edge %d (%.1f cm) ↔ %s edge %d (%.1f cm)\nease %s%.1f%%" % [k + 1, String(a.get("name", a["id"])), int(s["a"][1]) + 1, la * 100.0, String(b.get("name", b["id"])), int(s["b"][1]) + 1, lb * 100.0, "+" if ease >= 0.0 else "", ease * 100.0]
+	if chk["warn"]:
+		t.text += "\nWarning: %.1f cm apart (%.1f%%), the drape eases the difference" % [chk["diff"], chk["pct"]]
+	row.add_child(t)
+	var flip := Button.new()
+	flip.text = "⇄"
+	flip.tooltip_text = "Flip direction"
+	flip.pressed.connect(func() -> void: push_undo("Flip seam direction"); s["reverse"] = not bool(s.get("reverse", false)); changed("structure"))
+	row.add_child(flip)
+	var del := Button.new()
+	del.text = "✕"
+	del.tooltip_text = "Delete seam"
+	del.pressed.connect(func() -> void: push_undo("Delete seam"); seams.erase(s); notify("Deleted seam %d. Ctrl+Z restores it." % (k + 1)); changed("structure"))
+	row.add_child(del)
+	box.add_child(row)
+	for side_name in ["a", "b"]:
+		var side: Array = s[side_name]
+		var p: Dictionary = a if side_name == "a" else b
+		var len_cm := Table.edge_len(p["outline"], int(side[1])) * 100.0
+		var r := Seams.side_range(side)
+		var srow := HBoxContainer.new()
+		srow.add_child(_caption("%s, edge %d: from" % [String(p.get("name", p["id"])), int(side[1]) + 1]))
+		var fl := _line_edit("SeamFrom_%d_%s" % [k, side_name], "%.1f" % (r.x * len_cm))
+		var tl := _line_edit("SeamTo_%d_%s" % [k, side_name], "%.1f" % (r.y * len_cm))
+		var apply := func(_t: String) -> void: set_seam_range(k, side_name, float(fl.text), float(tl.text))
+		fl.text_submitted.connect(apply)
+		tl.text_submitted.connect(apply)
+		srow.add_child(fl)
+		srow.add_child(_caption("to"))
+		srow.add_child(tl)
+		srow.add_child(_caption("of %.1f cm" % len_cm))
+		var whole := Button.new()
+		whole.text = "Whole edge"
+		whole.tooltip_text = "Joins the whole edge"
+		whole.pressed.connect(func() -> void: set_seam_range(k, side_name, 0.0, len_cm))
+		srow.add_child(whole)
+		box.add_child(srow)
+	return box
+
+
+# Sets the range of one side of seam k: from_cm and to_cm along its edge, from the edge's first corner. Refused, with a
+# message, when the range is shorter than 0.8 cm or overlaps another seam on the same edge. One action.
+func set_seam_range(k: int, side_name: String, from_cm: float, to_cm: float) -> bool:
+	if k < 0 or k >= seams.size() or active_locked():
+		return false
+	var s: Dictionary = seams[k]
+	var side: Array = s[side_name]
+	var p = Table.piece_by_id(pieces, String(side[0]))
+	if p == null:
+		return false
+	var o: Array = p["outline"]
+	var e := int(side[1])
+	var len_m := Table.edge_len(o, e)
+	if len_m <= 0.0:
+		return false
+	var t0 := clampf(from_cm / 100.0 / len_m, 0.0, 1.0)
+	var t1 := clampf(to_cm / 100.0 / len_m, 0.0, 1.0)
+	if t1 - t0 < MIN_EDGE_M / len_m - 1e-9:
+		notify("A seam needs at least 0.8 cm of edge (this range is %.1f cm)." % ((t1 - t0) * len_m * 100.0))
+		return false
+	if Seams.overlaps(seams, String(side[0]), e, t0, t1, k):
+		notify("That range overlaps another seam on the same edge.")
+		return false
+	push_undo("Set seam range")
+	s[side_name] = Seams.make_side(String(side[0]), e, t0, t1)
+	changed("structure")
+	return true
 
 
 # ------------------------------------------------------------------ demo mode
@@ -3062,8 +3121,11 @@ func rebuild() -> void:
 		if bool(e["visible"]):
 			gs.append({"uid": e["uid"], "fabric": e["fabric"], "pieces": Table.valid_pieces(e["pieces"])["pieces"], "seams": e["seams"]})
 	var merged := Outfit.merge(gs)
-	_sim_pieces = merged["pieces"]
-	_sim_seams = merged["seams"]
+	# a seam on a part of an edge: the simulator joins whole edges, so the outlines are split at the range ends here
+	# (seams.gd). The 3D view's stitches and stage poses use the same split pieces and seams.
+	var split: Dictionary = Seams.expand(merged["pieces"], merged["seams"])
+	_sim_pieces = split["pieces"]
+	_sim_seams = split["seams"]
 	_piece_uid = {}
 	for p in _sim_pieces:
 		_piece_uid[String(p["id"])] = int(p["garment"])

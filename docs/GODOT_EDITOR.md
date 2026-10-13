@@ -84,6 +84,31 @@ fill with selection and validity tint, fabric tint, grain arrow, name and edge l
 (index + cm), vertex handles, seam edge pairs with match ticks, scale bar, hover and
 sew-edge highlights. Snap 5 mm, keyboard as in the browser (undo and redo: see below).
 
+## Partial seams (`godot/seams.gd`)
+
+A seam can join a part of an edge to a part of another edge, so a hole stays open where the two are not sewn: an armhole,
+a vent, a slit. A side's range is stored as `[piece, edge, t0, t1]` (fractions along the edge); a whole edge is still
+`[piece, edge]`. Ranges on one edge may not overlap, and a range is at least 0.8 cm long.
+
+* **Seams tab:** each side of a seam shows its edge, the start and end in cm from the edge's first corner (type and
+  Enter), and a **Whole edge** button. The seam's ease and warning use the range lengths.
+* **Range handles:** a partial side has a small square at each end of its range on the table, in the seam's colour.
+  Drag one along its edge (snaps to 5 mm when snap is on). A corner under the pointer wins over a handle.
+* **Sew** still joins whole edges. A new seam is whole and is shortened afterwards with the Seams tab or the handles.
+  (Choosing the range with the Sew clicks themselves is not done.)
+* **Splitting an edge** that has a seam drops the seam, as before, with a message. Ranges on the edges after it move on.
+* **Simulator:** the rebuild runs `Seams.expand` after merging the shown garments. It splits each outline at the range
+  ends and rewrites every side as a whole sub-edge, so the solver sees only whole edges. The 3D view's stitches and stage
+  poses use the split pieces too.
+* Mirror and the clockwise to counter-clockwise normalisation map ranges with the edge (t becomes 1 - t).
+
+Not done: the Pattern tab's seam summary and the garment health check still describe whole edges (a part seam is
+listed with its whole edges). The Seams tab's numbers are the place to read a part seam.
+
+Tests: `godot/tests/seams_check.tscn` (the range model, the expansion, and the drape: a tube sewn down both sides with the
+top sewn all the way closes to 0.2 mm; sewn half way, its open half is 37 mm apart), `godot/tests/seam_edit_check.tscn`
+(the Seams tab's function, refusals, the rebuild, and a handle drag with undo).
+
 ## Edit tools (`godot/cut_geom.gd`, `godot/table.gd`, the Piece tab)
 
 * **Corners.** Drag a corner, type its x and y (Piece tab), double-click an edge or use the **Split** tool (press on an

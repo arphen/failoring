@@ -5,6 +5,7 @@
 extends Control
 
 const Geom = preload("res://cut_geom.gd")
+const Seams = preload("res://seams.gd")
 const SEAM_COLORS := ["#3fd3c0", "#ff9d4d", "#c792ea", "#82aaff", "#f07178", "#c3e88d", "#ffcb6b", "#89ddff"]
 const FABRIC_COLORS := {"cotton_poplin": "#6f93c4", "denim_12oz": "#3d5c8c", "linen_medium": "#c2b184",
 	"wool_suiting": "#566175", "silk_charmeuse": "#a8405c", "polyester_chiffon": "#dc94ac",
@@ -193,6 +194,10 @@ func _ensure_geo() -> void:
 		sig.append(int(s["a"][1]))
 		sig.append(String(s["b"][0]))
 		sig.append(int(s["b"][1]))
+		for side in [s["a"], s["b"]]:  # the ranges of parts of edges
+			var r := Seams.side_range(side)
+			sig.append(r.x)
+			sig.append(r.y)
 	if sig == _geo_sig:
 		return
 	_geo_sig = sig
@@ -266,7 +271,9 @@ func _ensure_geo() -> void:
 		var ea := _seam_side(s["a"], index)
 		var eb := _seam_side(s["b"], index)
 		var col := Color(SEAM_COLORS[si % SEAM_COLORS.size()])
-		var key := "%s:%d-%s:%d" % [String(s["a"][0]), int(s["a"][1]), String(s["b"][0]), int(s["b"][1])]
+		var ra := Seams.side_range(s["a"])
+		var rb := Seams.side_range(s["b"])
+		var key := "%s:%d:%.6f:%.6f-%s:%d:%.6f:%.6f" % [String(s["a"][0]), int(s["a"][1]), ra.x, ra.y, String(s["b"][0]), int(s["b"][1]), rb.x, rb.y]
 		_geo_seams.append({"ai": ea[0], "am": ea[1], "bi": eb[0], "bm": eb[1], "col": col, "key": key})
 
 
@@ -276,11 +283,13 @@ func _seam_side(side: Array, index: Dictionary) -> Array:
 	if not index.has(pid):
 		return [-1, Vector2.ZERO]
 	var i: int = index[pid]
-	var edges: Array = _geo_pieces[i]["edges"]
-	if edges.is_empty():
+	var pts: PackedVector2Array = _geo_pieces[i]["pts"]
+	var n := pts.size()
+	if n == 0:
 		return [-1, Vector2.ZERO]
-	var e: int = ((int(side[1]) % edges.size()) + edges.size()) % edges.size()
-	return [i, edges[e]["mid"]]
+	var e: int = ((int(side[1]) % n) + n) % n
+	var r := Seams.side_range(side)  # the seam's end sits in the middle of the side's range
+	return [i, pts[e].lerp(pts[(e + 1) % n], (r.x + r.y) * 0.5)]
 
 
 func _off(p: Dictionary) -> Vector2:
@@ -518,6 +527,92 @@ func hit_seam(sx: float, sy: float) -> int:
 	return best
 
 
+# ------------------------------------------------------------------ seam range handles
+# The ends of each side's range are handles on the edge: a small square in the seam's colour. Dragging one moves that end
+# along its edge (seam_end drag, see _drag_seam_end). Picked seams draw bigger handles.
+func _handle_points(k: int) -> Array:
+	var out := []
+	var s: Dictionary = ed.seams[k]
+	var sg: Dictionary = _geo_seams[k]
+	for side_name in ["a", "b"]:
+		var side: Array = s[side_name]
+		var pi := int(sg["ai"]) if side_name == "a" else int(sg["bi"])
+		if pi < 0 or Seams.is_full(side):  # a whole edge has no handles: its ends are corners
+			continue
+		var pts: PackedVector2Array = _geo_pieces[pi]["pts"]
+		var n := pts.size()
+		var e := ((int(side[1]) % n) + n) % n
+		var r := Seams.side_range(side)
+		var off := _off(ed.pieces[pi])
+		for end in [0, 1]:
+			var t := r.x if end == 0 else r.y
+			var lp := pts[e].lerp(pts[(e + 1) % n], t)
+			out.append({"k": k, "side": side_name, "end": end, "screen": to_screen(lp.x + off.x, lp.y + off.y), "pi": pi})
+	return out
+
+
+func _draw_range_handles(k: int, c: Color, picked: bool) -> void:
+	var sz := 4.0 if picked else 3.0
+	for h in _handle_points(k):
+		var p: Vector2 = h["screen"]
+		draw_rect(Rect2(p - Vector2(sz, sz), Vector2(sz * 2.0, sz * 2.0)), c, true)
+
+
+# The seam range handle under the pointer (within 8 px), or {} when none.
+func _handle_at(spos: Vector2) -> Dictionary:
+	_ensure_geo()
+	var best := {}
+	var bd := 8.0
+	for k in _geo_seams.size():
+		for h in _handle_points(k):
+			var d: float = (h["screen"] as Vector2).distance_to(spos)
+			if d < bd:
+				bd = d
+				best = h
+	return best
+
+
+# Moves one end of a side's range to the pointer's place on the edge (snapped to 5 mm when snap is on). The range keeps
+# at least 8 mm and does not overlap another seam on its edge; a move that would do either is not applied.
+func _drag_seam_end(d: Dictionary, spos: Vector2) -> void:
+	var k: int = int(d["k"])
+	if k < 0 or k >= ed.seams.size():
+		return
+	var s: Dictionary = ed.seams[k]
+	var side: Array = s[String(d["side"])]
+	var pid := String(side[0])
+	var e := int(side[1])
+	var pi := int(_geo_seams[k]["ai"]) if String(d["side"]) == "a" else int(_geo_seams[k]["bi"])
+	if pi < 0:
+		return
+	var pts: PackedVector2Array = _geo_pieces[pi]["pts"]
+	var n := pts.size()
+	var a := pts[e]
+	var b := pts[(e + 1) % n]
+	var ab := b - a
+	var len := ab.length()
+	if len <= 0.0:
+		return
+	var w := to_world(spos.x, spos.y) - _off(ed.pieces[pi])
+	var t := clampf((w - a).dot(ab) / (len * len), 0.0, 1.0)
+	if ed.snap:
+		t = clampf(snappedf(t * len, 0.005) / len, 0.0, 1.0)
+	var r := Seams.side_range(side)
+	var t0 := r.x
+	var t1 := r.y
+	var min_t := 0.008 / len
+	if int(d["end"]) == 0:
+		t0 = clampf(t, 0.0, t1 - min_t)
+	else:
+		t1 = clampf(t, t0 + min_t, 1.0)
+	if is_equal_approx(t0, r.x) and is_equal_approx(t1, r.y):
+		return
+	if Seams.overlaps(ed.seams, pid, e, t0, t1, k):
+		return
+	s[String(d["side"])] = Seams.make_side(pid, e, t0, t1)
+	ed.table_dirty = true
+
+
 # ------------------------------------------------------------------ tools
 func set_tool(t: String) -> void:
 	ed.tool = t
@@ -669,6 +764,14 @@ func _down(spos: Vector2, button: int) -> void:
 			drag = {"kind": "vertex", "p": sel, "vi": vi}
 			ed.changed("ui")
 			return
+	# a handle at the end of a part of an edge (after the corners, so a corner still wins)
+	var hh := _handle_at(spos)
+	if not hh.is_empty():
+		ed.push_undo("Move seam end")
+		ed.selection.replace("seam", int(hh["k"]))
+		drag = {"kind": "seam_end", "k": int(hh["k"]), "side": String(hh["side"]), "end": int(hh["end"])}
+		ed.table_dirty = true
+		return
 	var hp: Variant = hit_piece(sx, sy)
 	if hp != null:
 		hp = hp as Dictionary
@@ -746,6 +849,8 @@ func _move(spos: Vector2) -> void:
 		var th: Vector2 = _off(d["p"])
 		d["b"] = Vector2(wh.x - th.x, wh.y - th.y)
 		ed.table_dirty = true
+	elif String(d["kind"]) == "seam_end":
+		_drag_seam_end(d, spos)
 	elif String(d["kind"]) == "rotate":
 		var wr := to_world(sx, sy)
 		var ang: float = (wr - d["centre"]).angle() - float(d["a0"])
@@ -904,6 +1009,8 @@ func _up() -> void:
 		ed.discard_pending()  # a click on a piece without a move is not an action
 	elif d != null and String(d.get("kind", "")) == "hole":
 		_finish_hole(d)
+	elif d != null and String(d.get("kind", "")) == "seam_end":
+		ed.changed("structure")
 	elif d != null and String(d.get("kind", "")) == "rotate":
 		ed.changed("structure")  # a turn that moved nothing records nothing (the pattern is unchanged)
 
@@ -1158,7 +1265,7 @@ static func mirror_piece(p: Dictionary, seams: Array) -> void:
 	for s in seams:
 		for side in ["a", "b"]:
 			if String(s[side][0]) == String(p["id"]):
-				s[side][1] = ((n - 2 - int(s[side][1])) % n + n) % n
+				s[side] = Seams.reversed_side(s[side], n)
 				s["reverse"] = not bool(s.get("reverse", false))
 	p["grain"] = PI - float(p.get("grain", 0.0))
 	p["wrap"]["theta"] = fposmod(360.0 - float((p.get("wrap", {}) as Dictionary).get("theta", 0.0)), 360.0)
@@ -1273,6 +1380,7 @@ func _draw() -> void:
 		var r := 3.0 if picked else 2.0
 		draw_circle(seg[0], r, c)
 		draw_circle(seg[1], r, c)
+		_draw_range_handles(k, c, picked)
 	# sew mode: the first edge picked (orange) and the edge under the pointer (teal), so the pair is visible
 	# before the second click
 	if ed.tool == "sew":

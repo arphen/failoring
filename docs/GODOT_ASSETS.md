@@ -109,6 +109,12 @@ vertices, and its edges are free edges with no seam chains). The plan builder pa
 `FailoringSim.add_polygon_panel_with_holes(outline, holes, ...)`; a piece without holes uses `add_polygon_panel` as
 before. The browser app does not read `holes` yet.
 
+Seam sides (step 4): a seam is `{a, b, reverse}` and a side is `[piece id, edge index]` (the whole edge, the old form) or
+`[piece id, edge index, t0, t1]`, a part of the edge from fraction t0 to t1 (0 is the edge's first corner). Two ranges on
+one edge must not overlap. The editor's rebuild splits each piece's outline at the range ends (`godot/seams.gd`,
+`Seams.expand`) and gives the simulator whole edges, so the solver never sees a range. The browser app reads only whole
+sides.
+
 Garments: `teagan` (t-shirt), `penelope` (pencil skirt), `charlie` (chinos). Each is drafted for each preset.
 
 ## Loader (godot/scripts/body_loader.gd)
