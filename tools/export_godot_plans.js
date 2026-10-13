@@ -16,7 +16,7 @@
 const fs = require('fs'), path = require('path');
 const ROOT = path.join(__dirname, '..'), R = (...p) => path.join(ROOT, ...p);
 const FL = require(R('app/src/shared.js')), Body = require(R('app/src/body.js'));
-require(R('app/src/gait.js')); require(R('app/src/fsimport.js'));
+require(R('app/src/gait.js')); require(R('app/src/fsimport.js')); require(R('app/src/draft.js'));
 
 const GARMENTS = ['teagan', 'penelope', 'charlie'];   // tee, pencil skirt, chinos
 const args = process.argv.slice(2);
@@ -65,6 +65,13 @@ function exportPreset(name) {
     }
   }
   fs.writeFileSync(path.join(dir, 'wrap_ref.json'), JSON.stringify({ preset: name, refs }));
+  // draft reference outlines for godot/tests/draft_check.tscn (pants/tank/shirt on this body)
+  const drafts = {};
+  for (const [dn, df] of [['pants', (b) => FL.draft.pants(b, {})], ['tank', (b) => FL.draft.tank(b, {})], ['shirt', (b) => FL.draft.shirt(b, {})]]) {
+    const p = df(stand);
+    drafts[dn] = { pieces: p.pieces.map((pc) => ({ id: pc.id, outline: pc.outline })), seams: p.seams.length };
+  }
+  fs.writeFileSync(path.join(dir, 'draft_ref.json'), JSON.stringify({ preset: name, drafts }));
   return { stand };
 }
 
@@ -88,6 +95,8 @@ function verify(name) {
   }
   const refs = JSON.parse(fs.readFileSync(path.join(dir, 'wrap_ref.json'), 'utf8'));
   check(refs.refs.length > 20, `only ${refs.refs.length} wrap refs`);
+  const dref = JSON.parse(fs.readFileSync(path.join(dir, 'draft_ref.json'), 'utf8'));
+  check(Object.keys(dref.drafts).length === 3, 'draft refs');
   // every ref recomputes from the written files (catches serialization loss)
   const M = Body.load(new Uint8Array(fs.readFileSync(R('app/assets/body_mh.bin'))));
   const stand = FL.Gait.stand(M, Body.generate(M, FL.PRESETS[name], null));
