@@ -195,7 +195,9 @@
     for (const c of cand) {
       if (overlaps(c.a, c.fa) || overlaps(c.b, c.fb)) continue;
       const ext = (e, f) => (f[1] - f[0] >= 0.85 || (e.cv.L < 0.2 && f[1] - f[0] >= 0.5) ? [0, 1] : f);
-      const fa = ext(c.a, c.fa), fb = ext(c.b, c.fb);
+      let fa = ext(c.a, c.fa), fb = ext(c.b, c.fb);
+      // two chains of nearly the same length where one is fully covered: the other is its mate, even if part of it lay out of reach in the start pose (a shoulder seam that one body shape pulls half apart)
+      if ((fa[1] - fa[0] >= 0.99 || fb[1] - fb[0] >= 0.99) && Math.max(c.a.cv.L, c.b.cv.L) <= 1.1 * Math.min(c.a.cv.L, c.b.cv.L)) { fa = [0, 1]; fb = [0, 1]; }
       (used.get(c.a) || used.set(c.a, []).get(c.a)).push(fa); (used.get(c.b) || used.set(c.b, []).get(c.b)).push(fb);
       pairs.push({ a: c.a, b: c.b, fa, fb });
     }
