@@ -3,6 +3,10 @@
 ## Session 2 (this agent)
 
 ### Latest results (read this first)
+- **Final full ctest on commit ee659db: 6 of 6 pass** (test_basics 0.6 s, test_cantilever 5.5 s, test_drape 401 s, test_garment 45 s, test_sdf_grid 10 s, test_soft_skin 145 s). The test_drape standalone run also passed (RESULT ok).
+- The earlier "4 pass / 2 fail" below is superseded by this run.
+- Open items still listed under "Still open".
+
 - Full `ctest` run (default per-test timeout 1500 s): **4 pass / 2 fail of 6**.
   - test_basics: Passed (0.85 s). test_cantilever: Passed (13.7 s). test_garment: Passed (237 s). test_sdf_grid: Passed (51 s).
   - test_drape: **Timeout at my 1500 s limit, not a failure.** The baseline run in the old build dir (`build/Testing/Temporary/LastTest.log`) shows test_drape passing after 32 min. It was rerun standalone (see below).
