@@ -45,10 +45,9 @@ size_flags_horizontal = 3
 focus_mode = 2
 script = ExtResource("2")
 
-[node name="ViewPane" type="SubViewportContainer" parent="UI/Root/Main"]
+[node name="ViewPane" type="Control" parent="UI/Root/Main"]
 custom_minimum_size = Vector2(240, 0)
 size_flags_horizontal = 3
-stretch = true
 
 [node name="View" type="SubViewport" parent="UI/Root/Main/ViewPane"]
 own_world_3d = true
