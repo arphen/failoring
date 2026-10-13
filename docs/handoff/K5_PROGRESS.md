@@ -16,3 +16,13 @@
 - Not yet verified: the edge-edge passthrough scenario (done-criterion b), the layered sheet test (d), cost comparison (e),
   and whether test_garment passes with barrierContact on.
 - The ctest suite takes longer than 10 minutes in one call; run the binaries in the background.
+
+## Done-criterion (b): edge-edge passthrough (added in cloth_core/tests/test_passthrough.cpp, registered in CMake)
+- Scene: strip A (2 cm wide, pinned flat) and a coarse 10 cm sheet B falling so its bottom edge crosses A's strip.
+  Corners of B are 4 cm from A. Exact triangle-triangle intersection count each frame, 120 frames, substeps 2.
+- Measured: vertex-triangle mode (selfCollision) -> intersecting frames 5, max 3 pairs.
+  barrier mode (barrierContact) -> 0 intersecting frames.
+- Test: RESULT ok (old mode must show intersections, new mode must show none).
+- Caveats: B has no floor, so its lowest point keeps falling while it drapes over A (the metric is not used). The
+  "min self distance at end" is 14.142 mm in both modes; not investigated (it may reflect the rest geometry). The
+  scene was chosen by hand, not by a search, and it is a single configuration.
