@@ -211,45 +211,36 @@ PTType pointTriangleType(const Vec3& p, const Vec3& t0, const Vec3& t1, const Ve
 }
 
 EEType edgeEdgeType(const Vec3& ea0, const Vec3& ea1, const Vec3& eb0, const Vec3& eb1) {
-    // Closest points of two segments (Sunday / Eberly), the clamping decisions mapped to feature cases.
+    // Robust selection: the segment-segment distance is the minimum over the feature cases that are realisable
+    // (the interior-interior case only when the line-line minimiser lies inside both segments, which requires
+    // non-parallel lines; the four endpoint-vs-segment cases always). Every candidate is the length of an actual
+    // pair of points on the two segments, so the minimum is the exact distance, and (near-)parallel and collinear
+    // configurations need no special clamping logic.
     const Vec3 u = ea1 - ea0, v = eb1 - eb0, w = ea0 - eb0;
     const Real a = dot(u, u), b = dot(u, v), c = dot(v, v), d = dot(u, w), e = dot(v, w);
     const Real D = a * c - b * b;
-    Real sN, sD = D, tN, tD = D;
-    // 0 = at start, 1 = at end, 2 = interior
-    int sF = 2, tF = 2;
-    const bool parallel = D <= 1e-20 * a * c || a <= 0 || c <= 0;
-    if (parallel) {
-        sN = 0; sD = 1; tN = e; tD = c;
-        sF = 0;
-        if (c <= 0) { tN = 0; tD = 1; }
-    } else {
-        sN = b * e - c * d;
-        tN = a * e - b * d;
-        if (sN <= 0) { sN = 0; tN = e; tD = c; sF = 0; }
-        else if (sN >= sD) { sN = sD; tN = e + b; tD = c; sF = 1; }
+    if (a > 0 && c > 0 && D > 1e-14 * a * c) {
+        const Real s = (b * e - c * d) / D, t = (a * e - b * d) / D;
+        if (s > 0 && s < 1 && t > 0 && t < 1) return EEType::EA_EB;
     }
-    if (tN <= 0) {
-        tN = 0; tF = 0;
-        if (-d <= 0) sF = 0;
-        else if (-d >= a) sF = 1;
-        else sF = 2;
-    } else if (tN >= tD) {
-        tN = tD; tF = 1;
-        if (-d + b <= 0) sF = 0;
-        else if (-d + b >= a) sF = 1;
-        else sF = 2;
+    Real best = 1e300;
+    EEType type = EEType::EA0_EB0;
+    auto consider = [&](Real dist, EEType ty) { if (dist < best) { best = dist; type = ty; } };
+    // endpoint of A against segment B
+    {
+        const int f0 = pointSegmentFeature(ea0, eb0, eb1);
+        consider(pointSegmentDist2(ea0, eb0, eb1), f0 == 2 ? EEType::EA0_EB : (f0 == 0 ? EEType::EA0_EB0 : EEType::EA0_EB1));
+        const int f1 = pointSegmentFeature(ea1, eb0, eb1);
+        consider(pointSegmentDist2(ea1, eb0, eb1), f1 == 2 ? EEType::EA1_EB : (f1 == 0 ? EEType::EA1_EB0 : EEType::EA1_EB1));
     }
-    if (parallel && tF == 2) {
-        // ea0 projects inside eb: point-line case ea0-eb, unless another endpoint configuration is closer
-        // (overlapping parallel segments have many closest pairs; any endpoint-on-line case gives the distance).
-        return EEType::EA0_EB;
+    // endpoint of B against segment A
+    {
+        const int f0 = pointSegmentFeature(eb0, ea0, ea1);
+        consider(pointSegmentDist2(eb0, ea0, ea1), f0 == 2 ? EEType::EA_EB0 : (f0 == 0 ? EEType::EA0_EB0 : EEType::EA1_EB0));
+        const int f1 = pointSegmentFeature(eb1, ea0, ea1);
+        consider(pointSegmentDist2(eb1, ea0, ea1), f1 == 2 ? EEType::EA_EB1 : (f1 == 0 ? EEType::EA0_EB1 : EEType::EA1_EB1));
     }
-    if (sF == 2 && tF == 2) return EEType::EA_EB;
-    if (sF == 2) return tF == 0 ? EEType::EA_EB0 : EEType::EA_EB1;
-    if (tF == 2) return sF == 0 ? EEType::EA0_EB : EEType::EA1_EB;
-    if (sF == 0) return tF == 0 ? EEType::EA0_EB0 : EEType::EA0_EB1;
-    return tF == 0 ? EEType::EA1_EB0 : EEType::EA1_EB1;
+    return type;
 }
 
 Real pointTriangleDistance2(const Vec3& p, const Vec3& t0, const Vec3& t1, const Vec3& t2, PTType type) {

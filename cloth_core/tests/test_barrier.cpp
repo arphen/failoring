@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 #include <random>
+#include <set>
 
 #include "check.hpp"
 #include "failoring/barrier_contact.hpp"
@@ -19,15 +20,12 @@ static Real& comp(Vec3& v, int c) { return c == 0 ? v.x : (c == 1 ? v.y : v.z); 
 // relative error of analytic vs central differences of f (value, gradient) at x
 struct FdErr { Real g = 0, H = 0; };
 template <class F>
-static FdErr fdCheck(const Vec3 x[4], F f) {  // f(const Vec3*, Deriv12&) computes value/grad/Hessian
+static FdErr fdCheckEps(const Vec3 x[4], F f, Real eps) {
     Deriv12 D;
     f(x, D);
     Real gmax = 1e-300, Hmax = 1e-300, ge = 0, He = 0;
     for (int i = 0; i < 12; ++i) gmax = std::max(gmax, std::fabs(D.g[i]));
     for (int i = 0; i < 144; ++i) Hmax = std::max(Hmax, std::fabs(D.H[i]));
-    Real scale = 0;
-    for (int i = 0; i < 4; ++i) scale = std::max(scale, length(x[i] - x[0]));
-    const Real eps = 1e-6 * std::max(scale, Real(1e-3));
     for (int k = 0; k < 12; ++k) {
         Vec3 a[4] = {x[0], x[1], x[2], x[3]}, b[4] = {x[0], x[1], x[2], x[3]};
         comp(a[k / 3], k % 3) += eps;
@@ -39,6 +37,21 @@ static FdErr fdCheck(const Vec3 x[4], F f) {  // f(const Vec3*, Deriv12&) comput
         for (int j = 0; j < 12; ++j) He = std::max(He, std::fabs((Da.g[j] - Db.g[j]) / (2 * eps) - D.H[j * 12 + k]));
     }
     return {ge / gmax, He / Hmax};
+}
+// Central differences at several step sizes (1e-5 .. 1e-8 of the configuration size); the smallest error is
+// reported, so neither truncation (large steps) nor round-off (small steps) dominates the verdict.
+template <class F>
+static FdErr fdCheck(const Vec3 x[4], F f) {
+    Real scale = 0;
+    for (int i = 0; i < 4; ++i) scale = std::max(scale, length(x[i] - x[0]));
+    scale = std::max(scale, Real(1e-3));
+    FdErr best{1e300, 1e300};
+    for (Real r : {1e-5, 1e-6, 1e-7, 1e-8}) {
+        const FdErr e = fdCheckEps(x, f, r * scale);
+        best.g = std::min(best.g, e.g);
+        best.H = std::min(best.H, e.H);
+    }
+    return best;
 }
 
 // brute-force squared distances by dense sampling plus local refinement (independent of the case analysis)
@@ -383,29 +396,46 @@ int main() {
             int it = 0;
             const Real t = pt ? ccdPointTriangle(a0, a1, cp, &it) : ccdEdgeEdge(a0, a1, cp, &it);
             if (it < 0) ++capHits; else iterSum += it;
-            // reference: first sample where the distance reaches (numerically) zero or the signed volume flips
-            // while the distance is tiny (the primitives pass through each other)
+            // Reference time of first contact. Contact of a point with a triangle (or of two segments) can only
+            // happen when the four points are coplanar, i.e. at a root of the signed volume V(t) (a cubic in t), or
+            // when the distance itself is (numerically) zero. Roots of V are bracketed on a dense grid and refined by
+            // bisection; the pair is in contact there if the distance at the root is ~0 (coplanar but apart is not
+            // contact).
             const int S = 20000;
             Real tc = 2;
             const Real d0 = dist(0);
-            Real prevVol = 0;
-            for (int k = 0; k <= S; ++k) {
-                const Real tk = Real(k) / S;
+            auto vol = [&](Real tk) {
                 Vec3 x[4];
                 for (int i = 0; i < 4; ++i) x[i] = a0[i] + (a1[i] - a0[i]) * tk;
-                const Real vol = dot(cross(x[1] - x[0], x[2] - x[0]), x[3] - x[0]);
-                const Real dk = dist(tk);
-                if (dk < 1e-9 * std::max(d0, Real(1e-6)) || (k > 0 && vol * prevVol < 0 && dk < 2e-3)) {
-                    // refine: the true contact is at or before tk (distance is Lipschitz in t)
-                    tc = tk;
-                    break;
+                return dot(cross(x[1] - x[0], x[2] - x[0]), x[3] - x[0]);
+            };
+            Real scale = 0;
+            for (int i = 0; i < 4; ++i) scale = std::max({scale, length(a0[i] - a0[0]), length(a1[i] - a1[0])});
+            const Real touch = 1e-9 * std::max(scale, Real(1e-3));
+            Real prevVol = vol(0);
+            for (int k = 0; k <= S; ++k) {
+                const Real tk = Real(k) / S;
+                const Real vk = vol(tk);
+                if (dist(tk) < touch) { tc = tk; break; }
+                if (k > 0 && vk * prevVol < 0) {
+                    Real lo = Real(k - 1) / S, hi = tk;
+                    for (int b = 0; b < 80; ++b) {
+                        const Real mid = 0.5 * (lo + hi);
+                        if (vol(mid) * prevVol < 0) hi = mid; else lo = mid;
+                    }
+                    if (dist(hi) < touch || dist(lo) < touch) { tc = lo; break; }
                 }
-                prevVol = vol;
+                prevVol = vk;
             }
             ++n;
             if (tc <= 1) {
                 ++hits;
-                if (t > tc + 1e-4) ++missed;
+                if (t > tc + 1e-4) {
+                    ++missed;
+                    Real dmin = 1e30;
+                    for (int k = 0; k <= 100000; ++k) dmin = std::min(dmin, dist(k / 100000.0));
+                    std::printf("  MISS pt=%d t=%.6f tc=%.6f d0=%.3e dmin=%.3e dist(t)=%.3e\n", pt, t, tc, d0, dmin, dist(t));
+                }
                 else worstEarly = std::max(worstEarly, tc - t);
             }
             // safety: the distance never drops to zero on [0, t]
@@ -458,6 +488,46 @@ int main() {
         CHECK(hits > 500);
         CHECK_MSG(missed == 0, "CCD missed %d collisions", missed);
         CHECK_MSG(unsafe == 0, "CCD returned %d unsafe times", unsafe);
+    }
+
+    // ------------------------------------------------------------------------------------------------
+    std::printf("[CCD: known times of impact]\n");
+    {
+        // Conservative advancement with separation s stops where the distance first reaches s*d0 (never later than
+        // the true impact). For a linear approach at constant speed from d0 to contact at t*, that is at
+        // t = (1 - s) t*, reached from below by geometric steps, so the returned time lies in [(1 - s) t* - tol, t*).
+        CcdParams cp;
+        struct Case { const char* name; bool pt; Vec3 a0[4], a1[4]; Real toi; };
+        const Case cases[] = {
+            // point falls straight onto the triangle interior: d(t) = 0.01 - 0.02 t, impact at 0.5
+            {"PT interior", true, {{0.2, 0.2, 0.01}, {0, 0, 0}, {1, 0, 0}, {0, 1, 0}}, {{0.2, 0.2, -0.01}, {0, 0, 0}, {1, 0, 0}, {0, 1, 0}}, 0.5},
+            // the triangle moves up onto a static point instead (impact at 0.25)
+            {"PT moving tri", true, {{0.3, 0.3, 0.0}, {0, 0, -0.01}, {1, 0, -0.01}, {0, 1, -0.01}}, {{0.3, 0.3, 0.0}, {0, 0, 0.03}, {1, 0, 0.03}, {0, 1, 0.03}}, 0.25},
+            // edge-edge crossing: perpendicular edges, edge A descends through edge B (impact at 0.5)
+            {"EE crossing", false, {{-1, 0, 0.004}, {1, 0, 0.004}, {0, -1, 0}, {0, 1, 0}}, {{-1, 0, -0.004}, {1, 0, -0.004}, {0, -1, 0}, {0, 1, 0}}, 0.5},
+            // edge-edge crossing, both edges moving towards each other, oblique: gap 8 mm closing at 40 mm per unit t (impact at 0.2)
+            {"EE both moving", false, {{-1, 0.3, 0.004}, {1, -0.2, 0.004}, {0.1, -1, -0.004}, {-0.1, 1, -0.004}},
+                                      {{-1, 0.3, -0.016}, {1, -0.2, -0.016}, {0.1, -1, 0.016}, {-0.1, 1, 0.016}}, 0.2},
+            // parallel edges, one above the other, falling together (degenerate line-line case; impact at 0.5)
+            {"EE parallel", false, {{0, 0, 0.002}, {1, 0, 0.002}, {0.3, 0, 0}, {1.3, 0, 0}}, {{0, 0, -0.002}, {1, 0, -0.002}, {0.3, 0, 0}, {1.3, 0, 0}}, 0.5},
+            // collinear edges sliding into each other end to end (coplanar, d(t) = 0.01 - 0.02 t, impact at 0.5)
+            {"EE collinear", false, {{-1.01, 0, 0}, {-0.01, 0, 0}, {0, 0, 0}, {1, 0, 0}}, {{-0.99, 0, 0}, {0.01, 0, 0}, {0, 0, 0}, {1, 0, 0}}, 0.5},
+            // coplanar point sliding in the triangle's plane onto its edge (impact at 0.5)
+            {"PT coplanar", true, {{0.5, -0.01, 0}, {0, 0, 0}, {1, 0, 0}, {0, 1, 0}}, {{0.5, 0.01, 0}, {0, 0, 0}, {1, 0, 0}, {0, 1, 0}}, 0.5},
+        };
+        for (const Case& c : cases) {
+            int it = 0;
+            const Real t = c.pt ? ccdPointTriangle(c.a0, c.a1, cp, &it) : ccdEdgeEdge(c.a0, c.a1, cp, &it);
+            std::printf("  %-15s toi %.3f  ccd %.4f  (%d iterations)\n", c.name, c.toi, t, it);
+            CHECK_MSG(t < c.toi && t >= (1 - cp.separation) * c.toi - 0.02, "%s: ccd %.4f vs toi %.3f", c.name, t, c.toi);
+        }
+        // no impact: edges pass each other 5 mm apart; parallel edges sliding along each other at constant distance
+        {
+            const Vec3 a0[4] = {{-1, 0, 0.005}, {1, 0, 0.005}, {0, -1, 0}, {0, 1, 0}}, a1[4] = {{-1, 0.5, 0.005}, {1, 0.5, 0.005}, {0, -1, 0}, {0, 1, 0}};
+            CHECK(ccdEdgeEdge(a0, a1, cp) == 1);
+            const Vec3 b0[4] = {{0, 0, 0.002}, {1, 0, 0.002}, {0.3, 0, 0}, {1.3, 0, 0}}, b1[4] = {{0.5, 0, 0.002}, {1.5, 0, 0.002}, {0.3, 0, 0}, {1.3, 0, 0}};
+            CHECK(ccdEdgeEdge(b0, b1, cp) == 1);
+        }
     }
 
     // ------------------------------------------------------------------------------------------------
