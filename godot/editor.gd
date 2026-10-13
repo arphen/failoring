@@ -14,6 +14,7 @@ const Info = preload("res://info.gd")
 const Builtin = preload("res://builtin_plans.gd")
 const Table = preload("res://table.gd")
 const Look = preload("res://look.gd")
+const Library = preload("res://library.gd")
 
 const QUALITIES := {
 	"draft": {"label": "Draft (fast)", "edge": 0.060, "sub": 1, "newton": 6, "frames": 36},
@@ -126,6 +127,7 @@ var motion_opt: OptionButton
 var status_label: Label
 var _fold_open := false     # Piece tab "Edges" section, kept across tab rebuilds
 @onready var tabs: TabContainer = $UI/Root/Main/Right/Tabs
+@onready var library_panel = $UI/Root/Main/Left/Library  # library_panel.gd (untyped: calls its own methods)
 
 
 func _ready() -> void:
@@ -215,7 +217,7 @@ func _build_scene() -> void:
 
 # ------------------------------------------------------------------ UI
 func _build_ui() -> void:
-	var box: VBoxContainer = $UI/Root/Main/Left/Scroll/VBox
+	var box: VBoxContainer = $UI/Root/Main/Left/Controls/VBox
 	for c in box.get_children():
 		c.queue_free()
 	_add_opt(box, "Plan", "PlanOpt", _plan_entries().map(func(e: Array) -> String: return e[0]), _plan_title(plan_key))
@@ -258,6 +260,9 @@ func _build_ui() -> void:
 	quality_opt.item_selected.connect(_on_quality)
 	motion_opt.item_selected.connect(_on_motion)
 	_build_tabs()
+	library_panel.setup(self)
+	library_panel.add_requested.connect(_on_library_add)
+	library_panel.save_requested.connect(_on_library_save)
 
 
 func _add_opt(box: VBoxContainer, label_text: String, opt_name: String, items: Array, current: String) -> void:
@@ -1268,6 +1273,42 @@ func _on_save_file(path: String) -> void:
 	status_label.text = "saved " + path
 
 
+# ------------------------------------------------------------------ garment library
+# Library panel hooks: what it shows and what adding does (library_panel.gd).
+func current_preset() -> String:
+	return _fs_preset(meas)
+
+
+func current_garment_name() -> String:
+	return plan_name
+
+
+func library_plan(id: String) -> Dictionary:
+	return _plan_for_key(id)
+
+
+func _on_library_add(id: String) -> void:
+	plan_key = id
+	_resolve_plan()
+	_reset_working()
+	changed("load")
+
+
+func _on_library_save(category: String, nm: String) -> void:
+	var from := ""
+	if plan_key.begins_with("user:"):
+		from = String(plan.get("from", ""))
+	elif plan_key in Library.DRAFTED or plan_key.begins_with("fs-"):
+		from = plan_key
+	var fitted := _fs_preset(meas) if from != "" else ""
+	var file := Library.save(nm if nm != "" else plan_name, category, fitted, from, plan_notes, fabric_id, pieces, seams)
+	if file == "":
+		library_panel.set_status("Could not write to the library folder.")
+		return
+	library_panel.set_status("Saved to the library as %s." % (nm if nm != "" else plan_name))
+	library_panel.refresh()
+
+
 # ------------------------------------------------------------------ body + plans
 static func _fs_preset(m: Dictionary) -> String:
 	var keys := ["height", "bust", "waist", "hip", "shoulder", "muscle"]
@@ -1291,25 +1332,41 @@ func _helper_wrap():
 		"wrap": {"mode": "arc", "theta": 0.0, "y": 0.0, "clear": 0.012}}, body_stand["sections"], body_stand["arms"])
 
 
+# Normalized plan for a library/plan key (see library.gd), drafted on the live body. {} if the key is unknown or the
+# garment cannot be drafted yet (no body).
+func _plan_for_key(key: String) -> Dictionary:
+	var p := {}
+	if key in Library.DRAFTED:
+		if body_stand == null:
+			return {}
+		if key == "pants":
+			p = Draft.pants(body_stand, _helper_wrap(), {})
+		elif key == "tank":
+			p = Draft.tank(body_stand, _helper_wrap(), {})
+		else:
+			p = Draft.shirt(body_stand, _helper_wrap(), {})
+	elif key.begins_with("fs-"):
+		p = PlanLoader.load_json("res://assets/%s/plan_%s.json" % [_fs_preset(meas), key.trim_prefix("fs-")])
+	elif Library.is_user(key):
+		p = Library.plan_for_user(key)
+	elif Builtin.all().has(key):
+		p = (Builtin.all()[key] as Dictionary).duplicate(true)
+	return PlanLoader.normalize_plan(p) if not p.is_empty() else {}
+
+
 func _resolve_plan() -> void:
 	var key := plan_key
-	if key == "pants":
-		plan = Draft.pants(body_stand, _helper_wrap(), {})
-	elif key == "tank":
-		plan = Draft.tank(body_stand, _helper_wrap(), {})
-	elif key == "shirt":
-		plan = Draft.shirt(body_stand, _helper_wrap(), {})
-	elif key.begins_with("fs-"):
-		var g := key.trim_prefix("fs-")
-		plan = PlanLoader.load_json("res://assets/%s/plan_%s.json" % [_fs_preset(meas), g])
-	elif Builtin.all().has(key):
-		plan = (Builtin.all()[key] as Dictionary).duplicate(true)
-	elif key != "custom":
-		plan_key = "fs-teagan"
-		_resolve_plan()
-		return
-	plan = PlanLoader.normalize_plan(plan)
-	plan_name = String(plan.get("name", key))
+	if key != "custom":
+		var p := _plan_for_key(key)
+		if p.is_empty():
+			if key == "fs-teagan":
+				return
+			plan_key = "fs-teagan"
+			p = _plan_for_key(plan_key)
+		plan = p
+	else:
+		plan = PlanLoader.normalize_plan(plan)
+	plan_name = String(plan.get("name", plan_key))
 	if String(plan.get("fabric", "")) != "" and key != "custom":
 		fabric_id = String(plan["fabric"])
 	plan_notes = String(plan.get("notes", ""))
@@ -1339,6 +1396,7 @@ func regen_and_rebuild() -> void:
 	_refresh_body_note()
 	_refresh_piece_tab()
 	_refresh_seams_tab()
+	library_panel.refresh()  # fitted labels and drafted previews follow the body
 	rebuild()
 
 
