@@ -260,6 +260,7 @@ func _build_tabs() -> void:
 	for tab in ["Piece", "Seams", "Body", "Fabric", "Pattern", "Shoot"]:
 		var sc := ScrollContainer.new()
 		sc.name = tab
+		sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 		var vb := VBoxContainer.new()
 		vb.name = "VBox"
 		vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1095,7 +1096,7 @@ func _build_table_bar() -> void:
 	hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	hint.clip_text = true
 	hint.add_theme_font_size_override("font_size", 12)
-	bar.add_child(hint)
+	($UI/Root/Main/TablePane as VBoxContainer).add_child(hint)
 	table.hint_label = hint
 	table.set_tool("select")
 
@@ -1340,7 +1341,7 @@ func _physics_process(_delta: float) -> void:
 	_tick += 1
 	if _tick % 20 == 0:
 		print("HEARTBEAT playing=%s frames=%d tl=%.2f" % [playing, frames.size(), tl_t])
-	if OS.has_environment("FL_UISHOT") and (frames.size() == 10 or _tick >= 150):
+	if OS.has_environment("FL_UISHOT") and sim != null and (frames.size() == 10 or _tick >= 150):
 		var img := get_viewport().get_texture().get_image()
 		if img != null and not img.is_empty():
 			img.save_png(OS.get_environment("FL_UISHOT"))
@@ -1407,13 +1408,15 @@ func _step_frame() -> void:
 	if OS.has_environment("FL_AUTO"):
 		var parts := OS.get_environment("FL_AUTO").split(",")
 		if parts.size() >= 3 and frames.size() >= int(parts[2]):
-			if OS.has_environment("FL_SHOOT") and not shoot_done:
-				shoot_done = true
-				tl_t = 4.0
-				_show_current()
-				await take_shots()
-				print("EDITOR shoot done, quitting")
-				get_tree().quit()
+			if OS.has_environment("FL_SHOOT"):
+				if not shoot_done:
+					shoot_done = true
+					playing = false
+					tl_t = 4.0
+					_show_current()
+					await take_shots()
+					print("EDITOR shoot done, quitting")
+					get_tree().quit()
 				return
 			print("EDITOR auto target %s frames reached, quitting" % parts[2])
 			_shot(parts[0] + "_" + parts[1])

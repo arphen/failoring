@@ -178,6 +178,23 @@ about 1.5 to 2 s per frame wall clock with the bake and 4 substeps every frame. 
 clearance and seam gap were not measured on the Mac. That frame time is 3 to 4 times the Linux container's 0.5 s and is
 unexplained.
 
+## Mac editor (2026-10-13, branch `godot/editor`)
+
+The Godot project now contains a full port of the browser app (`godot/editor.tscn`, see
+`docs/GODOT_EDITOR.md`); the wrapper itself did not change for it. Verified on macOS
+arm64, Godot 4.3.stable, single thread: all three port checks green on all six presets
+(wrap 0.000000-0.004 mm vs JS, body generate 0.000 mm / walk poses <0.2 mm, draft
+outlines <0.001 mm), headless `editor.tscn` runs for every preset and garment (60 frames
+each, exit 0; per-combo bake/step/KE/gap/clearance in `docs/GODOT_EDITOR.md`), windowed
+runs with screenshots for table, all timeline stages, every tab, all 18 drapes, and the
+photo shoot path. The earlier "1.5 to 2 s per frame" Mac figure from the paragraph above
+was a measurement mistake (`--quit-after` counts main-loop iterations, about 8 physics
+ticks each); the real Mac frame is ~0.26 s wall, ~0.24 s CPU — faster than the Linux
+container's ~0.5 s wall, with identical physics (clearance 1.65 vs 1.6 mm, gap 3.14 vs
+3.1 mm, zero line-search failures both sides). Not measured: same-host wasm-vs-native,
+windowed render cost, why Newton caps every substep on garments, Open/Save dialog flows
+(code-reviewed only).
+
 ## Not done
 
 * Originally nothing was executed in Godot; see "Fixed after this review" for what was run afterwards.

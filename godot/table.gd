@@ -222,9 +222,9 @@ func update_hint() -> void:
 	if hint_label == null:
 		return
 	if ed.tool == "sew":
-		hint_label.text = "Now click the edge to sew it to (Esc cancels)" if ed.sew_a != null else "Sew: click the first edge, then the edge to join it to"
+		hint_label.text = "Now click the edge to sew it to (Esc cancels)" if ed.sew_a != null else "Sew: click two edges"
 	else:
-		hint_label.text = "Drag a piece to move it, drag corners to reshape, double-click an edge to add a corner, Del removes, wheel zooms, drag empty space pans"
+		hint_label.text = "Drag pieces and corners to reshape them"
 
 
 # ------------------------------------------------------------------ mouse
