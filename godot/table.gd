@@ -787,7 +787,8 @@ func _draw() -> void:
 		var poly := PackedVector2Array(pts)
 		if pts.size() > 0:
 			poly.append(pts[0])
-		draw_polyline(poly, Color("#ff6b6b") if bad != null else (Color("#ff9d4d") if is_sel else Color("#6e674f")), 2.5 if is_sel else 1.6)
+		var hot: bool = ed.health_hot.has(String(p["id"]))  # a garment check flagged this piece (editor.gd)
+		draw_polyline(poly, Color("#ff3b3b") if hot else (Color("#ff6b6b") if bad != null else (Color("#ff9d4d") if is_sel else Color("#6e674f"))), 4.0 if hot else (2.5 if is_sel else 1.6))
 		draw_colored_polygon(pts, Color(fcol, 0.22))
 		# grain arrow at the vertex centroid
 		var gc: Vector2 = g["gc"]

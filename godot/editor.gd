@@ -66,6 +66,9 @@ var _active_label: Label
 var _fabric_list: Array = []
 var sel = null
 var sel_v := -1
+var health: FailoringGarmentHealth = null  # per-garment checks of the current build (garment_health.gd)
+var health_text := ""                       # the warning above the stats line (empty when every garment is fine)
+var health_hot: Array = []                  # piece ids the cutting table tints red
 var sew_a = null
 var pieces: Array = []
 var seams: Array = []
@@ -1988,6 +1991,12 @@ func rebuild() -> void:
 	_solver_stats = sim.get_solver_stats()
 	_vcount = sim.get_vertex_count()
 	meta = built
+	var garment_names := {}
+	for e in outfit:
+		garment_names[int(e["uid"])] = String(e["name"])
+	health = FailoringGarmentHealth.new(built, _sim_pieces, _sim_seams, garment_names)
+	health_text = ""
+	health_hot = []
 	wraps.clear()
 	for pid in built["order"]:
 		wraps[pid] = Wrap.new(Table.piece_by_id(_sim_pieces, pid), body_stand["sections"], body_stand["arms"])
@@ -2176,6 +2185,12 @@ func _collect(res: Dictionary) -> void:
 	_solver_stats = res["stats"]
 	_vcount = res["vcount"]
 	var fr: Dictionary = frames[frames.size() - 1]
+	if health != null:
+		var hr: Dictionary = health.check(sim, fr["cloth"], float(fr["ke"]), frames.size())
+		health_text = String(hr["text"])
+		if hr["hot"] != health_hot:
+			health_hot = hr["hot"]
+			table.queue_redraw()
 	bake_ms = float(fr["bake"])
 	step_ms = float(fr["ms"])
 	if frames.size() % 30 == 0:
@@ -2621,11 +2636,24 @@ func _build_timeline_bar() -> void:
 	more.tooltip_text = "Simulate 60 more frames"
 	more.pressed.connect(func() -> void: target += 60; playing = true; _sync_tl_ui())
 	bar.add_child(more)
+	var reset_start := Button.new()
+	reset_start.text = "Reset to start"
+	reset_start.tooltip_text = "Put every garment back at its starting placement and simulate again from frame 0"
+	reset_start.pressed.connect(_on_reset_to_start)
+	bar.add_child(reset_start)
 	var resim := Button.new()
 	resim.text = "Restart"
 	resim.tooltip_text = "Restart the simulation"
 	resim.pressed.connect(func() -> void: regen_and_rebuild())
 	bar.add_child(resim)
+
+
+# Starting placement and a fresh simulation of the current pattern (no re-draft, unlike Restart).
+func _on_reset_to_start() -> void:
+	_drain()
+	playing = false
+	tl_t = 0.0
+	rebuild()
 
 
 func _sync_tl_ui() -> void:
@@ -2658,11 +2686,13 @@ static func _smooth(x: float) -> float:
 
 func _render_stats(_m: float, fr: Dictionary) -> void:
 	var done := " - done" if frames.size() >= target and target > 0 else ""
-	_set_text_if_changed(status_label, "%s / %s   frame %d/%d   verts %d   KE %s J   gap %.1f mm   clear %.1f mm\nbake %.0f ms   step %.0f ms (newton %d, ls-fail %d)%s" % [
+	var warn := health_text + "\n" if health_text != "" else ""  # the garment check says what went wrong, above "done"
+	var body := "%s / %s   frame %d/%d   verts %d   KE %s J   gap %.1f mm   clear %.1f mm\nbake %.0f ms   step %.0f ms (newton %d, ls-fail %d)%s" % [
 		plan_name, fabric_id, frames.size(), target, _vcount, str(fr.get("ke", 0.0)),
 		float(fr.get("gap", 0.0)) * 1000.0, float(fr.get("clear", 0.0)) * 1000.0,
 		float(fr.get("bake", 0.0)), float(fr.get("ms", 0.0)),
-		int(_solver_stats.get("newton_iterations", 0)), int(_solver_stats.get("line_search_failures", 0)), done])
+		int(_solver_stats.get("newton_iterations", 0)), int(_solver_stats.get("line_search_failures", 0)), done]
+	_set_text_if_changed(status_label, warn + body)
 	if frames.size() % 30 == 0 and not frames.is_empty():
 		print("EDITOR ", status_label.text.replace("\n", " | "))
 
