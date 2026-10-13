@@ -26,7 +26,7 @@ Play on the timeline) is unchanged and still there.
 
     { "format": "failoring-scenarios", "version": 1, "reference": "average", "bones": [23 joint names],
       "store_fps": 60, "scenarios": [
-        { "id", "name", "duration" (s), "frames", "loop",
+        { "id", "name", "duration" (s), "frames", "fps" (60), "loop",
           "props": [ {"type": "box", "id", "half": [x,y,z], "center": [x,y,z] (on the floor), "attach": [grip_s, release_s], "grip_offset"} ]
                   | {"type": "chair", "id", "parts": [ {"half", "center"} ... ] (static boxes) } ],
           "rot": [frames][3 * 23 floats]   per bone [rx, ry, rz] in the bone order (FL.Body.fk), radians,
@@ -119,7 +119,8 @@ Timing (2 vCPU, Draft): catwalk, 94 steps, 12 s. Preview is slower (roughly 2x).
 
 - Play replays the cached frames: cloth through the editor's own `_set_cloth_mesh` (same shading, same topology: the
   render's key equals the current inputs, so the display indices match), body through `body_node.show_pose` (the pose
-  is evaluated per frame from the data; a few ms), boxes as `BoxMesh` nodes under the editor's stage.
+  is evaluated per frame from the data: 0.7 ms on this host, `scenario_check` prints it), boxes as `BoxMesh` nodes under
+  the editor's stage.
 - While the view is on, the editor skips its own display (`drive()` returns true, `_physics_process` returns early),
   so the cloth and body are not overwritten. The orbit camera is updated before that return and keeps working.
 - Speed 0.25x to 2x, loop, timeline (scrub from the lead-in to the end), Pause. Back to editing restores the editor's
@@ -167,17 +168,22 @@ Verified (headless, Godot 4.3 stable, Linux x86_64, dummy renderer):
   no vertex below the floor and feet on it, all five scenarios, every 1/60 s; the chair's feet planted (0.3 mm); the box's
   hands within 1.2 cm on the grip to release (0.006 mm); the native box rests the cloth and carries it (cloth rises
   from 0.31 to 0.72 m with the box); float16 round trip; a short render's frames, header, cache file and listing).
-- `showcase_check`: the editor with the Showcase tab renders the catwalk at Draft for the booted garment (12 s), keeps it,
-  writes the cache, plays it (the playhead advances), does not step the editor's sim during playback, scrubs, pauses,
-  and hands the view back. The shutdown messages "Parameter m is null" appear after the result for the editor alone too.
-- Existing tests, same branch: api_smoke, body_check, camera_check, draft_check, editor_edit_check, outfit_check,
-  step_thread_check, wrap_check pass (exit 0); skirt_cover_check: see the commit message / the run log (long).
+  It also prints the pose cost: 0.7 ms per frame.
+- `showcase_check`: the editor with the Showcase tab. It renders the catwalk at Draft for the booted garment (12 s),
+  keeps it in memory and on disk, plays it (the playhead advances, the editor's sim is not stepped), scrubs, pauses and
+  hands the view back. It renders the box scenario at Draft (54 s): the box is lifted to 1.00 m and put back at 0.15 m,
+  the cloth stays finite. It renders the catwalk at Preview (23 s, the panel's default). Its renders are deleted at the end.
+  The shutdown messages "Parameter m is null" appear after the result; the editor alone (no showcase) shows them too.
+- Existing tests, same branch, all exit 0: api_smoke (23 PASS), body_check, camera_check, draft_check, draft_edit_check,
+  editor_edit_check (47 ok), edit_check, outfit_check (33 ok), render_check (`--script`), step_thread_check (STEP OK),
+  wrap_check. skirt_cover_check: see the note in the report (it is long: 18 garment and preset cases).
 - The native library: rebuilt with `tools/build_gdext.sh` in this worktree (godot-cpp from a sibling checkout).
 
 Not verified:
 
 - The look of the playback and the orbit camera during playback (no GPU; not seen).
-- Playback speed (the frames per second) on a real machine; the per-frame pose and the cloth update were not timed.
+- Playback speed (the frames per second) on a real machine. The pose is 0.7 ms per frame here; the cloth mesh update and
+  the drawing were not timed.
 - The Mac build (`libfailoring.dylib`): `_Float16` needs clang 15+ on arm64 and x86; not compiled there.
 - The Preview and Standard renders (only Draft and the test's 8-step run were executed).
 - The Sew wiring (not built).

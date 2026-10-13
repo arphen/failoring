@@ -351,7 +351,7 @@ function main() {
   for (const id of Object.keys(SCEN)) {
     const spec = SCEN[id];
     const b = build(id);
-    const entry = { id, name: spec.name, duration: +spec.duration.toFixed(6), frames: b.rot.length, loop: spec.loop, props: spec.props, rot: b.rot, root: b.root };
+    const entry = { id, name: spec.name, duration: +spec.duration.toFixed(6), frames: b.rot.length, fps: STORE_FPS, loop: spec.loop, props: spec.props, rot: b.rot, root: b.root };
     // checks: planted feet (before the floor shift), floor after the shift, and hands on the box
     const chk = verify(id, spec, b);
     entry.checks = chk.summary;

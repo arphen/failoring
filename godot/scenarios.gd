@@ -27,10 +27,10 @@ static func load_library(path: String = DATA_PATH) -> Dictionary:
 	if not (v is Dictionary) or String(v.get("format", "")) != FORMAT or int(v.get("version", 0)) != VERSION:
 		push_error("scenarios: not a %s v%d file" % [FORMAT, VERSION])
 		return {}
-	var lib := {"order": [], "by_id": {}, "store_fps": float(v.get("store_fps", 30.0)), "reference": String(v.get("reference", ""))}
+	var lib := {"order": [], "by_id": {}, "store_fps": float(v.get("store_fps", 60.0)), "reference": String(v.get("reference", ""))}
 	for s in v["scenarios"]:
 		var sc := {"id": String(s["id"]), "name": String(s["name"]), "duration": float(s["duration"]), "frames": int(s["frames"]),
-			"fps": float(v.get("store_fps", 30.0)), "loop": bool(s["loop"]), "props": s["props"], "checks": s.get("checks", {}),
+			"fps": float(s.get("fps", v.get("store_fps", 60.0))), "loop": bool(s["loop"]), "props": s["props"], "checks": s.get("checks", {}),
 			"reference": s.get("reference", {}), "rot": [], "root": []}
 		for f in sc["frames"]:
 			sc["rot"].append(PackedFloat32Array(s["rot"][f]))

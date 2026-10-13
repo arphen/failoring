@@ -99,6 +99,13 @@ func _ready() -> void:
 				feet_min = minf(feet_min, verts[fi].y)
 		check("%s: no vertex below the floor (%f m), feet on it (%f m)" % [id, lowest, feet_min], lowest > -1e-4 and absf(feet_min) < 1e-4)
 
+	# the cost of one pose (what playback pays per frame, besides the cloth): FK, skinning, the floor shift
+	var t_pose := Time.get_ticks_usec()
+	for k2 in 60:
+		var ps5 := Scen.sample(lib["by_id"]["box"], float(k2) / 60.0)
+		pose.evaluate(ps5["rot"], ps5["root"])
+	print("TIMING pose evaluate: %.2f ms per frame (average of 60, this host)" % ((Time.get_ticks_usec() - t_pose) / 60000.0))
+
 	# 5. planted: the chair's IK part keeps the feet within 1.5 cm of their standing height (box: all of it)
 	var shift0 := 0.0
 	var box_scn: Dictionary = lib["by_id"]["box"]

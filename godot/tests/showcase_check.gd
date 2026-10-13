@@ -76,5 +76,48 @@ func _run() -> void:
 	for _i in 3:
 		await get_tree().physics_frame
 	_check(ed.sim != null, "the editor is still running")
+
+	# the box through the whole render: the box is carried up and down, the cloth stays finite
+	panel._scen_opt.select(3)
+	panel._qual_opt.select(0)
+	panel._on_render()
+	t0 = _now()
+	while panel._pre != null and _now() - t0 < TIMEOUT_RENDER:
+		await get_tree().physics_frame
+	_check(panel._pre == null, "the box render finished (%.0f s)" % (_now() - t0))
+	var box_key: String = ShowcasePrerender.key_for(inputs, panel._scenario())
+	var box_r: Dictionary = panel._mem.get(box_key, {})
+	_check(not box_r.is_empty(), "the box render is kept")
+	if not box_r.is_empty():
+		var top := -INF
+		var low_after := INF
+		var finite := true
+		for i in (box_r["frames"] as Array).size():
+			var fr: Dictionary = box_r["frames"][i]
+			var y: float = (fr["box"] as Vector3).y
+			if i > 0 and float(box_r["lead"]) < i:
+				top = maxf(top, y)
+			if i == (box_r["frames"] as Array).size() - 1:
+				low_after = y
+			for v in (fr["pos"] as PackedFloat32Array):
+				if is_nan(v) or is_inf(v) or absf(v) > 5.0:
+					finite = false
+		_check(top > 0.6, "the box is lifted to %.2f m" % top)
+		_check(low_after < 0.2, "the box is put back down (%.2f m)" % low_after)
+		_check(finite, "the cloth stays finite through the box scenario")
+
+	# Preview, the panel's default quality, for the catwalk
+	panel._scen_opt.select(0)
+	panel._qual_opt.select(1)
+	panel._on_render()
+	t0 = _now()
+	while panel._pre != null and _now() - t0 < TIMEOUT_RENDER:
+		await get_tree().physics_frame
+	_check(panel._pre == null and panel._mem.size() >= 3, "the Preview catwalk render finished (%.0f s)" % (_now() - t0))
+	# leave the user's cache as it was: the renders of this run are removed
+	for k in panel._mem.keys():
+		var p := ShowcasePrerender.file_for(String(k))
+		if FileAccess.file_exists(p):
+			DirAccess.remove_absolute(ProjectSettings.globalize_path(p))
 	print("RESULT: %d failed" % fails)
 	get_tree().quit(1 if fails > 0 else 0)
