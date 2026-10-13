@@ -142,4 +142,25 @@ Frame-60 stats (bake+step, KE, gap, clearance) and shots per combo:
 
 | preset / garment | verts | bake ms | step ms | KE (J) | gap mm | clear mm |
 |---|---|---|---|---|---|---|
-| (filled after the final matrix) | | | | | | |
+| petite / tee | 563 | 74 | 55 | 0.0083 | 1.7 | -1.6 |
+| petite / skirt | 597 | 74 | 77 | 0.0134 | 59.4 | 1.8 |
+| petite / chinos | 672 | 72 | 64 | 0.0109 | 5.4 | 1.6 |
+| average / tee | 635 | 80 | 74 | 0.0076 | 0.7 | -2.7 |
+| average / skirt | 349 | 87 | 19 | 0.0113 | 40.6 | 1.8 |
+| average / chinos | 773 | 80 | 80 | 0.0117 | 5.9 | 1.6 |
+| tall / tee | 398 | 88 | 28 | 0.0032 | 0.2 | 1.8 |
+| tall / skirt | 754 | 88 | 112 | 0.0288 | 189.6 | 1.8 |
+| tall / chinos | 839 | 87 | 88 | 0.0260 | 10.6 | 1.6 |
+| curvy / tee | 699 | 91 | 110 | 0.0134 | 0.4 | 1.5 |
+| curvy / skirt | 749 | 85 | 104 | 0.0176 | 183.0 | 1.8 |
+| curvy / chinos | 465 | 85 | 27 | 0.0331 | 0.1 | 1.6 |
+| athletic / tee | 669 | 85 | 87 | 0.0122 | 1.2 | -2.1 |
+| athletic / skirt | 710 | 84 | 107 | 0.5405 | 62.6 | 1.8 |
+| athletic / chinos | 815 | 87 | 96 | 0.0085 | 11.8 | 1.6 |
+| plus / tee | 774 | 98 | 142 | 0.0098 | 0.2 | 1.8 |
+| plus / skirt | 877 | 93 | 121 | 0.0788 | 96.0 | -3.4 |
+| plus / chinos | 910 | 90 | 123 | 0.0195 | 1.6 | 1.6 |
+
+Skirt gaps on tall/curvy (183–190 mm, blown open) and the high chinos line-search
+counts are the known upstream pattern issues, not Godot bugs; the tee's −2 mm
+clearance matches the browser exactly (tight knit, display margin covers it).
