@@ -49,8 +49,12 @@ solver "blocker" is resolved: the core default is `tensionStiffness = false` (ct
    `waistHeight` 1, the band is sewn to the front/back top edges, and leg pieces share their row extents above
    `wrap.vcap` so the slanted top edge no longer collapses. Still baggy at the hips/thighs, the slant pocket has no
    pocket bag, and the back-right top edge only partly seams to the band.
-4. Walking was checked for the tee on the average body only. Skirt and chinos were never walked; the tee was not walked
-   on the other five presets.
+4. Walking, checked 2026-10-13 (130 frames, one frame per body viewed): skirt and chinos stay on and move plausibly on
+   all six presets; the tee is the weak one. Fixed: the tall tee had one shoulder seam only half sewn (a mate chain of
+   near-equal length is now sewn end to end) and now stays on standing and walking. Still failing standing and walking:
+   curvy and athletic tees slip off one shoulder, and on petite/average a sleeve rides up. Seam lists are complete there,
+   so it is the neckline/shoulder rest in the start pose (lowering the shoulder line by 2 to 4 cm helped tall but made
+   athletic worse). Not yet: Demo mode with the FreeSewing garments.
 5. Godot wrapper: 13 of the 14 review findings in `docs/NATIVE_NOTES.md` are fixed (2026-10-12); only 13 (the
    synchronous body bake) remains.
 6. Native solver was not faster than wasm in the one comparison; threading is off; a `-march=native` build gives a
