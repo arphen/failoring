@@ -245,6 +245,17 @@ func _check_prerender(M: Dictionary, body: Dictionary, pose: Scen.Pose) -> void:
 	for row in Render.list_saved():
 		listed = listed or String(row["path"]) == path
 	check("prerender: cache lists the file", listed)
+	# the chair: its parts are solver colliders and the sit (IK) runs through the render; 150 steps reach the seat
+	var chair_r := r.work({"scenario": lib["by_id"]["chair"], "inputs": inputs, "max_steps": 150})
+	var chair_ok := not chair_r.is_empty() and (chair_r["frames"] as Array).size() == 150
+	var finite := true
+	if chair_ok:
+		for f in chair_r["frames"]:
+			for v in (f["pos"] as PackedFloat32Array):
+				if is_nan(v) or is_inf(v) or absf(v) > 5.0:
+					finite = false
+					break
+	check("prerender: chair render runs (150 steps), cloth finite", chair_ok and finite)
 	var key_a := Render.key_for(inputs, sc)
 	var key_b := Render.key_for(inputs, lib["by_id"]["idle"])
 	check("prerender: key depends on the scenario", key_a != key_b and key_a.length() == 64)

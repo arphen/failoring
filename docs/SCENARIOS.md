@@ -19,7 +19,7 @@ Play on the timeline) is unchanged and still there.
 | `godot/scenario_panel.gd` | `ShowcasePanel`: the tab (dropdowns, Render, Cancel, renders list, Play, Pause, timeline, speed, loop) |
 | `godot/editor.gd` | hooks only: the tab in the list, `_showcase`, `drive()` in `_physics_process`, `shutdown()` in `_exit_tree`, `showcase_inputs()` |
 | `gdextension/src/failoring_sim.{h,cpp}` | box props (`add_box_prop`, `set_box_prop`, `clear_box_props`), skinning (`set_skin`, `skin`), float16 (`encode_half`, `decode_half`) |
-| `godot/tests/scenario_check.*` | 30 checks of the library, the pose, the floor, the box and chair, the native props, the render and the cache |
+| `godot/tests/scenario_check.*` | 31 checks of the library, the pose, the floor, the box and chair, the native props, the render (box, chair) and the cache |
 | `godot/tests/showcase_check.*` | the editor with the Showcase tab: render, cache, playback, solver not stepped, scrub, back to editing |
 
 ## Scenario data (`godot/assets/scenarios.json`)
@@ -124,7 +124,8 @@ Timing (2 vCPU, Draft): catwalk, 94 steps, 12 s. Preview is slower (roughly 2x).
 - While the view is on, the editor skips its own display (`drive()` returns true, `_physics_process` returns early),
   so the cloth and body are not overwritten. The orbit camera is updated before that return and keeps working.
 - Speed 0.25x to 2x, loop, timeline (scrub from the lead-in to the end), Pause. Back to editing restores the editor's
-  display (`_show_current`).
+  display (`_show_current`). While the showcase view is on, the editor's own timeline Play is suspended (its display is
+  not drawn); leave the showcase view first.
 - The playhead is in scenario seconds; a render plays only for the garment, body and quality it was made from. Other
   renders are listed and need a render to play.
 
@@ -164,7 +165,7 @@ and still work.
 
 Verified (headless, Godot 4.3 stable, Linux x86_64, dummy renderer):
 
-- `scenario_check`: 30 checks pass (library; native skinning against GDScript (0 m); the exporter's joints (0.007 mm);
+- `scenario_check`: 31 checks pass (library; native skinning against GDScript (0 m); the exporter's joints (0.007 mm);
   no vertex below the floor and feet on it, all five scenarios, every 1/60 s; the chair's feet planted (0.3 mm); the box's
   hands within 1.2 cm on the grip to release (0.006 mm); the native box rests the cloth and carries it (cloth rises
   from 0.31 to 0.72 m with the box); float16 round trip; a short render's frames, header, cache file and listing).
