@@ -11,6 +11,8 @@
 
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
+#include <godot_cpp/variant/transform3d.hpp>
+#include <godot_cpp/variant/packed_byte_array.hpp>
 #include <godot_cpp/variant/packed_float32_array.hpp>
 #include <godot_cpp/variant/packed_int32_array.hpp>
 #include <godot_cpp/variant/packed_string_array.hpp>
@@ -25,6 +27,21 @@
 #include "failoring/sdf_grid.hpp"
 
 namespace godot {
+
+// The frame of a box prop: its centre and the world directions of its axes.
+struct BoxFrame {
+    fl::Vec3 origin{0, 0, 0};
+    fl::Vec3 axis[3] = {fl::Vec3(1, 0, 0), fl::Vec3(0, 1, 0), fl::Vec3(0, 0, 1)};
+};
+
+// An oriented box (a prop the cloth collides with). Exact signed distance outside, and the distance to the nearest face
+// inside. The transform is replaced by FailoringSim::set_box_prop; the solver reads it through eval.
+class OrientedBoxCollider : public fl::Collider {
+public:
+    BoxFrame frame;
+    fl::Vec3 half{0.5, 0.5, 0.5};  // half extents along the frame's axes
+    fl::Real eval(const fl::Vec3& p, fl::Vec3& n) const override;
+};
 
 class FailoringSim : public RefCounted {
     GDCLASS(FailoringSim, RefCounted)
@@ -87,6 +104,30 @@ public:
     void add_capsule(Vector3 a, Vector3 b, real_t radius);
     void add_cylinder(Vector3 center, real_t radius, real_t half_height);  // Y axis
     void add_plane(Vector3 point, Vector3 normal);
+
+    // --- box props (oriented boxes; moving ones are the showcase's boxes and chairs) ---------------------------------
+    // transform: the box's local frame to the world (basis = unit axes, origin = centre); half_extents: along those axes.
+    // Props stay when colliders or the mesh body change, and clear_box_props() removes them (begin() keeps them).
+    // Returns the prop index.
+    int add_box_prop(Transform3D transform, Vector3 half_extents);
+    // Moves a prop. The rigid motion from its previous transform (the state of the last step) is given to the cloth on
+    // the next step(1) as surface motion for the cloth vertices within 2 cm of the prop, so friction sees it. Props that
+    // are not moved do not change the body's motion.
+    void set_box_prop(int index, Transform3D transform);
+    void clear_box_props();
+    int get_box_prop_count() const;
+
+    // --- skinning (linear blend skinning of a mannequin, for the showcase's poses) ---------------------------------
+    // bind: rest positions of the vertices; bone_index / weight: 4 influences per vertex (the skeleton's skin arrays).
+    // Returns false (and reports) on a size mismatch.
+    bool set_skin(const PackedVector3Array& bind, const PackedInt32Array& bone_index, const PackedFloat32Array& weight);
+    // bone_mats: 12 floats per bone, row-major 3x3 A then translation t, world = A * rest + t. Returns the skinned
+    // positions (one per bind vertex), or an empty array on error.
+    PackedVector3Array skin(const PackedFloat32Array& bone_mats) const;
+
+    // --- float16 packing (the showcase cache stores positions as float16, little endian) ---------------------------
+    PackedByteArray encode_half(const PackedFloat32Array& values) const;     // round to nearest, 2 bytes per value
+    PackedFloat32Array decode_half(const PackedByteArray& bytes, int64_t offset, int64_t count) const;
 
     // --- mesh body (closed triangle mesh, counter-clockwise seen from outside) ---
     // Bakes a signed-distance grid of the mesh (about 0.2-0.4 s for a mannequin in the browser build; the native build is
@@ -169,6 +210,24 @@ private:
     std::vector<fl::FabricMaterial> materials_;
     std::vector<std::shared_ptr<fl::Collider>> colliders_;     // analytic primitives
     std::shared_ptr<fl::Collider> active_;                     // what the solver collides with (primitives + body)
+
+    // box props: the collider, and the transform at the last step (the motion of the next step is from it)
+    struct BoxProp {
+        std::shared_ptr<OrientedBoxCollider> box;
+        BoxFrame prev;
+        bool moved = false;
+        fl::Vec3 displacement(const fl::Vec3& x) const;  // rigid motion prev -> current, applied to x
+    };
+    std::vector<BoxProp> props_;
+    bool propsMoved_ = false;
+    std::vector<fl::Vec3> bodyMotion_;                         // the body's surface motion for the next step (when props exist)
+    std::vector<fl::Vec3> propMotion() const;                  // cloth-vertex motion of the moved props (+ the body's elsewhere)
+    void endPropFrame();
+
+    // skinning
+    std::vector<Vector3> skinBind_;
+    std::vector<int> skinBone_;
+    std::vector<float> skinWeight_;
     std::vector<int> panelEdges_;                              // outline edge count per panel (for seam checks)
     int warnings_ = 0;
     std::vector<std::vector<fl::Vec2>> panelUV_;              // pattern (u,v) per panel vertex before grain rotation (wasm restUV)

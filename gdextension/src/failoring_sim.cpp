@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <exception>
 #include <unordered_map>
 
@@ -248,6 +249,7 @@ PackedVector2Array FailoringSim::get_panel_vertices_2d(int panel) const {
 void FailoringSim::rebuildColliders() {
     std::vector<std::shared_ptr<fl::Collider>> parts = colliders_;
     if (body_.enabled && body_.grid && !body_.grid->empty()) parts.push_back(std::make_shared<fl::GridCollider>(body_.grid));
+    for (const BoxProp& bp : props_) parts.push_back(bp.box);
     if (parts.empty()) active_.reset();
     else if (parts.size() == 1) active_ = parts[0];
     else {
@@ -264,6 +266,197 @@ void FailoringSim::add_sphere(Vector3 c, real_t r) { colliders_.push_back(std::m
 void FailoringSim::add_capsule(Vector3 a, Vector3 b, real_t r) { colliders_.push_back(std::make_shared<fl::CapsuleCollider>(toFl(a), toFl(b), r)); rebuildColliders(); }
 void FailoringSim::add_cylinder(Vector3 c, real_t r, real_t hh) { colliders_.push_back(std::make_shared<fl::CylinderCollider>(toFl(c), r, hh)); rebuildColliders(); }
 void FailoringSim::add_plane(Vector3 p, Vector3 n) { colliders_.push_back(std::make_shared<fl::PlaneCollider>(toFl(p), toFl(n))); rebuildColliders(); }
+
+// ---- box props ---------------------------------------------------------------------------------------------------------
+namespace {
+BoxFrame frameOf(const Transform3D& xf) {
+    BoxFrame f;
+    f.origin = toFl(xf.origin);
+    for (int i = 0; i < 3; ++i) f.axis[i] = toFl(xf.basis.get_column(i));
+    return f;
+}
+BoxFrame frameOfBox(const OrientedBoxCollider& b) { return b.frame; }
+}  // namespace
+
+fl::Real OrientedBoxCollider::eval(const fl::Vec3& p, fl::Vec3& n) const {
+    const fl::Vec3 d = p - frame.origin;
+    const fl::Real l[3] = {dot(d, frame.axis[0]), dot(d, frame.axis[1]), dot(d, frame.axis[2])};
+    const fl::Real h[3] = {half.x, half.y, half.z};
+    fl::Real q[3], nl[3] = {0, 0, 0};
+    bool outside = false;
+    for (int i = 0; i < 3; ++i) {
+        q[i] = std::fabs(l[i]) - h[i];
+        if (q[i] > 0) {
+            outside = true;
+            nl[i] = l[i] >= 0 ? q[i] : -q[i];
+        }
+    }
+    fl::Real dist;
+    if (outside) {
+        const fl::Real len = std::sqrt(nl[0] * nl[0] + nl[1] * nl[1] + nl[2] * nl[2]);
+        dist = len;
+        for (fl::Real& c : nl) c /= len;
+    } else {
+        int m = 0;
+        for (int i = 1; i < 3; ++i)
+            if (q[i] > q[m]) m = i;
+        dist = q[m];
+        nl[m] = l[m] >= 0 ? 1 : -1;
+    }
+    n = frame.axis[0] * nl[0] + frame.axis[1] * nl[1] + frame.axis[2] * nl[2];
+    return dist;
+}
+
+// Rigid motion of the prop from its previous frame to the current one, applied to a point x on its surface.
+fl::Vec3 FailoringSim::BoxProp::displacement(const fl::Vec3& x) const {
+    const fl::Vec3 d = x - prev.origin;
+    const fl::Real l0 = dot(d, prev.axis[0]), l1 = dot(d, prev.axis[1]), l2 = dot(d, prev.axis[2]);
+    const fl::Vec3 xn = box->frame.origin + box->frame.axis[0] * l0 + box->frame.axis[1] * l1 + box->frame.axis[2] * l2;
+    return xn - x;
+}
+
+int FailoringSim::add_box_prop(Transform3D transform, Vector3 half_extents) {
+    BoxProp bp;
+    bp.box = std::make_shared<OrientedBoxCollider>();
+    bp.box->frame = frameOf(transform);
+    bp.box->half = toFl(half_extents);
+    bp.prev = frameOfBox(*bp.box);
+    props_.push_back(std::move(bp));
+    rebuildColliders();
+    return static_cast<int>(props_.size()) - 1;
+}
+
+void FailoringSim::set_box_prop(int index, Transform3D transform) {
+    if (index < 0 || index >= static_cast<int>(props_.size())) {
+        UtilityFunctions::push_error("FailoringSim: set_box_prop: no prop ", index);
+        return;
+    }
+    BoxProp& bp = props_[static_cast<size_t>(index)];
+    bp.box->frame = frameOf(transform);  // the union holds the same collider object: no rebuild needed
+    bp.moved = true;
+    propsMoved_ = true;
+}
+
+void FailoringSim::clear_box_props() {
+    props_.clear();
+    propsMoved_ = false;
+    bodyMotion_.clear();
+    rebuildColliders();
+}
+
+int FailoringSim::get_box_prop_count() const { return static_cast<int>(props_.size()); }
+
+// Surface motion for the next frame when props moved: a cloth vertex within 2 cm of a moved prop takes that prop's rigid
+// motion; the others keep the body's motion (set_body_positions / set_body_motion).
+std::vector<fl::Vec3> FailoringSim::propMotion() const {
+    const std::vector<fl::Vec3> cloth = solver_->positions();
+    std::vector<fl::Vec3> out(cloth.size(), fl::Vec3(0, 0, 0));
+    const fl::Real band = 0.02;
+    for (size_t v = 0; v < cloth.size(); ++v) {
+        fl::Real best = band;
+        const BoxProp* hit = nullptr;
+        fl::Vec3 n;
+        for (const BoxProp& bp : props_) {
+            if (!bp.moved) continue;
+            const fl::Real phi = bp.box->eval(cloth[v], n);
+            if (phi < best) {
+                best = phi;
+                hit = &bp;
+            }
+        }
+        if (hit) out[v] = hit->displacement(cloth[v]);
+        else if (v < bodyMotion_.size()) out[v] = bodyMotion_[v];
+    }
+    return out;
+}
+
+void FailoringSim::endPropFrame() {
+    for (BoxProp& bp : props_) {
+        bp.prev = frameOfBox(*bp.box);
+        bp.moved = false;
+    }
+    propsMoved_ = false;
+}
+
+bool FailoringSim::set_skin(const PackedVector3Array& bind, const PackedInt32Array& bone_index, const PackedFloat32Array& weight) {
+    const int64_t n = bind.size();
+    if (bone_index.size() != 4 * n || weight.size() != 4 * n) {
+        UtilityFunctions::push_error("FailoringSim: set_skin: expects 4 influences per bind vertex");
+        return false;
+    }
+    skinBind_.assign(static_cast<size_t>(n), Vector3());
+    skinBone_.assign(static_cast<size_t>(4 * n), 0);
+    skinWeight_.assign(static_cast<size_t>(4 * n), 0.0f);
+    for (int64_t i = 0; i < n; ++i) skinBind_[static_cast<size_t>(i)] = bind[i];
+    for (int64_t i = 0; i < 4 * n; ++i) {
+        skinBone_[static_cast<size_t>(i)] = bone_index[i];
+        skinWeight_[static_cast<size_t>(i)] = weight[i];
+    }
+    return true;
+}
+
+PackedByteArray FailoringSim::encode_half(const PackedFloat32Array& values) const {
+    PackedByteArray out;
+    out.resize(values.size() * 2);
+    uint8_t* o = out.ptrw();
+    const float* v = values.ptr();
+    for (int64_t i = 0; i < values.size(); ++i) {
+        const _Float16 h = static_cast<_Float16>(v[i]);
+        uint16_t bits;
+        std::memcpy(&bits, &h, sizeof bits);
+        o[2 * i] = static_cast<uint8_t>(bits & 0xff);
+        o[2 * i + 1] = static_cast<uint8_t>(bits >> 8);
+    }
+    return out;
+}
+
+PackedFloat32Array FailoringSim::decode_half(const PackedByteArray& bytes, int64_t offset, int64_t count) const {
+    PackedFloat32Array out;
+    if (offset < 0 || count < 0 || offset + 2 * count > bytes.size()) {
+        UtilityFunctions::push_error("FailoringSim: decode_half: range outside the bytes");
+        return out;
+    }
+    out.resize(count);
+    float* o = out.ptrw();
+    const uint8_t* b = bytes.ptr() + offset;
+    for (int64_t i = 0; i < count; ++i) {
+        const uint16_t bits = static_cast<uint16_t>(b[2 * i] | (b[2 * i + 1] << 8));
+        _Float16 h;
+        std::memcpy(&h, &bits, sizeof h);
+        o[i] = static_cast<float>(h);
+    }
+    return out;
+}
+
+PackedVector3Array FailoringSim::skin(const PackedFloat32Array& bone_mats) const {
+    PackedVector3Array out;
+    if (bone_mats.size() % 12 != 0) {
+        UtilityFunctions::push_error("FailoringSim: skin: bone_mats must hold 12 floats per bone");
+        return out;
+    }
+    const int64_t bones = bone_mats.size() / 12;
+    out.resize(static_cast<int64_t>(skinBind_.size()));
+    Vector3* o = out.ptrw();
+    const float* m = bone_mats.ptr();
+    for (size_t i = 0; i < skinBind_.size(); ++i) {
+        const Vector3 v = skinBind_[i];
+        Vector3 acc(0, 0, 0);
+        for (size_t j = 0; j < 4; ++j) {
+            const float w = skinWeight_[4 * i + j];
+            if (w == 0.0f) continue;
+            const int k = skinBone_[4 * i + j];
+            if (k < 0 || k >= bones) {
+                UtilityFunctions::push_error("FailoringSim: skin: bone index out of range");
+                return PackedVector3Array();
+            }
+            const float* a = m + 12 * k;
+            acc += Vector3(a[0] * v.x + a[1] * v.y + a[2] * v.z + a[9], a[3] * v.x + a[4] * v.y + a[5] * v.z + a[10],
+                           a[6] * v.x + a[7] * v.y + a[8] * v.z + a[11]) * w;
+        }
+        o[i] = acc;
+    }
+    return out;
+}
 
 real_t FailoringSim::set_body_mesh(const PackedVector3Array& vertices, const PackedInt32Array& triangles, real_t edge_length) {
     const int64_t nv = vertices.size(), nt = triangles.size() / 3;
@@ -338,7 +531,9 @@ real_t FailoringSim::set_body_positions(const PackedVector3Array& vertices) {
         return -1;
     }
     const std::vector<fl::Vec3> cloth = solver_->positions();
-    solver_->setColliderMotion(surfaceMotion(body_.verts, next, cloth));
+    std::vector<fl::Vec3> motion = surfaceMotion(body_.verts, next, cloth);
+    if (!props_.empty()) bodyMotion_ = motion;  // kept for the props' step (propMotion); without props nothing changes
+    solver_->setColliderMotion(std::move(motion));
     body_.verts = std::move(next);
     body_.grid = grid;
     rebuildColliders();
@@ -360,7 +555,9 @@ void FailoringSim::set_body_motion(const PackedVector3Array& displacement) {
                                      "), got ", displacement.size(), "; ignored");
         return;
     }
-    solver_->setColliderMotion(toFlArray(displacement));
+    std::vector<fl::Vec3> motion = toFlArray(displacement);
+    if (!props_.empty()) bodyMotion_ = motion;
+    solver_->setColliderMotion(std::move(motion));
 }
 
 void FailoringSim::set_body_enabled(bool on) {
@@ -536,10 +733,16 @@ void FailoringSim::set_param(const String& name, real_t v) {
 void FailoringSim::step(int frames) {
     try {
         for (int i = 0; i < frames; ++i) {
+            // moved props: their motion (and the body's, elsewhere) for this frame. Without props this branch is not taken.
+            if (propsMoved_) solver_->setColliderMotion(propMotion());
             solver_->step();
             // The surface motion described one frame; the solver keeps it until replaced, so clear it (the browser sets
             // it before every fl_step(1)). Otherwise a body moved once is dragged against the cloth on every later frame.
             solver_->setColliderMotion({});
+            if (!props_.empty()) {
+                bodyMotion_.clear();
+                endPropFrame();
+            }
         }
     } catch (const std::exception& e) {
         UtilityFunctions::push_error("FailoringSim: step failed: ", String(e.what()));
@@ -653,6 +856,14 @@ void FailoringSim::_bind_methods() {
     ClassDB::bind_method(D_METHOD("add_capsule", "a", "b", "radius"), &FailoringSim::add_capsule);
     ClassDB::bind_method(D_METHOD("add_cylinder", "center", "radius", "half_height"), &FailoringSim::add_cylinder);
     ClassDB::bind_method(D_METHOD("add_plane", "point", "normal"), &FailoringSim::add_plane);
+    ClassDB::bind_method(D_METHOD("add_box_prop", "transform", "half_extents"), &FailoringSim::add_box_prop);
+    ClassDB::bind_method(D_METHOD("set_box_prop", "index", "transform"), &FailoringSim::set_box_prop);
+    ClassDB::bind_method(D_METHOD("clear_box_props"), &FailoringSim::clear_box_props);
+    ClassDB::bind_method(D_METHOD("get_box_prop_count"), &FailoringSim::get_box_prop_count);
+    ClassDB::bind_method(D_METHOD("set_skin", "bind", "bone_index", "weight"), &FailoringSim::set_skin);
+    ClassDB::bind_method(D_METHOD("skin", "bone_mats"), &FailoringSim::skin);
+    ClassDB::bind_method(D_METHOD("encode_half", "values"), &FailoringSim::encode_half);
+    ClassDB::bind_method(D_METHOD("decode_half", "bytes", "offset", "count"), &FailoringSim::decode_half);
 
     ClassDB::bind_method(D_METHOD("set_body_mesh", "vertices", "triangles", "edge_length"), &FailoringSim::set_body_mesh, DEFVAL(0.0));
     ClassDB::bind_method(D_METHOD("set_body_positions", "vertices"), &FailoringSim::set_body_positions);
