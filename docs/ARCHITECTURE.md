@@ -212,20 +212,39 @@ Three ways a pattern reaches the app:
 3. **FreeSewing patterns** (MIT licence, https://freesewing.org): `fsimport.js` takes the real FreeSewing parts for
    the mannequin's measurements (`tools/freesewing/export.mjs`, pre-drafted outputs in `app/assets/freesewing/`:
    Teagan tee, Penelope pencil skirt and Charlie chinos for the six presets). It wraps the parts with mode `fit`
-   (body parts), `leg` (chinos) and `arm` (sleeves), and **finds the seams itself**: edges that lie side by side after
-   the starting wrap are sewn (within 5 cm, or 10 cm for sleeve caps), so darts close and sleeves join the armholes.
-   **The importer is not in the browser build**: `app/build.js` does not list it and no UI calls it. It runs headless
-   through `tools/fs_plan.js` (see `tools/fs_batch.sh`), which writes a plan file for `walk_sim.js`.
+   (body parts and waistbands), `leg` (chinos) and `arm` (sleeves), and **finds the seams itself**: edges that lie side
+   by side after the starting wrap are sewn (within 5 cm, or 10 cm for sleeve caps), so darts close and sleeves join the
+   armholes. The importer is part of the browser build (`app/build.js` embeds `fsimport.js` and the pre-drafted raw parts;
+   the plan list and Demo mode use them); `tools/fs_plan.js` runs it headless (see `tools/fs_batch.sh`) and writes a plan
+   file for `walk_sim.js`. Details that matter for trousers:
+   * The drafting side (`export.mjs`) feeds Charlie the seat, seat/waist back widths and cross seam *measured on the
+     mannequin* (`draft.measures`), and `waistHeight` 1 (top edge on the natural waist). Tuning `waistHeight` so the
+     finished band lands exactly on the waist line makes the top edge 10-13% longer than the waist, and the trousers
+     slide below it.
+   * `charlie.front` and `charlie.back` are both drawn for the same leg seen from outside: the front has the fork on the
+     right, the back has the centre back and crotch curve on the left. Both therefore use `origSide: 'R'`; with `'L'` the
+     back piece is crossed with the front.
+   * `wrap.lift` (leg mode): a flat trouser top edge slopes (front and back dip by 2-6 cm at the centre seams). The rows
+     of a leg piece are measured on a lifted outline whose top edge is level, so the slope no longer collapses the top rows
+     (every point of a sloping edge is the last point of its row when measured on the flat outline). Only the row extents
+     use the lift; the cloth itself stays unstretched.
+   * `wrap.tilt` (band): the waistband is one level ring in the pattern, but the trousers' top edge is not level on the
+     body. The band's lower edge follows the upper envelope of the trousers' top edge per polar angle around the body
+     (72 bins), so the band tilts naturally (higher at the back or the front as the pattern puts it).
+   * Band seams: the band's upper long edge (the fold) is never sewn; the trousers' top-edge chains are sewn to its lower
+     edge end to end in the order they meet it, each taking the stretch as long as it is in the pattern. The start pose only
+     decides *which* chains and in which order. The band is cut on the fold, so one finished layer (half the cut width) is
+     modelled.
 
 `makeWrapRows` (`shared.js`) is the row-wise wrap that all of these use. Its `wrap.mode` values:
 
 | mode | Used by | What it does |
 | --- | --- | --- |
 | `torso` | no caller found in the repository | each row laid on the trunk section at its height; the row width spread over `span` degrees of the section by fraction |
-| `leg` | `draft.pants`, FreeSewing chinos | tubes below the crotch, half the pelvis above; blended between the two over a 10 cm band centred on the crotch |
+| `leg` | `draft.pants`, FreeSewing chinos | tubes below the crotch, half the pelvis above; blended between the two over a 10 cm band centred on the crotch. `wrap.lift` levels a sloping top edge for the row extents |
 | `arc` | `draft.tank` | pattern x = arc length on the body section (no stretching) |
 | `arm` | sleeves (`draft.shirt`, FreeSewing sleeves) | tube round the arm axis from the shoulder and elbow joints |
-| `fit` | FreeSewing body parts and band | pattern x = arc length, on a section inflated to the girth the whole garment covers at that height |
+| `fit` | FreeSewing body parts and band | pattern x = arc length, on a section inflated to the girth the whole garment covers at that height. A band with `wrap.tilt` follows the trousers' top edge |
 
 Anything without `wrap.mode` uses the envelope wrap (`FL.makeWrap`, the first pattern format).
 
@@ -301,8 +320,10 @@ Browser app and mannequin:
 * **Patterns are not graded.** Plans and drafts are not scaled to the chosen body. Plus and curvy are too small for the
   80 / 104 cm skirts.
 * **FreeSewing import is limited to the tee, the pencil skirt and the chinos** (Teagan, Penelope, Charlie; the Aaron
-  a-shirt recipe exists in `fsimport.js` but has no pre-drafted output). It is not in the browser build.
-* **Chinos have no waistband.**
+  a-shirt recipe exists in `fsimport.js` but has no pre-drafted output).
+* **Chinos**: no pocket bag (the slant pocket is sewn shut to the back's upper side edge), no fly, belt loops or hem
+  turn-up; the dart notches stay open. On the plus preset the cloth is squeezed (about 3 mm into the body) and does not
+  settle in 70 frames.
 * **Tee neckline and sleeve slit have issues.**
 * The walk is gait keyframes, not captured motion, and has not been checked over long runs.
 * Attribution: the FreeSewing files are MIT-licensed and `THIRD_PARTY.md` does not yet list FreeSewing; the

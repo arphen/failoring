@@ -24,16 +24,16 @@ node by 180 degrees about y, or view it from +z.
 
 ## Files per preset (`godot/assets/<preset>/`)
 
-Sizes for `average` at 24 frames: total 3.06 MB (the six presets are about the same size).
+Sizes for `average` at 24 frames: total 3.08 MB (the six presets are about the same size).
 
 | file | size | content |
 |---|---|---|
 | `body.obj` | 766 KB | standing mesh: 13380 vertices, 26756 triangles (`FL.Gait.stand`, the collider's mesh) |
 | `skeleton.json` | 269 KB | 23 bones, 29 joints, top-4 skin weights per vertex |
 | `walk.bin` | 2039 KB | one gait cycle, 24 frames, plus the bind pose |
-| `plan_teagan.json` | 15 KB | FreeSewing t-shirt plan (4 pieces, 71 seams) |
-| `plan_penelope.json` | 21 KB | FreeSewing pencil skirt plan (4 pieces, 105 seams) |
-| `plan_charlie.json` | 21 KB | FreeSewing chinos plan (4 pieces, 136 seams) |
+| `plan_teagan.json` | 18 KB | FreeSewing t-shirt plan (4 pieces, 72 seams) |
+| `plan_penelope.json` | 25 KB | FreeSewing pencil skirt plan (4 pieces, 113 seams) |
+| `plan_charlie.json` | 35 KB | FreeSewing chinos plan (5 pieces: two front legs, two back legs, waistband; 186 seams) |
 
 ### body.obj
 
