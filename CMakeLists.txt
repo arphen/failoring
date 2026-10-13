@@ -16,7 +16,8 @@ add_library(cloth_core STATIC
   cloth_core/src/mesh_sizing.cpp
   cloth_core/src/sparse_chol.cpp
   cloth_core/src/metrics.cpp
-  cloth_core/src/sdf_grid.cpp)
+  cloth_core/src/sdf_grid.cpp
+  cloth_core/src/sdf_lazy.cpp)
 target_include_directories(cloth_core PUBLIC cloth_core/include)
 target_compile_options(cloth_core PRIVATE -Wall -Wextra)
 
@@ -37,6 +38,15 @@ foreach(t test_basics test_cantilever test_drape test_garment test_sdf_grid)
   target_compile_definitions(${t} PRIVATE FL_MATERIALS_PATH="${FL_MATERIALS_PATH}" FL_OUT_DIR="${FL_OUT_DIR}")
   add_test(NAME ${t} COMMAND ${t})
 endforeach()
+
+# K4 tools (not in ctest): cmake -DFL_K4=ON
+option(FL_K4 "Build the K4 measurement and real-mesh gate tools" OFF)
+if(FL_K4)
+  foreach(t k4_measure k4_gate k4_samples k4_rigidity)
+    add_executable(${t} cloth_core/tests/${t}.cpp)
+    target_link_libraries(${t} PRIVATE cloth_core)
+  endforeach()
+endif()
 
 # Native timing (not in ctest): cmake -DFL_BENCH=ON, then build/bench_native.
 option(FL_BENCH "Build the native timing benchmark (bench_native), not run by ctest" OFF)

@@ -170,7 +170,8 @@ constexpr int BSH = 1, BS = 1 << BSH, BV = BS * BS * BS, BVSH = 3 * BSH;
 // walks to closer edge-adjacent triangles, which makes it exact when the mesh is finer than the grid.
 // `Idx` maps (i,j,k) <-> sample number.
 template <class Idx>
-void bakeLevel(const Mesh& M, const Idx& G, Real seedR, Real refineDist, int rowsY, int rowsZ, std::vector<float>& out, long long& evals) {
+void bakeLevel(const Mesh& M, const Idx& G, Real seedR, Real refineDist, int rowsY, int rowsZ, std::vector<float>& out, long long& evals, SdfGridStats* st = nullptr) {
+    const auto tSeed = Clock::now();
     const int N = G.count();
     std::vector<float> D2(static_cast<size_t>(N), std::numeric_limits<float>::infinity());
     std::vector<int> C(static_cast<size_t>(N), -1);
@@ -205,6 +206,8 @@ void bakeLevel(const Mesh& M, const Idx& G, Real seedR, Real refineDist, int row
     }
     for (int s = 0; s < N; ++s)
         if (C[static_cast<size_t>(s)] >= 0) push(s, D2[static_cast<size_t>(s)]);
+    const auto tProp = Clock::now();
+    if (st) st->msSeed += std::chrono::duration<double, std::milli>(tProp - tSeed).count();
     const float refine2 = static_cast<float>(refineDist * refineDist);
     for (size_t b = 0; b < buckets.size(); ++b) {
         // samples of one distance shell in memory order (reverse, they are popped from the back): far fewer cache
@@ -253,6 +256,8 @@ void bakeLevel(const Mesh& M, const Idx& G, Real seedR, Real refineDist, int row
         }
         std::vector<int>().swap(buckets[b]);
     }
+    const auto tSign = Clock::now();
+    if (st) st->msPropagate += std::chrono::duration<double, std::milli>(tSign - tProp).count();
     // sign from winding numbers along +x rows
     Rows rows;
     rows.build(M, G.o, G.h, rowsY, rowsZ);
@@ -263,6 +268,7 @@ void bakeLevel(const Mesh& M, const Idx& G, Real seedR, Real refineDist, int row
         const float d = std::sqrt(D2[static_cast<size_t>(s)]);
         out[static_cast<size_t>(s)] = rows.winding(G.o.x + x * G.h, y, z) > 0 ? -d : d;
     }
+    if (st) st->msSign += msSince(tSign);
 }
 
 struct DenseIdx {
@@ -363,6 +369,7 @@ bool SdfGrid::bake(const std::vector<Vec3>& verts, const std::vector<std::array<
                     }
                 }
     }
+    stats_.msBricks = msSince(t1);
     {   // number the bricks in table order, so that spatial neighbours are close in memory
         int id = 0;
         for (size_t q = 0; q < brickOf_.size(); ++q)
@@ -374,7 +381,7 @@ bool SdfGrid::bake(const std::vector<Vec3>& verts, const std::vector<std::array<
                 F.bk[static_cast<size_t>(brickOf_[q])] = qi / (bnx_ * bny_);
             }
     }
-    bakeLevel(M, F, p.seed * h, p.refine ? p.band + 1.5 * h : 0.0, BS * bny_, BS * bnz_, fine_, stats_.distanceEvals);
+    bakeLevel(M, F, p.seed * h, p.refine ? p.band + 1.5 * h : 0.0, BS * bny_, BS * bnz_, fine_, stats_.distanceEvals, &stats_);
     brickXYZ_.resize(static_cast<size_t>(3 * F.nb));
     for (int b = 0; b < F.nb; ++b) { brickXYZ_[3 * b] = F.bi[b]; brickXYZ_[3 * b + 1] = F.bj[b]; brickXYZ_[3 * b + 2] = F.bk[b]; }
     stats_.bricks = F.nb;
@@ -390,7 +397,7 @@ bool SdfGrid::bake(const std::vector<Vec3>& verts, const std::vector<std::array<
     cny_ = static_cast<int>(std::ceil((hi.y - lo.y + 2 * p.margin) * cinv_)) + 1;
     cnz_ = static_cast<int>(std::ceil((hi.z - lo.z + 2 * p.margin) * cinv_)) + 1;
     Cg.o = co_; Cg.h = ch_; Cg.inv = cinv_; Cg.nx = cnx_; Cg.ny = cny_; Cg.nz = cnz_;
-    bakeLevel(M, Cg, p.seed * ch_, 0.0, cny_, cnz_, coarse_, stats_.distanceEvals);
+    bakeLevel(M, Cg, p.seed * ch_, 0.0, cny_, cnz_, coarse_, stats_.distanceEvals, &stats_);
     stats_.coarseSamples = Cg.count();
     stats_.msCoarse = msSince(t2);
     stats_.bytes = 4.0 * (fine_.size() + coarse_.size() + brickOf_.size() + brickXYZ_.size());

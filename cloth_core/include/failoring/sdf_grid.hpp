@@ -38,6 +38,8 @@ struct SdfGridStats {
     int triangles = 0, bricks = 0, fineSamples = 0, coarseSamples = 0;
     long long distanceEvals = 0;
     double msSetup = 0, msFine = 0, msCoarse = 0, msTotal = 0;
+    double msSeed = 0, msPropagate = 0, msSign = 0;  // inside bakeLevel, both levels summed: seeding, closest-triangle propagation, winding sign
+    double msBricks = 0;                              // brick allocation of the fine level
     double bytes = 0;  // memory of the baked grid (values + brick table)
 };
 
