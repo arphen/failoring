@@ -1,6 +1,6 @@
 #pragma once
 // Virtual fabric test bench: standard textile-style tests run through the Failoring cloth solver.
-// Standard library + cloth_core only. See docs/FABRIC_BENCH.md and docs/FABRIC_PROTOCOL.md.
+// Standard library + cloth_core only. See docs/FABRIC_TESTING.md (the swatch protocol; the bench itself is documented in its header and in the output).
 #include <string>
 #include <vector>
 

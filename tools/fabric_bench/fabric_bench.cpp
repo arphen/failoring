@@ -512,7 +512,7 @@ std::string benchToJson(const FabricBench& b, const BenchConfig& cfg) {
     std::ostringstream o;
     const FabricMaterial& m = b.mat;
     o << "{\n  \"fabric\": " << jstr(m.id) << ",\n  \"name\": " << jstr(m.name) << ",\n";
-    o << "  \"notes\": \"Simulated-preset validation. Textbook formulas marked UNVERIFIED in docs/FABRIC_BENCH.md. The cantilever angle is the chord clamp->tip.\",\n";
+    o << "  \"notes\": \"Simulated-preset validation. Textbook formulas marked UNVERIFIED in the bench source (tools/fabric_bench). The cantilever angle is the chord clamp->tip.\",\n";
     o << "  \"cantilever_angle_deg\": " << jnum(cfg.angleDeg) << ",\n  \"strip_width_m\": " << jnum(cfg.stripWidth) << ",\n";
     o << "  \"input\": {\"density_kg_m2\": " << jnum(m.density) << ", \"thickness_m\": " << jnum(m.thickness) << ", \"tensile_warp_N_m\": " << jnum(m.tensileWarp)
       << ", \"tensile_weft_N_m\": " << jnum(m.tensileWeft) << ", \"shear_N_m_rad\": " << jnum(m.shear) << ", \"bending_warp_Nm\": " << jnum(m.bendWarp)
