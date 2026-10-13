@@ -177,7 +177,8 @@ Verified (headless, Godot 4.3 stable, Linux x86_64, dummy renderer):
   The shutdown messages "Parameter m is null" appear after the result; the editor alone (no showcase) shows them too.
 - Existing tests, same branch, all exit 0: api_smoke (23 PASS), body_check, camera_check, draft_check, draft_edit_check,
   editor_edit_check (47 ok), edit_check, outfit_check (33 ok), render_check (`--script`), step_thread_check (STEP OK),
-  wrap_check. skirt_cover_check: see the note in the report (it is long: 18 garment and preset cases).
+  wrap_check. skirt_cover_check: exit 0 (8 cases: the four penelope cases are gated, the four pencil cases are reported
+  as known; it takes about 10 minutes here).
 - The native library: rebuilt with `tools/build_gdext.sh` in this worktree (godot-cpp from a sibling checkout).
 
 Not verified:
