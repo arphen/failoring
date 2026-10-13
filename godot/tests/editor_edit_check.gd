@@ -127,8 +127,7 @@ func _run() -> void:
 	await _settle()
 	_check(_outline_json() != before, "a body change re-drafts an unedited drafted garment")
 	_check(JSON.stringify(ed.meas) != body_before, "body change applied")
-	ed.undo.clear()
-	ed.redo.clear()
+	ed.history.clear()
 
 	# --- P0-1: a structural edit survives the debounced rebuild
 	before = _outline_json()
@@ -142,13 +141,13 @@ func _run() -> void:
 	_check(ed.sim != sim_before, "the debounced rebuild ran after the edit")
 	_check(_outline_json() == mirrored, "P0-1: the mirrored outline survives the rebuild")
 	_check(bool(ed.outfit[ed.active]["edited"]), "the garment is marked edited")
-	_check(ed.undo.size() == 1, "the undo step survives the rebuild (%d)" % ed.undo.size())
+	_check(ed.undo_depth() == 1, "the undo step survives the rebuild (%d)" % ed.undo_depth())
 
 	# --- a body change keeps the edit and says so
 	ed._on_preset_button("petite")
 	await _settle()
 	_check(_outline_json() == mirrored, "P0-1: a body change keeps the edited outline")
-	_check(ed.undo.size() == 1, "a body change does not clear undo")
+	_check(ed.undo_depth() == 1, "a body change does not clear undo")
 	_check(String(ed.status_label.text).find("Body changed") >= 0, "the status line says the edits were kept")
 
 	# --- undo and redo of the edit
@@ -165,17 +164,17 @@ func _run() -> void:
 	var slider := _piece_slider("Around")
 	_check(slider != null, "the Around slider is in the Piece tab")
 	var theta_before := float((_piece0()["wrap"] as Dictionary)["theta"])
-	var undo_before: int = ed.undo.size()
+	var undo_before: int = ed.undo_depth()
 	slider.drag_started.emit()
 	slider.value = 90.0
 	slider.value = 120.0
 	slider.drag_ended.emit(true)
-	_check(ed.undo.size() == undo_before + 1, "a slider drag adds one undo step (%d -> %d)" % [undo_before, ed.undo.size()])
+	_check(ed.undo_depth() == undo_before + 1, "a slider drag adds one undo step (%d -> %d)" % [undo_before, ed.undo_depth()])
 	_check(is_equal_approx(float((_piece0()["wrap"] as Dictionary)["theta"]), 120.0), "the slider change applied")
 	await _settle()
 	ed.do_undo()
 	_check(is_equal_approx(float((_piece0()["wrap"] as Dictionary)["theta"]), theta_before), "undo restores the slider value")
-	_check(ed.undo.size() == undo_before, "undo of the slider does not touch earlier steps")
+	_check(ed.undo_depth() == undo_before, "undo of the slider does not touch earlier steps")
 
 	# --- deleting the selected piece is undoable, says so, and undo after it does not error
 	var pid := String(ed.pieces[0]["id"])

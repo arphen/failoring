@@ -17,6 +17,8 @@ const Look = preload("res://look.gd")
 const ClothShade = preload("res://cloth_shade.gd")
 const Library = preload("res://library.gd")
 const Outfit = preload("res://outfit.gd")
+const History = preload("res://history.gd")
+const CutSelection = preload("res://selection.gd")
 
 # body_h: spacing (m) of the body's signed-distance grid, baked for every walking frame. 7 mm is the reference (the
 # numbers in docs/PERF_NOTES.md are measured with it). Draft and Preview use 10 mm: the bake takes about 1.8x less CPU,
@@ -75,9 +77,11 @@ var _sim_seams: Array = []
 var _piece_uid := {}           # merged piece id -> garment uid
 var _active_label: Label
 var _fabric_list: Array = []
-var sel = null
-var sel_v := -1
-var health: FailoringGarmentHealth = null  # per-garment checks of the current build (garment_health.gd)
+var selection = CutSelection.new()   # what is picked (pieces, edges, corners, seams) and hovered: see selection.gd
+# sel: the primary piece id (or null), sel_v: the picked corner of that piece (-1). Both are views of `selection`.
+var sel: get = _get_sel, set = _set_sel
+var sel_v: get = _get_sel_v, set = _set_sel_v
+var health:FailoringGarmentHealth = null  # per-garment checks of the current build (garment_health.gd)
 var health_text := ""                       # the warning above the stats line (empty when every garment is fine)
 var health_hot: Array = []                  # piece ids the cutting table tints red
 var sew_a = null
@@ -85,8 +89,9 @@ var pieces: Array = []
 var seams: Array = []
 var tool := "select"
 var snap := true
-var undo: Array = []
-var redo: Array = []
+var history = null   # the active garment's action history (history.gd); set by _activate
+var _pending = null  # {name, before}: the edit in progress, recorded by its ending changed() (see push_undo)
+var history_list: ItemList
 var _notice := ""        # warning shown in the status line after an edit (cleared by the next edit or undo)
 var _meas_key := ""      # the body measurements the drafted garments were last drafted for
 var table_dirty := true
@@ -174,6 +179,9 @@ var _fold_open := true      # Piece tab "Edges" section, kept across tab rebuild
 func _ready() -> void:
 	table = $UI/Root/Main/TablePane/Table
 	table.ed = self
+	history = History.new()
+	selection.changed.connect(func() -> void: table_dirty = true)  # picks and hover redraw the table (and the 3D view later)
+	selection.hover_changed.connect(table._on_selection_hover)
 	stage = $UI/Root/Main/ViewPane/View/Stage
 	sub_view = $UI/Root/Main/ViewPane/View
 	_load_settings()
@@ -510,7 +518,7 @@ func _display_name(key: String, p: Dictionary) -> String:
 
 
 func _build_tabs() -> void:
-	for tab in ["Outfit", "Piece", "Seams", "Body", "Fabric", "Pattern", "Shoot"]:
+	for tab in ["Outfit", "Piece", "Seams", "History", "Body", "Fabric", "Pattern", "Shoot"]:
 		var sc := ScrollContainer.new()
 		sc.name = tab
 		sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -528,6 +536,7 @@ func _build_tabs() -> void:
 	_build_pattern_tab()
 	_build_piece_tab()
 	_build_seams_tab()
+	_build_history_tab()
 	_build_shoot_tab()
 	_refresh_outfit_tab()
 
@@ -549,6 +558,40 @@ func _tab_vbox(tab: String) -> VBoxContainer:
 
 func _build_seams_tab() -> void:
 	_refresh_seams_tab()
+
+
+# The History panel: one row per state, the start first, then every action by its name. Clicking a row goes to that
+# state (undo or redo in one step). Rows after the current one are the undone actions, shown dimmed.
+func _build_history_tab() -> void:
+	var vb := _tab_vbox("History")
+	var h := Label.new()
+	h.text = "History"
+	vb.add_child(h)
+	history_list = ItemList.new()
+	history_list.name = "HistoryList"
+	history_list.custom_minimum_size = Vector2(0, 240)
+	history_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	history_list.item_selected.connect(func(i: int) -> void: jump_history(i))
+	vb.add_child(history_list)
+	var note := Label.new()
+	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	note.text = "Every pattern edit is one action. Click a row to go to that point. Ctrl+Z undoes, Ctrl+Shift+Z (or Ctrl+Y) redoes. Each garment keeps its own history."
+	vb.add_child(note)
+	_refresh_history_tab()
+
+
+func _refresh_history_tab() -> void:
+	if history_list == null or history == null:
+		return
+	history_list.clear()
+	history_list.add_item("Start: the pattern as it was opened")
+	for i in history.size():
+		history_list.add_item("%d. %s" % [i + 1, String(history.entries[i]["name"])])
+	for i in history_list.item_count:
+		history_list.set_item_custom_fg_color(i, Color(0.55, 0.58, 0.63) if i > history.cursor else Color(0.92, 0.92, 0.92))
+	if history.cursor < history_list.item_count:
+		history_list.select(history.cursor)
+		history_list.ensure_current_is_visible()
 
 
 func _refresh_seams_tab() -> void:
@@ -590,12 +633,12 @@ func _refresh_seams_tab() -> void:
 		var flip := Button.new()
 		flip.text = "⇄"
 		flip.tooltip_text = "Flip direction"
-		flip.pressed.connect(func() -> void: push_undo(); s["reverse"] = not bool(s.get("reverse", false)); changed("structure"))
+		flip.pressed.connect(func() -> void: push_undo("Flip seam direction"); s["reverse"] = not bool(s.get("reverse", false)); changed("structure"))
 		row.add_child(flip)
 		var del := Button.new()
 		del.text = "✕"
 		del.tooltip_text = "Delete seam"
-		del.pressed.connect(func() -> void: push_undo(); seams.erase(s); notify("Deleted seam %d. Ctrl+Z restores it." % si); changed("structure"))
+		del.pressed.connect(func() -> void: push_undo("Delete seam"); seams.erase(s); notify("Deleted seam %d. Ctrl+Z restores it." % si); changed("structure"))
 		row.add_child(del)
 		vb.add_child(row)
 	var note := Label.new()
@@ -998,7 +1041,7 @@ func _refresh_piece_tab() -> void:
 	for kind in [["Rectangle", "rect"], ["Trapezoid", "trap"], ["Triangle", "tri"]]:
 		var b := Button.new()
 		b.text = kind[0]
-		b.pressed.connect(func() -> void: push_undo(); Table.add_piece(self, kind[1]); table.fit(); changed("structure"))
+		b.pressed.connect(func() -> void: push_undo("Add piece: %s" % kind[0]); Table.add_piece(self, kind[1]); table.fit(); changed("structure"))
 		add_row.add_child(b)
 	vb.add_child(add_row)
 	_lock_editing(vb)
@@ -1013,7 +1056,7 @@ func _piece_rows(vb: VBoxContainer, p: Dictionary) -> void:
 	var ne := LineEdit.new()
 	ne.text = String(p.get("name", p["id"]))
 	ne.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	ne.text_submitted.connect(func(t: String) -> void: push_undo(); p["name"] = t; changed("structure"))
+	ne.text_submitted.connect(func(t: String) -> void: push_undo("Rename piece"); p["name"] = t; changed("structure"))
 	name_row.add_child(ne)
 	vb.add_child(name_row)
 	# size of the whole piece, typed in cm: width keeps the left edge, height keeps the bottom edge
@@ -1042,7 +1085,7 @@ func _piece_rows(vb: VBoxContainer, p: Dictionary) -> void:
 	for g in [["Straight 90°", 90.0], ["Cross 0°", 0.0], ["Bias 45°", 45.0], ["Bias 135°", 135.0]]:
 		var b := Button.new()
 		b.text = g[0]
-		b.pressed.connect(func() -> void: push_undo(); p["grain"] = float(g[1]) * PI / 180.0; _sym_sync(p); changed("structure"))
+		b.pressed.connect(func() -> void: push_undo("Set grain"); p["grain"] = float(g[1]) * PI / 180.0; _sym_sync(p); changed("structure"))
 		gb.add_child(b)
 	vb.add_child(gb)
 	# corners and edges: typed values
@@ -1114,7 +1157,7 @@ func _piece_rows(vb: VBoxContainer, p: Dictionary) -> void:
 	del.text = "Delete"
 	del.tooltip_text = "Deletes the piece and any seams on it. Ctrl+Z restores it."
 	del.pressed.connect(func() -> void:
-		push_undo()
+		push_undo("Delete piece")
 		var gone := Table.remove_piece(self, String(p["id"]))
 		notify("Deleted %s%s. Ctrl+Z restores it." % [String(p.get("name", p["id"])), (" and its %d seam(s)" % gone) if gone > 0 else ""])
 		changed("structure"))
@@ -1180,11 +1223,11 @@ func _corner_row(vb: VBoxContainer, p: Dictionary, vi: int) -> void:
 
 # Numeric entry. A change is checked before anything moves: every edge it touches must stay at least 8 mm.
 # An accepted entry is one undo step; a rejected one puts the old text back and says why in the status line.
-func _try_outline(p: Dictionary, outline: Array, edges: Array, why: String) -> bool:
+func _try_outline(p: Dictionary, outline: Array, edges: Array, why: String, what := "Change outline") -> bool:
 	if not _outline_ok(outline, edges):
 		status_label.text = why
 		return false
-	push_undo()
+	push_undo(what)
 	p["outline"] = outline
 	_sym_sync(p)
 	changed("structure")
@@ -1219,7 +1262,7 @@ func _on_edge_len(p: Dictionary, e: int, t: String, le: LineEdit) -> void:
 	var uy := (float(b[1]) - float(a[1])) / cur
 	var out: Array = o.duplicate(true)
 	out[bi] = [float(a[0]) + ux * cm / 100.0, float(a[1]) + uy * cm / 100.0]
-	if not _try_outline(p, out, [e, bi], "Edge %d: %.1f cm would leave an edge shorter than 0.8 cm" % [e + 1, cm]):
+	if not _try_outline(p, out, [e, bi], "Edge %d: %.1f cm would leave an edge shorter than 0.8 cm" % [e + 1, cm], "Set edge %d length" % (e + 1)):
 		le.text = restore
 
 
@@ -1236,7 +1279,7 @@ func _on_corner(p: Dictionary, vi: int, fx: LineEdit, fy: LineEdit) -> void:
 	var out: Array = o.duplicate(true)
 	out[vi] = [x / 100.0, y / 100.0]
 	var n := o.size()
-	if not _try_outline(p, out, [(vi - 1 + n) % n, vi], "Corner %d would make an edge shorter than 0.8 cm" % vi):
+	if not _try_outline(p, out, [(vi - 1 + n) % n, vi], "Corner %d would make an edge shorter than 0.8 cm" % vi, "Move corner %d" % vi):
 		fx.text = "%.1f" % (float(q[0]) * 100.0)
 		fy.text = "%.1f" % (float(q[1]) * 100.0)
 
@@ -1261,7 +1304,7 @@ func _on_size(p: Dictionary, axis: int, t: String, le: LineEdit) -> void:
 			q[0] = b[0] + (float(q[0]) - float(b[0])) * k
 		else:
 			q[1] = b[1] + (float(q[1]) - float(b[1])) * k
-	if not _try_outline(p, out, all, "That size would make an edge shorter than 0.8 cm"):
+	if not _try_outline(p, out, all, "That size would make an edge shorter than 0.8 cm", "Resize piece"):
 		le.text = restore
 
 
@@ -1332,7 +1375,7 @@ func _fold_box(title: String, body: Control, rows: int) -> VBoxContainer:
 func _place(p: Dictionary, theta: float) -> void:
 	if String(_offer.get("pid", "")) == String(p["id"]):
 		_offer = {}
-	push_undo()
+	push_undo("Set placement")
 	(p["wrap"] as Dictionary)["theta"] = fposmod(theta, 360.0)
 	_sym_sync(p)
 	changed("structure")
@@ -1392,7 +1435,7 @@ func _offer_flip(a: Dictionary, ta: float, b: Dictionary, tb: float, what: Strin
 
 func _duplicate(p: Dictionary) -> void:
 	var theta := float((p["wrap"] as Dictionary).get("theta", 0.0))
-	push_undo()
+	push_undo("Duplicate piece")
 	var q := Table.duplicate_piece(self, p)
 	_offer_flip(p, theta, q, float((q["wrap"] as Dictionary).get("theta", 0.0)), "The copy")
 	changed("structure")
@@ -1400,7 +1443,7 @@ func _duplicate(p: Dictionary) -> void:
 
 func _mirror(p: Dictionary) -> void:
 	var before := float((p["wrap"] as Dictionary).get("theta", 0.0))
-	push_undo()
+	push_undo("Mirror piece")
 	Table.mirror_piece(p, seams)
 	_sym_sync(p)
 	_offer_flip(p, before, p, float((p["wrap"] as Dictionary).get("theta", 0.0)), "The mirrored piece")
@@ -1420,7 +1463,7 @@ func copy_piece() -> void:
 func paste_piece() -> void:
 	if clip == null or active_locked():
 		return
-	push_undo()
+	push_undo("Paste piece")
 	var q: Dictionary = JSON.parse_string(JSON.stringify(clip))
 	q["id"] = Table.new_id(pieces, "p")
 	q["name"] = String(clip.get("name", "?")) + " copy"
@@ -1457,7 +1500,7 @@ func _set_link_on(p: Dictionary, on: bool) -> void:
 
 
 func _make_twin(p: Dictionary) -> void:
-	push_undo()
+	push_undo("Make mirror twin")
 	var b := Table.bbox_of(p["outline"])
 	var pid := String(p["id"])
 	var tid := Table.new_id(pieces, "p")
@@ -1478,7 +1521,7 @@ func _set_sym_on(p: Dictionary, on: bool) -> void:
 	var tw = _twin_of(p)
 	if tw == null:
 		return
-	push_undo()
+	push_undo("Symmetric edits %s" % ("on" if on else "off"))
 	_set_link_on(p, on)
 	_set_link_on(tw, on)
 	if on:
@@ -1487,7 +1530,7 @@ func _set_sym_on(p: Dictionary, on: bool) -> void:
 
 
 func _unlink_twin(p: Dictionary) -> void:
-	push_undo()
+	push_undo("Unlink mirror twin")
 	var tw = _twin_of(p)
 	p.erase("sym")
 	if tw != null:
@@ -1568,13 +1611,18 @@ func _slider_row(parent: VBoxContainer, label_text: String, minv: float, maxv: f
 	if undo_step:
 		s.drag_started.connect(func() -> void:
 			dragging[0] = true
-			push_undo())
-		s.drag_ended.connect(func(_c: bool) -> void: dragging[0] = false)
+			push_undo("Set " + label_text.to_lower()))
+		s.drag_ended.connect(func(_c: bool) -> void:
+			dragging[0] = false
+			_commit_pending())
 	s.value_changed.connect(func(v: float) -> void:
 		o.text = fmt.call(v)
-		if undo_step and not dragging[0]:
-			push_undo()  # keyboard step
-		set.call(v))
+		var keyed: bool = undo_step and not dragging[0]
+		if keyed:
+			push_undo("Set " + label_text.to_lower())  # a keyboard step is one action
+		set.call(v)
+		if keyed:
+			_commit_pending())
 	s.tooltip_text = tip
 	parent.add_child(h)
 	return s
@@ -1739,36 +1787,84 @@ func snapshot() -> String:
 	return JSON.stringify({"pieces": pieces, "seams": seams})
 
 
-func push_undo() -> void:
+# Starts a named action: the pattern as it is now is its "before". Call it before any change to pieces or seams. The
+# action is recorded by the changed() that ends the edit ("structure" or "table-done", see changed), and an edit that
+# leaves the pattern as it was is dropped. A drag starts once here and is recorded when the mouse is released.
+func push_undo(name := "Edit") -> void:
 	_notice = ""
-	undo.append(snapshot())
-	if undo.size() > 60:
-		undo.pop_front()
-	redo.clear()
+	_pending = {"name": name, "before": snapshot()}
+
+
+# Records the pending action, if its pattern really changed. Only the edit-ending changed() kinds call it.
+func _commit_pending() -> void:
+	if _pending == null or history == null:
+		return
+	var p: Dictionary = _pending
+	_pending = null
+	var after := snapshot()
+	if after != String(p["before"]):
+		history.push(String(p["name"]), String(p["before"]), after)
+
+
+# Drops the pending action without recording it (a click that moved nothing).
+func discard_pending() -> void:
+	_pending = null
 
 
 func do_undo() -> void:
-	if undo.is_empty() or active_locked():
+	_commit_pending()
+	if history == null or not history.can_undo() or active_locked():
 		return
 	_notice = ""
-	redo.append(snapshot())
-	var o = JSON.parse_string(undo.pop_back())
-	pieces = o["pieces"]
-	seams = o["seams"]
-	_fix_selection()
+	_restore(history.goto(history.cursor - 1))
 	changed("history")
 
 
 func do_redo() -> void:
-	if redo.is_empty() or active_locked():
+	_commit_pending()
+	if history == null or not history.can_redo() or active_locked():
 		return
 	_notice = ""
-	undo.append(snapshot())
-	var o = JSON.parse_string(redo.pop_back())
+	_restore(history.goto(history.cursor + 1))
+	changed("history")
+
+
+# Goes to history state s (0 is the start, the History panel's rows): undo or redo any number of steps at once.
+func jump_history(s: int) -> void:
+	_commit_pending()
+	if history == null or active_locked() or s == history.cursor or s < 0 or s > history.size():
+		return
+	_notice = ""
+	_restore(history.goto(s))
+	changed("history")
+
+
+func _restore(text: String) -> void:
+	var o = JSON.parse_string(text)
 	pieces = o["pieces"]
 	seams = o["seams"]
 	_fix_selection()
-	changed("history")
+
+
+func undo_depth() -> int:
+	return history.cursor if history != null else 0
+
+
+# The selection accessors behind sel and sel_v (the names the tabs and the table already use).
+func _get_sel():
+	return selection.primary_piece()
+
+
+func _set_sel(v) -> void:
+	selection.set_primary_piece(v)
+
+
+func _get_sel_v() -> int:
+	return selection.primary_corner()
+
+
+func _set_sel_v(v) -> void:
+	selection.set_primary_corner(int(v))
 
 
 # Shows a warning in the status line. The next edit or undo clears it.
@@ -1783,9 +1879,7 @@ func _status_suffix() -> String:
 
 
 func _fix_selection() -> void:
-	if sel == null or Table.piece_by_id(pieces, String(sel)) == null:
-		sel = null
-	sel_v = -1
+	selection.prune(pieces, seams.size())  # drops picks of pieces, corners, edges and seams that are gone
 	sew_a = null
 
 
@@ -1798,13 +1892,18 @@ func changed(kind: String) -> void:
 	if kind == "structure" or kind == "structure-drag" or kind == "table-done":  # table-done: a piece was moved
 		if active >= 0 and active < outfit.size():
 			outfit[active]["edited"] = true  # later rebuilds keep the user's pieces (see _redraft_drafted)
+	if kind == "structure" or kind == "table-done":  # the edit is over: record it (drags record on release)
+		_commit_pending()
+	if kind != "load" and kind != "history":
+		selection.prune(pieces, seams.size())  # a structure edit may have removed seams or corners
 	if kind == "load":
 		_drain()  # the worker may be stepping the old sim: let it finish before the sim is dropped
 		sim = null
 		playing = false
 		_notice = ""
-		undo.clear()
-		redo.clear()
+		_pending = null
+		if history != null:
+			history.clear()
 		table.fitted = false
 		table.fit()
 		_refresh_garment_tabs()
@@ -1826,6 +1925,7 @@ func _refresh_garment_tabs() -> void:
 	_refresh_piece_tab()
 	_refresh_seams_tab()
 	_refresh_outfit_tab()
+	_refresh_history_tab()
 
 
 # ------------------------------------------------------------------ outfit
@@ -1856,6 +1956,7 @@ func _store_active() -> void:
 	e["pieces"] = pieces
 	e["seams"] = seams
 	e["fabric"] = fabric_id
+	e["hist"] = history
 
 
 static func _redraft_key(key: String, p: Dictionary) -> String:
@@ -1873,7 +1974,7 @@ func _entry_from_plan(key: String, p: Dictionary) -> Dictionary:
 		fab = "cotton_poplin"
 	return {"uid": -1, "key": key, "redraft": _redraft_key(key, p), "name": _display_name(key, p), "edited": false,
 		"notes": String(p.get("notes", "")), "fabric": fab, "color": String(Table.FABRIC_COLORS.get(fab, "#9fb7d6")),
-		"visible": true, "locked": false, "fitted": _fs_preset(meas), "plan": p,
+		"visible": true, "locked": false, "fitted": _fs_preset(meas), "plan": p, "hist": History.new(),
 		"pieces": (p.get("pieces", []) as Array).duplicate(true), "seams": (p.get("seams", []) as Array).duplicate(true)}
 
 
@@ -1923,11 +2024,14 @@ func _activate(i: int, store: bool = true) -> void:
 		plan_name = String(e["name"])
 		plan_notes = String(e["notes"])
 		fabric_id = String(e["fabric"])
+	# each garment keeps its own history: a switch shows that garment's undo line, a new garment starts an empty one
+	if active >= 0 and not (outfit[active].get("hist") is History):
+		outfit[active]["hist"] = History.new()
+	history = (outfit[active]["hist"] if active >= 0 else History.new())
+	_pending = null
 	sel = String(pieces[0]["id"]) if not pieces.is_empty() else null
 	sel_v = -1
 	sew_a = null
-	undo.clear()
-	redo.clear()
 	if _active_label != null:
 		_active_label.text = "Editing: %s" % (plan_name if active >= 0 else "nothing")
 	if plan_opt != null:
@@ -1968,6 +2072,9 @@ func _entry_set_plan(i: int, p: Dictionary) -> void:
 	e["plan"] = p
 	e["name"] = _display_name(String(e["key"]), p)
 	e["edited"] = false  # a fresh draft: no user edits
+	e["hist"] = History.new()  # a new draft starts a new undo line
+	if i == active:
+		history = e["hist"]
 	e["notes"] = String(p.get("notes", ""))
 	e["pieces"] = (p.get("pieces", []) as Array).duplicate(true)
 	e["seams"] = (p.get("seams", []) as Array).duplicate(true)

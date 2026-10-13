@@ -14,12 +14,25 @@ var cam_z := 260.0
 var ox := 0.0
 var oy := 0.0
 var drag = null
-var hover = null
 var fitted := false  # kept for the editor, which resets it on load; fit() is what matters now
 var hint_label: Label
 var _fit_pending := false   # fit() is deferred to the next draw, once the control has a real size
-var _sel_seam_key := ""     # "a:e-b:e" of the seam picked on the table, "" when none
 var _sew_note := ""         # what the last sew said (lengths, warning), shown in the hint line until the next click
+
+
+# The hovered edge as {"p": piece id, "e": edge index} while the sew tool is on, or null. Hover and picks live in the
+# editor's selection model (selection.gd), shared with the tabs and the 3D view.
+func _hover_edge():
+	if ed == null or ed.selection.hover_kind() != "edge":
+		return null
+	var id = ed.selection.hover_id()
+	return {"p": String(id[0]), "e": int(id[1])}
+
+
+func _on_selection_hover() -> void:
+	if ed != null and ed.tool == "sew":
+		update_hint()
+	queue_redraw()
 
 
 func _ready() -> void:
@@ -282,15 +295,16 @@ static func sync_twin(edref, p: Dictionary) -> void:
 
 
 func _sew_preview() -> String:
-	if ed.sew_a == null or hover == null or not hover.has("e"):
+	var hv = _hover_edge()
+	if ed.sew_a == null or hv == null:
 		return ""
-	if String(hover["p"]) == String(ed.sew_a[0]) and int(hover["e"]) == int(ed.sew_a[1]):
+	if String(hv["p"]) == String(ed.sew_a[0]) and int(hv["e"]) == int(ed.sew_a[1]):
 		return ""
 	var a := _edge_info(String(ed.sew_a[0]), int(ed.sew_a[1]))
-	var b := _edge_info(String(hover["p"]), int(hover["e"]))
+	var b := _edge_info(String(hv["p"]), int(hv["e"]))
 	if a.is_empty() or b.is_empty():
 		return ""
-	return sew_text(a["name"], int(ed.sew_a[1]), a["len"], b["name"], int(hover["e"]), b["len"])
+	return sew_text(a["name"], int(ed.sew_a[1]), a["len"], b["name"], int(hv["e"]), b["len"])
 
 
 # name and length (metres) of one edge, or {} when the piece or edge is missing
@@ -545,7 +559,7 @@ func _down(spos: Vector2, button: int) -> void:
 			update_hint()
 			ed.changed("ui")
 			return
-		ed.push_undo()
+		ed.push_undo("Sew edges")
 		var bside := [(best["p"] as Dictionary)["id"], best["e"]]
 		# warning text is computed before the sew so it shows alongside the removed-seam note
 		var ea := _edge_info(String(ed.sew_a[0]), int(ed.sew_a[1]))
@@ -566,7 +580,7 @@ func _down(spos: Vector2, button: int) -> void:
 	if sel != null:
 		var vi := hit_vertex(sel, sx, sy)
 		if vi >= 0:
-			ed.push_undo()
+			ed.push_undo("Move corner")
 			ed.sel_v = vi
 			drag = {"kind": "vertex", "p": sel, "vi": vi}
 			ed.changed("ui")
@@ -574,10 +588,10 @@ func _down(spos: Vector2, button: int) -> void:
 	var hp: Variant = hit_piece(sx, sy)
 	if hp != null:
 		hp = hp as Dictionary
-		ed.push_undo()
+		ed.push_undo("Move piece")
 		ed.sel = hp["id"]
 		ed.sel_v = -1
-		_sel_seam_key = ""
+		ed.selection.clear_kind("seam")
 		var w := to_world(sx, sy)
 		var t: Dictionary = hp.get("table", {"x": 0.0, "y": 0.0})
 		drag = {"kind": "piece", "p": hp, "dx": float(t.get("x", 0.0)) - w.x, "dy": float(t.get("y", 0.0)) - w.y, "moved": false}
@@ -585,12 +599,10 @@ func _down(spos: Vector2, button: int) -> void:
 	else:
 		var ks := hit_seam(sx, sy)
 		if ks >= 0:
-			_sel_seam_key = String(_geo_seams[ks]["key"])
+			ed.selection.replace("seam", ks)
 			ed.table_dirty = true
 			return
-		_sel_seam_key = ""
-		ed.sel = null
-		ed.sel_v = -1
+		ed.selection.clear()
 		drag = {"kind": "pan", "sx": sx, "sy": sy, "ox": ox, "oy": oy}
 		ed.changed("ui")
 
@@ -604,23 +616,20 @@ func _move(spos: Vector2) -> void:
 	var sy := spos.y
 	var d = drag
 	if d == null:
-		var nh = null
+		var hk := ""
+		var hid = null
 		if ed.tool == "sew":
 			for p in ed.pieces:
 				var he := hit_edge(p, sx, sy, 12.0)
 				if not he.is_empty():
-					nh = {"p": p["id"], "e": he["edge"]}
+					hk = "edge"
+					hid = [String(p["id"]), int(he["edge"])]
 		else:
-			var p: Variant = hit_piece(sx, sy)
-			if p != null:
-				nh = {"p": (p as Dictionary)["id"]}
-			else:
-				nh = null
-		if (nh == null) != (hover == null) or (nh != null and (nh["p"] != hover.get("p", null) or nh.get("e", -1) != hover.get("e", -1))):
-			hover = nh
-			ed.table_dirty = true
-			if ed.tool == "sew":
-				update_hint()
+			var hp: Variant = hit_piece(sx, sy)
+			if hp != null:
+				hk = "piece"
+				hid = String((hp as Dictionary)["id"])
+		ed.selection.set_hover(hk, hid)  # the selection emits hover_changed only when the item changed
 		return
 	if String(d["kind"]) == "pan":
 		ox = float(d["ox"]) + sx - float(d["sx"])
@@ -651,9 +660,11 @@ func _up() -> void:
 	var d = drag
 	drag = null
 	if d != null and String(d.get("kind", "")) == "vertex":
-		ed.changed("structure")
+		ed.changed("structure")  # a click that moved nothing records nothing (the pattern is unchanged)
 	elif d != null and String(d.get("kind", "")) == "piece" and bool(d.get("moved", false)):
 		ed.changed("table-done")
+	elif d != null and String(d.get("kind", "")) == "piece":
+		ed.discard_pending()  # a click on a piece without a move is not an action
 
 
 func _dbl(spos: Vector2) -> void:
@@ -670,7 +681,7 @@ func _dbl(spos: Vector2) -> void:
 	var o: Array = p["outline"]
 	var a: Array = o[int(h["edge"])]
 	var b: Array = o[(int(h["edge"]) + 1) % o.size()]
-	ed.push_undo()
+	ed.push_undo("Add corner")
 	var dropped := insert_vertex(ed, p, int(h["edge"]), [snapv(float(a[0]) + (float(b[0]) - float(a[0])) * float(h["t"])), snapv(float(a[1]) + (float(b[1]) - float(a[1])) * float(h["t"]))])
 	ed.sel_v = int(h["edge"]) + 1
 	if dropped > 0:
@@ -710,7 +721,7 @@ func _unhandled_key_input(e: InputEvent) -> void:
 		return
 	if k.keycode == KEY_ESCAPE:
 		ed.sew_a = null
-		_sel_seam_key = ""
+		ed.selection.clear_kind("seam")
 		update_hint()
 		ed.changed("ui")
 	elif k.keycode == KEY_V:
@@ -725,9 +736,10 @@ func _unhandled_key_input(e: InputEvent) -> void:
 			p = piece_by_id(ed.pieces, ed.sel)
 		if p == null:
 			return
-		ed.push_undo()
+		var del_corner: bool = ed.sel_v >= 0 and (p["outline"] as Array).size() > 3
+		ed.push_undo("Delete corner" if del_corner else "Delete piece")
 		var pname := String(p.get("name", p["id"]))
-		if ed.sel_v >= 0 and (p["outline"] as Array).size() > 3:
+		if del_corner:
 			var dropped := remove_vertex(p, ed.sel_v, ed.seams)
 			ed.sel_v = -1
 			if dropped > 0:
@@ -942,7 +954,7 @@ func _draw() -> void:
 		if seg.is_empty():
 			continue
 		var sg: Dictionary = _geo_seams[k]
-		var picked: bool = String(sg["key"]) == _sel_seam_key
+		var picked: bool = ed.selection.contains("seam", k)
 		var c := Color(sg["col"], 0.95 if picked else 0.5)
 		draw_line(seg[0], seg[1], c, 2.5 if picked else 1.0)
 		var r := 3.0 if picked else 2.0
@@ -953,10 +965,11 @@ func _draw() -> void:
 	if ed.tool == "sew":
 		if ed.sew_a != null:
 			_draw_edge_hl(String(ed.sew_a[0]), int(ed.sew_a[1]), Color("#ff9d4d"))
-		if hover != null and hover.has("e"):
-			var same: bool = ed.sew_a != null and String(ed.sew_a[0]) == String(hover["p"]) and int(ed.sew_a[1]) == int(hover["e"])
+		var hv = _hover_edge()
+		if hv != null:
+			var same: bool = ed.sew_a != null and String(ed.sew_a[0]) == String(hv["p"]) and int(ed.sew_a[1]) == int(hv["e"])
 			if not same:
-				_draw_edge_hl(String(hover["p"]), int(hover["e"]), Color("#3fd3c0"))
+				_draw_edge_hl(String(hv["p"]), int(hv["e"]), Color("#3fd3c0"))
 	# labels. Each one claims its screen rectangle; a label that would overlap an earlier one is skipped, and
 	# piece names come first so they win. Names sit at the piece's area centroid and are hidden when they do
 	# not fit inside the piece's on-screen bounding box.

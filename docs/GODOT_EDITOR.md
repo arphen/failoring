@@ -82,7 +82,31 @@ paused. Rebuild on any structural/body/fabric change (250 ms debounce).
 Port of `app/src/editor2d.js` plus the piece edits of `app/src/state.js`: grid, piece
 fill with selection and validity tint, fabric tint, grain arrow, name and edge labels
 (index + cm), vertex handles, seam edge pairs with match ticks, scale bar, hover and
-sew-edge highlights. Undo/redo (60), snap 5 mm, keyboard as in the browser.
+sew-edge highlights. Snap 5 mm, keyboard as in the browser (undo and redo: see below).
+
+## Actions, history and selection (`godot/history.gd`, `godot/selection.gd`)
+
+Every pattern edit is a named action. The edit calls `ed.push_undo("Move corner")` before it
+changes the pattern, and the `changed("structure")` (or `"table-done"` after a piece move) that
+ends it records the action: `{name, before, after}`, both as pattern snapshots. An edit that
+leaves the pattern as it was is dropped. A drag records once, on release; a slider drag records
+once on release, a keyboard step records once. Body, fabric and outfit changes are not actions.
+
+Each garment has its own history (`history.gd`, kept in its outfit entry), so a rebuild, a body
+change or a debounced regen never clears it; a garment switch shows that garment's line; a new
+plan, a re-draft or opening a file starts a new line. Undo and redo move a cursor along the line
+(state 0 is the start, state s the snapshot after action s). Ctrl+Z undoes, Ctrl+Shift+Z or Ctrl+Y
+redoes, and the **History** tab (right) lists the start and every action by name: a click jumps
+to that state, and the rows after the cursor are the undone ones. An edit made after an undo drops
+the undone actions. The history keeps the last 200 actions.
+
+`selection.gd` is the one model for what is picked and hovered: pieces, edges (`[piece, edge]`),
+corners (`[piece, corner]`) and seams (seam index), as sets kept in pick order, plus one hover item.
+The last piece picked is the primary piece (`ed.sel`, the Piece and Seams tabs), and its picked
+corner is `ed.sel_v`. Both are views of the selection, so existing code keeps working. The table
+and the panels read it, and it emits `changed` and `hover_changed`; the 3D view can connect to the
+same signals. `prune` drops picks that an edit removed, after every structure change and undo.
+The history and the selection are not stored in the saved pattern file.
 Deviations: no grain hatch (arrow only), no per-edge thick sew highlight on the table
 (the sew edge still highlights in the edge labels row).
 

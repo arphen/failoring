@@ -93,12 +93,12 @@ func _run() -> void:
 	await _frame()
 	_check(_near(_len_cm(_piece(pid), 1), 62.5), "text that is not a number is refused")
 
-	var undo_before: int = ed.undo.size()
+	var undo_before: int = ed.undo_depth()
 	ed.do_undo()
 	await _frame()
 	p = _piece(pid)
 	_check(_near(_len_cm(p, 1), 50.0), "undo restores the edge to 50.0 cm")
-	_check(ed.undo.size() == undo_before - 1, "one undo step per accepted entry")
+	_check(ed.undo_depth() == undo_before - 1, "one undo step per accepted entry")
 
 	# ---- a corner's x and y (cm from the piece's origin)
 	await _select(pid, 2)
@@ -198,11 +198,11 @@ func _run() -> void:
 	await _frame()
 	_check(ed.table.hint_label.text.begins_with("Click the first edge"), "sew tool hint: click the first edge")
 	ed.sew_a = [pid, 0]
-	ed.table.hover = {"p": pid, "e": 2}
+	ed.selection.set_hover("edge", [pid, 2])
 	ed.table.update_hint()
 	_check(ed.table.hint_label.text.begins_with("Now click the edge to sew it to") and ed.table.hint_label.text.find(" cm") >= 0, "second click hint shows both lengths")
 	ed.sew_a = null
-	ed.table.hover = null
+	ed.selection.clear_hover()
 
 	# clicks on the table itself: first the bottom edge (0), then the top edge (2), equal lengths, no warning;
 	# then edge 1 (typed 60 cm) with edge 3 (50 cm), a 10 cm difference, which is flagged
