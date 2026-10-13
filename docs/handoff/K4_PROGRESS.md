@@ -52,3 +52,14 @@ Numbers are as printed by the test. Timings are CPU-clock ms under heavy machine
 - The test file refers to docs/K4_LAZY_SDF.md, which is not written; this log stands in for it.
 - CMakeLists passes FL_ASSET_DIR = godot/assets/average. Build works, but the test silently skips the mannequin section
   if the assets are missing.
+
+### Full ctest (build_k4, Release, `ctest --test-dir build_k4 --output-on-failure --timeout 1500`)
+- test_basics: pass (0.93 s)
+- test_cantilever: pass (13.1 s)
+- test_drape: TIMEOUT at 1500 s (not a result). It does not use SdfGrid or the lazy class (grep finds no SdfGrid use in
+  test_drape.cpp), and the WIP's sdf_grid.cpp change only adds timers. Most likely cause: the 2-core machine was shared
+  with several other test runs (load ~10). Not verified as a regression; NOT re-run on a quiet machine.
+- test_garment: pass (252.8 s)
+- test_sdf_grid: pass (49.2 s)
+- test_sdf_lazy (new): pass (57.3 s)
+- Totals: 5 pass / 1 fail (timeout) / 6.
