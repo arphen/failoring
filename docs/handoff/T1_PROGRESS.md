@@ -83,3 +83,18 @@ this test alone. Limits: one real preset (1.43:1), synthetic 5:1 and 10:1 varian
 ### Test status (ctest, full run in background)
 - test_basics: pass (0.76 s). test_cantilever: pass (11.3 s). test_drape: PASS (1453 s, wall time under heavy
   machine contention; output table not captured by ctest). The remaining tests are running.
+
+### Step 3d: drape settling check (silk, 10 mm)
+- 300 frames: DC 46.6 %, KE 2.2e-7 J. 1500 frames: DC 46.3 %, KE 1.7e-7 J. The drape coefficient moves by 0.3 points,
+  but kinetic energy plateaus near 1e-7 J and never reaches the 1e-8 stop threshold. So the drape values are stable
+  to about 0.3 points, not "settled" by the code's own criterion. The 300-frame cap is kept for the sweep.
+  (test_drape only asserts KE < 1e-4 and would not notice this.)
+
+### Step 3e: bending check with a stated tolerance (tools/fabric_bench/check_bench.py)
+- Check: |B derived / B input| <= 0.05 at the FINEST mesh level (n = 16), warp and weft. The 5 % tolerance is a choice
+  made for this check (not from a textile standard). The headline (n = 10) ratio and the spread are printed too.
+- Poplin (first result): finest 0.951 / 0.958 (PASS, but close to the edge), headline 0.877 / 0.881.
+- The checker also prints the drape DC against docs/ARCHITECTURE.md (both numbers, no adjustment).
+- Drape comparison so far: poplin bench 65.0 % vs documented 64 % (+1.0 points). Silk bench 46.6 % vs documented 36 %
+  (+10.6 points). The silk gap is NOT explained yet. test_drape uses the same rig code; its per-fabric numbers were not
+  captured by ctest. Likely the documented silk number is stale, but this is unverified.
