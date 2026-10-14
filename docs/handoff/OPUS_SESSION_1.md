@@ -376,8 +376,23 @@ Findings and fixes:
   tools/export_godot_assets.js, export_godot_plans.js, export_godot_body.js (exporters are deterministic: average came
   out byte-identical). (2) wrap.gd lacked the browser's waistband `tilt` (the band follows the trousers' sloping top
   edge); ported (_fit_at, _tilt_at). Average preset: max error 0.000000 mm.
-  Still not ported: `lift` (row extents of sloping trouser top edges; the check passes without it, so the reference
-  grid does not exercise it) and the experimental sleeve cap (`cap`, off by default in the browser).
+  Then also `lift` and `vcap` (rows of sloping trouser top edges measured on the lifted outline): the 3x3 reference
+  grid did not sample those rows, so the exporter now adds a 4x5 grid over the upper rows of lift/vcap pieces (151
+  references per preset); without the lift port that grid fails by 72 mm. All six presets: 0.000000 mm.
+  Not ported: the experimental sleeve cap (`cap`, off by default in the browser).
+- body_check (after the regenerated body_ref.json): curvy and plus failed (stand 26 / 81 mm, walk 31 / 98 mm): the
+  Godot body port lacked the browser's arm clearance (gait.js G.stand: raise the arms until they hang 2 cm clear of the
+  torso hulls). Ported to body_gen.gd (stand() returns armAbduct); the editor's walk and body_check pass it to pose().
+  6/6 presets, stand 0.001 mm, walk 0.13-0.17 mm.
+- Other browser modules with Godot ports checked for later changes: draft.js changed after draft.gd (seat, back
+  widths, cross seam measures), but those only feed the offline FreeSewing drafting; draft_check matches all six presets.
+
+### Final runs (this branch, 336862b + docs)
+- C++ core: 14/14 pass (test_static 635 s, test_drape 343 s, test_wedge 349 s on a busy 2-core machine).
+- Godot (headless 4.3, library built from this branch): 23/23 pass (main: 21/23, outfit_check and wrap_check failed).
+  skirt_cover_check: every case ok or "known, not gated" as on main; penelope/petite walk_min 1.000.
+- The rebuilt godot/bin/libfailoring.so is not committed (tools/build_gdext.sh: a local build product). Run
+  tools/build_gdext.sh before opening the editor; the committed .so/.dylib predate this session.
 
 ## Open questions
 - Should `test_garment` assert zero self intersections? It would fail today in default mode (87 pairs). Not changed.

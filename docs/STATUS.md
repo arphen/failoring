@@ -115,6 +115,16 @@ Product spec for what is wanted next: `docs/EDITOR_V2_SPEC.md`; reports: `docs/D
   estimate), Forward+ effects (SSAO, TAA).
 * The editor still shows the tee failing (docs/TEE_NOTES.md), and the editor's built-in pencil skirt is too small for the plus body.
 
+## Session 2026-10-14 (opus/session-1, merged to main)
+
+* Solver: automatic Hessian model (`hessianAuto`, default) removes the wedge jitter without making stiff cloth limp; static
+  equilibrium solve merged (fast preview, see ARCHITECTURE); optional Coulomb friction inside Newton (`bodyFrictionMode 2`).
+* Godot editor: all editor branches confirmed in main (line-level check); mac/perf merged; angle-weighted cloth normals
+  restored; the editor's assets regenerated for all six presets (they were stale for five: old garment plans, gait, and
+  the curvy/plus bodies); wrap.gd gained the browser's waistband tilt and lifted trouser rows; body_gen.gd gained the arm
+  clearance. Godot tests 23/23 headless (main had 21/23). Details: `docs/handoff/OPUS_SESSION_1.md`.
+* Rebuild the GDExtension (`tools/build_gdext.sh`) before opening the editor: the committed libraries are older.
+
 ## Maintenance
 
 A scheduled task ("Failoring browser build upkeep", daily 06:47 Europe/Berlin) rebuilds `failoring.html`, runs the smoke
