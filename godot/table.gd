@@ -664,7 +664,7 @@ func pick_hole(pid: String, h: int) -> void:
 # the 5 mm grid (when snap is on), measured from `origin` (a piece's table offset, so its own coordinates land on the
 # grid). `skip` names what is being dragged, so it does not snap to itself: {pid, corner} or {pid, gid}.
 # Sets _snap for the marker drawn at the target.
-func snap_point(w: Vector2, skip: Dictionary = {}, origin: Vector2 = Vector2.ZERO) -> Vector2:
+func snap_point(w: Vector2, skip: Dictionary = {}, origin: Vector2 = Vector2.ZERO, guides_only := false) -> Vector2:
 	_snap = {}
 	if not ed.snap:
 		return w
@@ -672,7 +672,7 @@ func snap_point(w: Vector2, skip: Dictionary = {}, origin: Vector2 = Vector2.ZER
 	var best_d := SNAP_PX
 	var best = null
 	var best_what := ""
-	for t in _snap_targets(skip):
+	for t in _snap_targets(skip, guides_only):
 		var at: Vector2 = t[0]
 		var d := to_screen(at.x, at.y).distance_to(ws)
 		if d < best_d:
@@ -714,7 +714,7 @@ func snap_delta(dw: Vector2) -> Vector2:
 
 
 # [world point, description] for every object snap target, without what `skip` drags (and what moves with it).
-func _snap_targets(skip: Dictionary) -> Array:
+func _snap_targets(skip: Dictionary, guides_only := false) -> Array:
 	var out := []
 	for p in ed.pieces:
 		var pid := String(p["id"])
@@ -723,12 +723,12 @@ func _snap_targets(skip: Dictionary) -> Array:
 		var n := o.size()
 		var own := skip.has("corner") and String(skip["pid"]) == pid   # a corner of this piece is being dragged
 		for i in n:
-			if own and i == int(skip["corner"]):
+			if guides_only or (own and i == int(skip["corner"])):
 				continue
 			out.append([Vector2(float(o[i][0]), float(o[i][1])) + off, "corner %d" % (i + 1)])
 			if not own:
 				out.append([(Vector2(float(o[i][0]), float(o[i][1])) + Vector2(float(o[(i + 1) % n][0]), float(o[(i + 1) % n][1]))) * 0.5 + off, "middle of edge %d" % (i + 1)])
-		if not own:
+		if not own and not guides_only:
 			out.append([Guides.centroid(p) + off, "centre of mass"])
 			var hs: Array = p.get("holes", [])
 			for h in hs.size():
@@ -1439,7 +1439,7 @@ func _move(spos: Vector2) -> void:
 		queue_redraw()
 	elif String(d["kind"]) == "hole":
 		var th: Vector2 = _off(d["p"])
-		var wh := snap_point(to_world(sx, sy), {}, th)
+		var wh := snap_point(to_world(sx, sy), {}, th, true)
 		d["b"] = Vector2(wh.x - th.x, wh.y - th.y)
 		ed.table_dirty = true
 	elif String(d["kind"]) == "seam_end":
@@ -1550,7 +1550,7 @@ func _hole_down(spos: Vector2) -> void:
 		return
 	var hp: Dictionary = hit
 	var t: Vector2 = _off(hp)
-	var w := snap_point(to_world(spos.x, spos.y), {}, t)  # a hole can start on a construction point (a poncho's centre)
+	var w := snap_point(to_world(spos.x, spos.y), {}, t, true)  # a hole can start on a construction point (a poncho's centre)
 	var start := Vector2(w.x - t.x, w.y - t.y)
 	drag = {"kind": "hole", "p": hp, "a": start, "b": start}
 	ed.sel = hp["id"]

@@ -24,6 +24,8 @@ const Geom = preload("res://cut_geom.gd")
 const Seams = preload("res://seams.gd")
 const Layout = preload("res://layout.gd")
 const Guides = preload("res://guides.gd")
+const Place3D = preload("res://place3d.gd")
+const PlaceView = preload("res://place_view.gd")
 
 # body_h: spacing (m) of the body's signed-distance grid, baked for every walking frame. 7 mm is the reference (the
 # numbers in docs/PERF_NOTES.md are measured with it). Draft and Preview use 10 mm: the bake takes about 1.8x less CPU,
@@ -174,6 +176,8 @@ var scale_opt: OptionButton
 var view_pane: Control
 var view_image: TextureRect
 var layout = Layout.new()   # pane splits, toggles and their saved state (layout.gd)
+var place_view = PlaceView.new()   # moving and turning panels in the 3D view (place_view.gd)
+var place_btn: Button
 
 var plan_opt: OptionButton
 var quality_opt: OptionButton
@@ -198,6 +202,7 @@ func _ready() -> void:
 	M = BodyGen.load_data(PlanLoader.load_json("res://assets/body_data.json"))
 	meas = (BodyGen.PRESETS["average"] as Dictionary).duplicate()
 	_build_scene()
+	place_view.setup(self)
 	_apply_render_quality()
 	_apply_auto_env()
 	_build_ui()
@@ -1120,6 +1125,7 @@ func _refresh_piece_tab() -> void:
 	else:
 		_piece_rows(vb, p)
 		_piece_holes_section(vb, p)
+		_piece_guides_section(vb, p)
 	var add_h := Label.new()
 	add_h.text = "Add a shape (sized in cm, placed at the view centre)"
 	vb.add_child(add_h)
@@ -1229,6 +1235,7 @@ func _piece_rows(vb: VBoxContainer, p: Dictionary) -> void:
 		func(v: float) -> void: _wrap_set(p, "ring", v),
 		func(v: float) -> String: return "%.1f" % v,
 		"How far the piece flares out from the body: 0 hugs it, higher values open it out, like a skirt.", true)
+	_place3d_rows(vb, p)
 	_twin_section(vb, p)
 	var btns := HBoxContainer.new()
 	var mb := Button.new()
@@ -1498,9 +1505,12 @@ func _piece_holes_section(vb: VBoxContainer, p: Dictionary) -> void:
 	for i in holes.size():
 		var hb := Table.bbox_of(holes[i])
 		var row := HBoxContainer.new()
-		var lab := Label.new()
+		var lab := Button.new()   # a click picks the hole on the table
+		lab.flat = not selection.contains("hole", [String(p["id"]), i])
+		lab.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		lab.text = "Hole %d: %.1f x %.1f cm" % [i + 1, (hb[2] - hb[0]) * 100.0, (hb[3] - hb[1]) * 100.0]
 		lab.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		lab.pressed.connect(func() -> void: table.pick_hole(String(p["id"]), i))
 		row.add_child(lab)
 		var del := Button.new()
 		del.text = "Delete"
@@ -1514,6 +1524,51 @@ func _piece_holes_section(vb: VBoxContainer, p: Dictionary) -> void:
 	add.tooltip_text = "A circle or a rectangle inside this piece, at a size and place you type. The Hole tool draws one on the table."
 	add.pressed.connect(func() -> void: _open_hole_dialog(p))
 	vb.add_child(add)
+
+
+# The piece's construction geometry (guides.gd): each point and line, picked by a click, with Delete; and buttons to add
+# a point at the centre of mass or to use the Point and Line tools.
+func _piece_guides_section(vb: VBoxContainer, p: Dictionary) -> void:
+	var gs := Guides.list(p)
+	vb.add_child(_h4("Construction (%d)" % gs.size()))
+	var pid := String(p["id"])
+	for g in gs:
+		var gid := String(g["id"])
+		var row := HBoxContainer.new()
+		var lab := Button.new()
+		lab.flat = not selection.contains("guide", [pid, gid])
+		lab.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		lab.text = Guides.label(p, g)
+		lab.tooltip_text = "Construction geometry is drawn on the table and snapped to, never cut. Click to pick it."
+		lab.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		lab.pressed.connect(func() -> void: table.pick_guide(pid, gid))
+		row.add_child(lab)
+		var del := Button.new()
+		del.text = "Delete"
+		del.pressed.connect(func() -> void:
+			selection.replace("guide", [pid, gid])
+			table.delete_picked())
+		row.add_child(del)
+		vb.add_child(row)
+	var btns := HBoxContainer.new()
+	var cm := Button.new()
+	cm.name = "CentreOfMassBtn"
+	cm.text = "Point at centre of mass"
+	cm.tooltip_text = "A construction point that stays on the centre of mass of the cloth (holes subtracted) as the piece changes"
+	cm.pressed.connect(func() -> void:
+		push_undo("Add construction point")
+		table.pick_guide_later(pid, Guides.add_ref(p, "centroid"))
+		changed("table-done"))
+	btns.add_child(cm)
+	var pt := Button.new()
+	pt.text = "Point tool"
+	pt.pressed.connect(func() -> void: table.set_tool("point"))
+	btns.add_child(pt)
+	var ln := Button.new()
+	ln.text = "Line tool"
+	ln.pressed.connect(func() -> void: table.set_tool("line"))
+	btns.add_child(ln)
+	vb.add_child(btns)
 
 
 func _delete_hole(p: Dictionary, i: int) -> void:
@@ -1813,6 +1868,48 @@ func _place(p: Dictionary, theta: float) -> void:
 
 func _flip_placement(p: Dictionary) -> void:
 	_place(p, float((p["wrap"] as Dictionary).get("theta", 0.0)) + 180.0)
+
+
+# The piece's free 3D move and turn (place3d.gd), on top of the placement above: three moves in cm and three turns in
+# degrees, the button for the 3D view's Move panels mode, and Reset.
+func _place3d_rows(vb: VBoxContainer, p: Dictionary) -> void:
+	vb.add_child(_h4("Move and turn in 3D" + ("" if Place3D.has(p) else " (none)")))
+	var names := ["Move across", "Move up", "Move forward"]
+	for i in 3:
+		var ax := i
+		_slider_row(vb, names[i], -100.0, 100.0, 0.5,
+			func() -> float: return Place3D.t_of(p)[ax] * 100.0,
+			func(v: float) -> void:
+				var t := Place3D.t_of(p)
+				t[ax] = v / 100.0
+				Place3D.set_place(p, t, Place3D.q_of(p))
+				changed("structure-drag"),
+			func(v: float) -> String: return "%.1f cm" % v,
+			"Moves the panel in 3D (cm), after its placement on the body. The Move panels mode of the 3D view does this with the mouse.", true)
+	var tnames := ["Tilt (across)", "Turn (up)", "Roll (forward)"]
+	for i in 3:
+		var ax2 := i
+		_slider_row(vb, tnames[i], -180.0, 180.0, 1.0,
+			func() -> float: return Place3D.euler_deg(p)[ax2],
+			func(v: float) -> void:
+				var e := Place3D.euler_deg(p)
+				e[ax2] = v
+				Place3D.set_place(p, Place3D.t_of(p), Place3D.q_from_euler_deg(e))
+				changed("structure-drag"),
+			func(v: float) -> String: return "%d°" % int(round(v)),
+			"Turns the panel in 3D about its own centre (degrees).", true)
+	var row := HBoxContainer.new()
+	var mv := Button.new()
+	mv.text = "Move in the 3D view"
+	mv.tooltip_text = "Turns on the 3D view's Move panels mode (M over the 3D view)"
+	mv.pressed.connect(func() -> void: _set_place_mode(true))
+	row.add_child(mv)
+	var rs := Button.new()
+	rs.text = "Reset"
+	rs.disabled = not Place3D.has(p)
+	rs.pressed.connect(_reset_place)
+	row.add_child(rs)
+	vb.add_child(row)
 
 
 func _wrap_set(p: Dictionary, key: String, v: float) -> void:
@@ -3250,6 +3347,8 @@ func _tris() -> PackedInt32Array:
 
 func _physics_process(_delta: float) -> void:
 	_update_camera()
+	if place_view.active:
+		place_view.refresh(null if place_view.drag.is_empty() else place_view.drag["c"] + place_view.drag["dt"])  # the gizmo keeps its size on screen as the camera moves
 	# the Showcase's playback owns the 3D view while it is on (cached frames, no solver); the orbit camera still works
 	if _showcase != null and _showcase.drive(_delta):
 		return
@@ -3993,9 +4092,58 @@ func _show_view_texture() -> void:
 	view_image.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	view_pane.add_child(view_image)
 	view_pane.move_child(view_image, 0)
+	# the 3D view's own bar: move and turn panels (place_view.gd)
+	var bar := HBoxContainer.new()
+	bar.name = "ViewBar"
+	bar.position = Vector2(8, 8)
+	bar.add_theme_constant_override("separation", 6)
+	place_btn = Button.new()
+	place_btn.name = "MovePanelsBtn"
+	place_btn.text = "Move panels"
+	place_btn.toggle_mode = true
+	place_btn.focus_mode = Control.FOCUS_NONE
+	place_btn.tooltip_text = "Move and turn panels on the body before they are sewn (M). Drag a panel, a coloured arrow to move along it, or a ring to turn. Shift snaps to 1 cm / 15°. The placement is saved with the pattern."
+	place_btn.toggled.connect(func(on: bool) -> void: _set_place_mode(on))
+	bar.add_child(place_btn)
+	var reset := Button.new()
+	reset.name = "ResetPlacementBtn"
+	reset.text = "Reset panel"
+	reset.focus_mode = Control.FOCUS_NONE
+	reset.tooltip_text = "Put the selected panel back where its placement on the body puts it (drops its 3D move and turn)"
+	reset.pressed.connect(_reset_place)
+	bar.add_child(reset)
+	var ph := Label.new()
+	ph.name = "PlaceHint"
+	ph.add_theme_font_size_override("font_size", 12)
+	ph.modulate = Color(1, 1, 1, 0.7)
+	bar.add_child(ph)
+	view_pane.add_child(bar)
+
+
+func _set_place_mode(on: bool) -> void:
+	if place_btn != null:
+		place_btn.set_pressed_no_signal(on)
+	place_view.set_active(on)
+	var ph = view_pane.get_node_or_null("ViewBar/PlaceHint")
+	if ph != null:
+		(ph as Label).text = ("Click a panel; drag it, an arrow or a ring. Esc leaves." if on else "")
+
+
+# Drops the selected piece's 3D move and turn (one undoable action).
+func _reset_place() -> void:
+	var p = _piece()
+	if p == null or not Place3D.has(p):
+		notify("The selected panel has no 3D move or turn to reset.")
+		return
+	push_undo("Reset 3D placement of %s" % String(p.get("name", p["id"])))
+	p.erase("place")
+	changed("structure")
 
 
 func _on_view_gui_input(e: InputEvent) -> void:
+	if place_view.input(e):
+		view_pane.accept_event()
+		return
 	if _camera_input(e):
 		view_pane.accept_event()
 
@@ -4025,6 +4173,12 @@ func _unhandled_key_input(e: InputEvent) -> void:
 	if e.keycode == KEY_F or e.keycode == KEY_HOME:
 		_touch_user_cam()
 		_reset_view()
+		get_viewport().set_input_as_handled()
+	elif e.keycode == KEY_M:
+		_set_place_mode(not place_view.active)
+		get_viewport().set_input_as_handled()
+	elif e.keycode == KEY_ESCAPE and place_view.active:
+		_set_place_mode(false)
 		get_viewport().set_input_as_handled()
 	elif e.keycode == KEY_G:
 		_cycle_render_quality()

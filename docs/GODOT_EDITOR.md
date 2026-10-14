@@ -84,6 +84,44 @@ fill with selection and validity tint, fabric tint, grain arrow, name and edge l
 (index + cm), vertex handles, seam edge pairs with match ticks, scale bar, hover and
 sew-edge highlights. Snap 5 mm, keyboard as in the browser (undo and redo: see below).
 
+## Layout (`godot/layout.gd`)
+
+Library | (Table | 3D view) | Inspector, in nested split containers: drag the gaps. The bar above them shows or hides each
+pane (Ctrl/Cmd+1..4), stacks the table above the 3D view (Ctrl/Cmd+5), swaps their order, focuses the 3D view, or resets
+the layout. The layout is kept in `user://settings.cfg` [layout]; `FL_LAYOUT_DEFAULT=1` ignores it (tests, screenshots).
+
+## Construction geometry and right-click menus (`godot/guides.gd`, `godot/table.gd`)
+
+Construction points and lines are kept per piece in `p.guides` and saved with the pattern; they are drawn, picked,
+dragged and snapped to, never cut. A point is free (`x`, `y`) or follows a feature: the centre of mass of the cloth
+(holes subtracted), the middle of an edge, a corner, the centre of a hole. Inserting or deleting corners keeps derived
+points on their feature, or turns them into free points where the feature disappears; dragging a derived point frees it.
+A line runs through two points, or through one at an angle (across, up). Tools: Point, Line; the Piece tab lists the
+piece's construction geometry. Object snap (corner drags, construction point drags, the Point tool):
+corners, edge middles, centres of mass, hole centres and construction points within 10 px, then construction lines,
+then the 5 mm grid. The Hole tool snaps to construction points and lines only (then the grid), so a hole drawn near an
+existing one does not jump onto its centre. Right-click (a right drag still pans) opens a menu for what is under the pointer: a construction
+point (hole centred here, lines through it, line to another point, make free, delete), a corner (point on it, delete), an
+edge (corner here or in the middle, point in the middle, sew to..., unsew), a hole (point at its centre, delete), a
+piece (point at the centre of mass or here, hole here, duplicate, mirror, delete), a seam link (flip, delete). Holes are
+picked and dragged with the mouse (a hole that would leave the piece goes back). Delete removes the picked construction
+geometry, holes and seams first, then the corner or piece as before.
+
+A poncho from scratch: Add shape > Square; right-click the square > Construction point at the centre of mass;
+right-click the point > Cut a hole centred here.
+
+Splitting a sewn edge (Split tool, double click, the edge menu, Curve) keeps its seam: the seam is cut at the new corner
+and its partner's range at the same fraction of the seam (from the other end when the seam is reversed).
+
+## Moving panels in 3D (`godot/place_view.gd`, `godot/place3d.gd`)
+
+The 3D view's Move panels button (or M over the 3D view) shows the start positions (stage 3, before the drape) and a gizmo
+on the selected panel: drag the panel to move it in the plane facing the camera, an arrow (red across, green up, blue
+forward) to move along it, a ring to turn about that axis through the panel's centre; Shift snaps to 1 cm and 15°. The
+release is one undoable action, stored in the piece as `p.place = {t, q}` (applied by plan_loader.gd after the wrap:
+x' = q (x - c) + c + t, c the panel's centre) and saved with the pattern. Reset panel drops it. The Piece tab has the same
+as Move across/up/forward (cm) and Tilt/Turn/Roll (degrees).
+
 ## Partial seams (`godot/seams.gd`)
 
 A seam can join a part of an edge to a part of another edge, so a hole stays open where the two are not sewn: an armhole,

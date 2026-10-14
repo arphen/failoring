@@ -73,7 +73,7 @@ const UI_INK := Color("#e7e3da")
 const UI_DIM := Color("#8f98a6")
 const UI_CHALK := Color("#ff9d4d")
 const UI_THREAD := Color("#3fd3c0")
-const UI_TRACK := Color("#0f1216")
+const UI_TRACK := Color("#323a46")  # slider track: lighter than the panels so it reads on them
 const UI_TABLE_BG := Color("#0f1216")  # #c2d canvas background in the browser
 const UI_FONT_SIZE := 13
 
@@ -330,9 +330,10 @@ static func make_theme() -> Theme:
 		t.set_color("selection_color", ty, Color(UI_CHALK, 0.3))
 
 	# sliders: dark track, chalk fill
-	t.set_stylebox("slider", "HSlider", _box(UI_TRACK, Color(0, 0, 0, 0), 3, 0.0, 0.0, 0))
-	t.set_stylebox("grabber_area", "HSlider", _box(UI_CHALK, Color(0, 0, 0, 0), 3, 0.0, 0.0, 0))
-	t.set_stylebox("grabber_area_highlight", "HSlider", _box(UI_CHALK, Color(0, 0, 0, 0), 3, 0.0, 0.0, 0))
+	# the track needs a height (content margins): with none it is 0 px tall and only the grabber shows
+	t.set_stylebox("slider", "HSlider", _box(UI_TRACK, Color(0, 0, 0, 0), 3, 0.0, 2.0, 0))
+	t.set_stylebox("grabber_area", "HSlider", _box(UI_CHALK, Color(0, 0, 0, 0), 3, 0.0, 2.0, 0))
+	t.set_stylebox("grabber_area_highlight", "HSlider", _box(UI_CHALK, Color(0, 0, 0, 0), 3, 0.0, 2.0, 0))
 
 	# panels: the side columns share the browser panel colour and a 1px line
 	t.set_stylebox("panel", "PanelContainer", _box(UI_PANEL, UI_LINE, 0, 8.0, 8.0))

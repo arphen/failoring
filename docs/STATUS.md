@@ -125,6 +125,23 @@ Product spec for what is wanted next: `docs/EDITOR_V2_SPEC.md`; reports: `docs/D
   clearance. Godot tests 23/23 headless (main had 21/23). Details: `docs/handoff/OPUS_SESSION_1.md`.
 * Rebuild the GDExtension (`tools/build_gdext.sh`) before opening the editor: the committed libraries are older.
 
+## Editor layout and CAD table (2026-10-14 evening, opus/editor-layout + opus/cad-table)
+
+* Layout (`godot/layout.gd`): the four panes are nested splits (drag the gaps), each can be hidden (pane bar, Ctrl+1..4);
+  table and 3D view can be stacked (Ctrl+5) or swapped; Focus 3D; saved in settings.cfg [layout]. The table bar wraps:
+  its single row set a minimum width that pushed the inspector and timeline off a 2000 px window. Slider tracks were 0 px
+  tall (theme): now visible.
+* Cutting table: construction points and lines (`godot/guides.gd`, saved with the pattern; centre of mass with holes
+  subtracted, edge middles, corners, hole centres, free points; lines through two points or at an angle), object snap,
+  Point and Line tools, right-click menus on every kind of thing, holes picked and dragged, Delete on picked guides, holes
+  and seams. Splitting a sewn edge keeps the seam (cut in two at the new corner). Seam links on the table are drawn for
+  the piece under the pointer by default (View menu), edge lengths only where they fit.
+* 3D: Move panels mode in the 3D view (`godot/place_view.gd`, M): pick a panel, drag it, drag an axis arrow, or drag a
+  ring to turn it; the move is stored per piece (`godot/place3d.gd`, `p.place`, saved with the pattern) and applied to
+  the simulator's start positions. The Piece tab has the same as sliders (cm, degrees) and Reset.
+* Checks: godot/tests/cad_check (36), place_check (25), and the full Godot suite headless. Screens rendered under Xvfb
+  with Godot's OpenGL renderer (llvmpipe), not on a GPU.
+
 ## Maintenance
 
 A scheduled task ("Failoring browser build upkeep", daily 06:47 Europe/Berlin) rebuilds `failoring.html`, runs the smoke

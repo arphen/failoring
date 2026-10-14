@@ -7,6 +7,7 @@ extends RefCounted
 
 const Wrap = preload("res://wrap.gd")
 const Seams = preload("res://seams.gd")
+const Place3D = preload("res://place3d.gd")
 
 const DISPLAY_MARGIN := 0.0008
 
@@ -123,6 +124,7 @@ static func build(plan: Dictionary, sections: Dictionary, arms: Dictionary, stan
 		ranges[pid] = {"first": f0, "count": uv.size()}
 		for i in uv.size():
 			pos[f0 + i] = wrap.point(uv[i].x, uv[i].y)
+		Place3D.apply(pos, f0, uv.size(), pc)  # the piece's free move and turn in 3D, if it has one (place3d.gd)
 	sim.set_positions(pos)
 	sim.setup_display()
 	var chains := {}
