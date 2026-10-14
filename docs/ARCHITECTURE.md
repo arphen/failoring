@@ -72,11 +72,29 @@ floor. Reproduces the paper's Table 1 to 0.57 % (test_basics). Not yet implement
 | `test_drape` | Cusick-style drape coefficient for all presets: fluid < crisp < stiff, stable, no penetration | see below |
 | `test_garment` | Two panels sewn into a tube, lodging on an ellipsoid mannequin. The hem must stop where the body girth equals the tube circumference (computed independently): predicted 161 mm, simulated 158 mm; seams within 0.2 mm; no penetration | pass |
 | `test_sdf_grid` | The baked distance grid (collider of the mesh mannequin). Not read or re-run for this document update | unverified here |
+| `test_skin_barrier` | K1 compliant skin and K5 barrier self contact enabled together (the test_garment tube on a 3 cm mesh, four modes: neither, skin, barrier, both). Runs, settles, seams closed, no self intersections in the barrier modes, penetration within the soft layer depth. Numbers in `docs/handoff/OPUS_SESSION_1.md` | pass (2026-10-14) |
 
-Drape coefficients (30 cm disc on 18 cm pedestal, 10 mm mesh): silk 36 %, chiffon 38 %, jersey 28 %,
-poplin 64 %, wool 65 %, denim 81 %, linen 82 %, canvas 93 %, leather 91 %. Textile-literature ranges:
-fluid ~30-50 %, cotton/wool ~50-70 %, stiff 70-100 % - the ordering and magnitudes are plausible.
-**These are not validated against measured cloth** (see limitations).
+Drape coefficients from `test_drape`, measured 2026-10-14 on main @ 842609f (Release build, 2-core Linux container,
+306 s for the whole test). Scene: 30 cm disc on an 18 cm pedestal, dropped from 12 mm, 1 substep per 60 Hz frame. Mesh
+edge length = the Zhang et al. estimate floored at 10 mm, which is 10.0 mm for every preset. The run stops once
+KE < 1e-8 J after frame 100, or at frame 300; "300" below means the cap was reached and the DC is the frame-300 value
+(KE still 6e-8 to 4e-7 J, below the test's 1e-4 J pass limit).
+
+| Fabric | DC % | Frames | KE at end (J) |
+| --- | --- | --- | --- |
+| cotton_jersey | 27.6 | 223 | 8.9e-09 |
+| polyester_chiffon | 43.1 | 300 | 1.9e-07 |
+| silk_charmeuse | 46.6 | 300 | 2.2e-07 |
+| wool_suiting | 64.8 | 125 | 8.8e-09 |
+| cotton_poplin | 65.0 | 300 | 3.6e-07 |
+| denim_12oz | 80.7 | 214 | 9.3e-09 |
+| linen_medium | 81.2 | 300 | 8.1e-08 |
+| lambskin_leather | 90.9 | 300 | 5.9e-08 |
+| canvas_heavy | 92.8 | 179 | 8.4e-09 |
+
+(An earlier version of this table gave silk 36 % and chiffon 38 %; those were stale. The source of those older
+numbers was not traced.) Textile-literature ranges: fluid ~30-50 %, cotton/wool ~50-70 %, stiff 70-100 % - the
+ordering and magnitudes are plausible. **These are not validated against measured cloth** (see limitations).
 
 ## Lessons that shaped the solver (so nobody re-learns them)
 
@@ -331,7 +349,10 @@ cutting table (2D canvas)  <->  App state (pieces, seams, fabric, body)  ->  Web
   `godot/demo.gd` is untested. The wrapper binds only analytic colliders, not the mesh collider.
 * A garment wedged on a convex body keeps jittering at ~1e-4 J (about one line-search failure per frame)
   instead of reaching exactly zero kinetic energy; positions are stable to ~1 mm.
-* Self-collision is vertex-triangle only (no edge-edge) - thin tangles can pass.
+* Self-collision is vertex-triangle only (no edge-edge) - thin tangles can pass. Measured 2026-10-14: the
+  `test_garment` scene (default mode, which passes) has 87 exactly intersecting triangle pairs at frame 150 (re-run in a
+  scratch probe with the same setup; the counter skips pairs sharing a vertex or a seam link), most of them within one panel and
+  far from the seams; with `barrierContact` (K5, off by default) the same kind of scene has none (`test_skin_barrier`).
 
 Browser app and mannequin:
 
