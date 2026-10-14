@@ -6,3 +6,4 @@ __pycache__/
 .claude/
 third_party/
 build-native/
+build_k5/

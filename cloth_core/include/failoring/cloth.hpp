@@ -15,6 +15,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "failoring/barrier_contact.hpp"
 #include "failoring/collider.hpp"
 #include "failoring/material.hpp"
 #include "failoring/math.hpp"
@@ -81,6 +82,14 @@ struct SolverParams {
     // UNVERIFIED placeholder physics: no tissue stiffness value in this code base is measured.
     Real skinStiffness = 0.0;      // Pa/m (= N/m^3)
     Real skinMaxDepth = 0.0;       // m, hard stop of the soft layer
+    // K5 (docs/K5_BARRIER_CONTACT.md): IPC-style barrier self contact inside the implicit Newton solve. Point-triangle
+    // AND edge-edge pairs get a smooth barrier energy (gradient + PSD-projected Hessian assembled into the Newton
+    // system; the Cholesky pattern is rebuilt when new pairs appear), and every line-search trial is capped by
+    // conservative continuous collision detection, so no step crosses a cloth surface. Replaces the post-solve
+    // vertex-triangle projection (selfCollision is ignored while this is on). Implicit integrator only.
+    // Requires an intersection-free start. Off by default: existing behaviour is unchanged.
+    bool barrierContact = false;
+    contact::BarrierParams barrier;  // d_hat (gap), stiffness, CCD settings; see barrier_contact.hpp
 };
 
 struct SeamSpec {
@@ -221,6 +230,26 @@ private:
     int solveLinear(Real h2inv, const std::vector<Vec3>& rhs, std::vector<Vec3>& dx, bool cholPrec = false, int maxIt = -1);
     bool refactor(Real h2inv);
     int solveCholPcg(Real h2inv, const std::vector<Vec3>& rhs, std::vector<Vec3>& dx);
+    // pattern bookkeeping (barrier contact adds vertex couplings to the Hessian pattern)
+    void rebuildPattern();
+    std::unordered_set<std::uint64_t> extraCouple_;  // (min << 32 | max) vertex pairs coupled by contact pairs
+    long long factorizations_ = 0;
+    long long patternRebuilds_ = 0;
+    // ---- barrier self contact (cloth_barrier.cpp) --------------------------
+    void barrierInit(Real h);
+    void barrierUpdateSet();                    // candidates at x_, register Hessian couplings (may rebuild pattern)
+    void barrierAddToSystem();                  // barrier gradient and PSD Hessian into grad_ / K_
+    Real barrierEnergy(const std::vector<Vec3>& x, const std::vector<contact::ContactPair>& c, Real* minDist = nullptr) const;
+    // Largest fraction t in [0, 1] of the linear motion x0 -> x1 that no pair crosses (conservative CCD).
+    Real barrierMaxStep(const std::vector<Vec3>& x0, const std::vector<Vec3>& x1, std::vector<contact::ContactPair>& scratch);
+    void barrierAdapt(Real minDist);
+    contact::SelfContact barrier_;
+    bool barrierReady_ = false;
+    bool patternDirty_ = false;
+    Real kappa_ = 0, prevMinDist_ = 1e30;
+    std::vector<contact::ContactPair> bCand_, bSwept_;
+    std::vector<Vec3> xCcd_, xCcd2_, xLift_;
+    contact::BarrierStats bstats_;
     bool cholValid_ = false;
     int cholAge_ = 0;
     // Direct solve; returns -1 if the factorisation failed (caller falls back to CG).
@@ -271,6 +300,18 @@ public:
     std::vector<Real> vertexContactPressure() const;
     // Per-triangle mean of the three vertex pressures (total, Pa).
     std::vector<Real> triangleContactPressure() const;
+
+    // Numeric Cholesky factorisations and symbolic re-analyses (pattern rebuilds after start-up) so far.
+    long long factorizations() const { return factorizations_; }
+    long long patternRebuilds() const { return patternRebuilds_; }
+    // Barrier contact diagnostics (barrierContact mode).
+    const contact::BarrierStats& barrierStats() const { return bstats_; }
+    Real barrierKappa() const { return kappa_; }
+    // Smallest distance between non-adjacent cloth primitives (point-triangle, edge-edge) within `range` metres
+    // (returns `range` if none is closer). Works in either mode (builds the pair structure on demand).
+    Real minSelfDistance(Real range = 0.01);
+    // Exact count of intersecting non-adjacent triangle pairs (seam-linked vertices count as shared).
+    int selfIntersections();
 };
 
 }  // namespace fl

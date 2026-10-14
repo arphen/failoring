@@ -14,8 +14,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <set>
+#include <vector>
 
 #include "failoring/cloth.hpp"
+
+using fl::contact::ContactPair;
 
 namespace fl {
 
@@ -27,6 +30,30 @@ int ClothSolver::BlockMatrix::find(int i, int j) const {
 
 void ClothSolver::buildBlockPattern() {
     const int N = vertexCount();
+    rebuildPattern();
+    grad_.assign(N, Vec3());
+    rhs_.assign(N, Vec3());
+    dx_.assign(N, Vec3());
+    xTilde_.assign(N, Vec3());
+    cgR_.assign(N, Vec3());
+    cgZ_.assign(N, Vec3());
+    cgP_.assign(N, Vec3());
+    cgAp_.assign(N, Vec3());
+    precond_.assign(N, Mat3());
+    filt_.assign(N, Mat3());
+    ssorY_.assign(N, Vec3());
+    ssorU_.assign(N, Vec3());
+    xCcd2_.assign(N, Vec3());
+    contactActive_.assign(N, 0);
+    contactN_.assign(N, Vec3(0, 1, 0));
+    contactPhi_.assign(N, 1e30);
+}
+
+// Block pattern of the Hessian (elastic couplings plus the registered barrier-contact couplings), the scalar CSR
+// pattern, the fill-reducing ordering and the symbolic Cholesky analysis. Called once at start-up and again
+// (barrier mode) whenever an active contact pair couples vertices the pattern does not contain yet.
+void ClothSolver::rebuildPattern() {
+    const int N = vertexCount();
     std::vector<std::set<int>> nb(N);
     for (int i = 0; i < N; ++i) nb[i].insert(i);
     auto couple = [&](const int* idx, int n) {
@@ -36,6 +63,11 @@ void ClothSolver::buildBlockPattern() {
     for (const TriC& c : triC_) { const int idx[3] = {c.i0, c.i1, c.i2}; couple(idx, 3); }
     for (const BendC& b : bendC_) couple(b.i, 4);
     for (const SeamC& s : seamC_) { const int idx[3] = {s.a, s.b0, s.b1}; couple(idx, 3); }
+    for (std::uint64_t k : extraCouple_) {
+        const int a = static_cast<int>(k >> 32), b = static_cast<int>(k & 0xffffffffu);
+        nb[a].insert(b);
+        nb[b].insert(a);
+    }
 
     K_.rowStart.assign(N + 1, 0);
     K_.col.clear();
@@ -64,20 +96,6 @@ void ClothSolver::buildBlockPattern() {
             for (int b = 0; b < 3; ++b) s.slot[a * 3 + b] = K_.find(idx[a], idx[b]);
     }
 
-    grad_.assign(N, Vec3());
-    rhs_.assign(N, Vec3());
-    dx_.assign(N, Vec3());
-    xTilde_.assign(N, Vec3());
-    cgR_.assign(N, Vec3());
-    cgZ_.assign(N, Vec3());
-    cgP_.assign(N, Vec3());
-    cgAp_.assign(N, Vec3());
-    precond_.assign(N, Mat3());
-    filt_.assign(N, Mat3());
-    ssorY_.assign(N, Vec3());
-    ssorU_.assign(N, Vec3());
-    contactActive_.assign(N, 0);
-
     // scalar CSR pattern (3x3 blocks expanded) + fill-reducing ordering for the direct solver
     const int n3 = 3 * N;
     sRowStart_.assign(n3 + 1, 0);
@@ -104,8 +122,6 @@ void ClothSolver::buildBlockPattern() {
     sVal_.assign(sCol_.size(), 0.0);
     sRhs_.assign(n3, 0.0);
     sSol_.assign(n3, 0.0);
-    contactN_.assign(N, Vec3(0, 1, 0));
-    contactPhi_.assign(N, 1e30);
 }
 
 void ClothSolver::assembleEnergy(Real seamScale) {
@@ -314,6 +330,7 @@ bool ClothSolver::refactor(Real h2inv) {
             }
         }
     }
+    ++factorizations_;
     return chol_.factor(sVal_);
 }
 
@@ -356,6 +373,18 @@ void ClothSolver::stepImplicit() {
 
     const bool skin = skinOn() && collider_;
     if (rigidForce_.size() != static_cast<size_t>(N)) { rigidForce_.assign(N, 0.0); skinK_.assign(N, 0.0); skinPhi_.assign(N, 1e30); }
+    const bool barrier = p_.barrierContact;
+    if (barrier) barrierInit(h);
+    // Barrier mode: move x_ towards `target` as far as CCD allows (all of it unless a pair would be crossed).
+    std::vector<Vec3>& xFrom = xCcd_;
+    auto ccdMove = [&](const std::vector<Vec3>& target) -> Real {
+        xFrom = x_;
+        const Real t = barrierMaxStep(xFrom, target, bSwept_);
+        if (t >= 1) { x_ = target; return 1; }
+        for (int i = 0; i < N; ++i) x_[i] = xFrom[i] + (target[i] - xFrom[i]) * t;
+        return t;
+    };
+
     for (int s = 0; s < S; ++s) {
         if (skin) updateSkinAreas();
         for (int i = 0; i < N; ++i) {
@@ -364,8 +393,10 @@ void ClothSolver::stepImplicit() {
             v_[i] *= std::exp(-damp_[i] * h);
             v_[i] += p_.gravity * h;
             xTilde_[i] = x_[i] + v_[i] * h;
-            x_[i] = xTilde_[i];
+            if (!barrier) x_[i] = xTilde_[i];
         }
+        // barrier mode: the predictor (initial guess) is itself a motion and must not cross a surface
+        if (barrier && ccdMove(xTilde_) < 1) ++bstats_.initialGuessLimited;
         int cg = 0;
         bool needFactor = true;
         Real prevMaxDx = 1e30;
@@ -374,6 +405,8 @@ void ClothSolver::stepImplicit() {
         for (int n = 0; n < std::max(1, p_.newtonIterations); ++n) {
             nUsed = n + 1;
             // Contact inside the solve: lift penetrating vertices onto the body surface first ...
+            bool lifted = false;
+            if (barrier) xLift_ = x_;
             for (int i = 0; i < N; ++i) {
                 contactPhi_[i] = 1e30;
                 if (skin) { skinK_[i] = 0; skinPhi_[i] = 1e30; }
@@ -386,13 +419,22 @@ void ClothSolver::stepImplicit() {
                     if (sc > 0) { lim = p_.skinMaxDepth; skinK_[i] = p_.skinStiffness * sc * skinArea_[i]; }
                 }
                 Real phiR = phi + lim;
-                if (phiR < 0) { x_[i] -= nrm * phiR; phiR = 0; phi = -lim; }
+                if (phiR < 0) {
+                    if (barrier) { xLift_[i] = x_[i] - nrm * phiR; lifted = true; }  // K5: lift is CCD-capped later
+                    else x_[i] -= nrm * phiR;
+                    phiR = 0; phi = -lim;
+                }
                 contactN_[i] = nrm;
                 contactPhi_[i] = phiR;
                 if (skin) skinPhi_[i] = phi;
             }
+            if (barrier) {
+                if (lifted) ccdMove(xLift_);  // a lift that would cross a cloth surface is cut short (stays held by the filter)
+                barrierUpdateSet();
+            }
             assembleEnergy(seamScale);
             if (skin) assembleSkin();
+            if (barrier) barrierAddToSystem();
             for (int i = 0; i < N; ++i)
                 rhs_[i] = w_[i] == 0 ? Vec3(0, 0, 0) : -((x_[i] - xTilde_[i]) * (mass_[i] * invH2) + grad_[i]);
             // ... then forbid motion into the body for vertices resting on it (unless the net force pulls them away).
@@ -427,15 +469,23 @@ void ClothSolver::stepImplicit() {
                 if (maxStep < p_.newtonTolerance) break;
             }
             // backtracking line search on the variational energy (keeps Newton from overshooting)
-            Real E0 = variationalEnergy(invH2, seamScale);
+            xBackup_ = x_;
+            Real step = 1.0;
+            if (barrier) {
+                // CCD step cap: the largest fraction of the full Newton step that no pair crosses. The swept candidate
+                // set (every pair whose boxes come within d_hat along the step) also defines the barrier energy below.
+                for (int i = 0; i < N; ++i) xCcd2_[i] = xBackup_[i] + dx_[i];
+                const Real tc = barrierMaxStep(xBackup_, xCcd2_, bSwept_);
+                if (tc < 1) { step = tc; ++bstats_.ccdLimitedSteps; }
+            }
+            Real E0 = variationalEnergy(invH2, seamScale) + (barrier ? barrierEnergy(xBackup_, bSwept_) : 0);
             if (skin)
                 for (int i = 0; i < N; ++i)
                     if (skinK_[i] > 0 && skinPhi_[i] < 0) E0 += 0.5 * skinK_[i] * skinPhi_[i] * skinPhi_[i];
-            xBackup_ = x_;
-            Real step = 1.0;
             bool accepted = false;
-            for (int ls = 0; ls < 10; ++ls) {
+            for (int ls = 0; ls < (barrier ? 30 : 10); ++ls) {
                 Real Eskin = 0;
+                bool projected = false;
                 for (int i = 0; i < N; ++i) {
                     x_[i] = xBackup_[i] + dx_[i] * step;
                     if (collider_ && w_[i] != 0) {  // projected line search: evaluate the energy on the feasible side of the body
@@ -443,11 +493,16 @@ void ClothSolver::stepImplicit() {
                         Real phi = collider_->eval(x_[i], nrm) - radius_[i];
                         const Real lim = (skin && skinK_[i] > 0) ? p_.skinMaxDepth : Real(0);
                         const Real phiR = phi + lim;
-                        if (phiR < 0) { x_[i] -= nrm * phiR; phi = -lim; }
+                        if (phiR < 0) { x_[i] -= nrm * phiR; phi = -lim; projected = true; }
                         if (lim > 0 && phi < 0) Eskin += 0.5 * skinK_[i] * phi * phi;
                     }
                 }
-                const Real E1 = variationalEnergy(invH2, seamScale) + Eskin;
+                if (barrier && projected) {
+                    // the projection bends the straight path: check the actual motion xBackup -> trial again
+                    std::vector<ContactPair> sw;
+                    if (barrierMaxStep(xBackup_, x_, sw) < 1) { ++bstats_.trialRejects; step *= 0.5; continue; }
+                }
+                const Real E1 = variationalEnergy(invH2, seamScale) + Eskin + (barrier ? barrierEnergy(x_, bSwept_) : 0);
                 if (std::isfinite(E1) && E1 <= E0) { accepted = true; break; }
                 step *= 0.5;
             }
@@ -476,10 +531,24 @@ void ClothSolver::stepImplicit() {
         ++substepsDone_;
         if (std::getenv("FL_NEWTON")) std::fprintf(stderr, "[newton frame %d] iters=%d lastMaxDx=%.2e\n", frame_, nUsed, lastDx);
 
-        solveBody();
-        if (p_.selfCollision) {
-            solveSelfCollision();
+        if (barrier) {
+            // body friction / push-out after the solve, cut short where it would carry a primitive through another;
+            // no vertex-triangle projection (the barrier replaces it)
+            xLift_ = x_;
             solveBody();
+            std::vector<Vec3> target = x_;
+            x_ = xLift_;
+            ccdMove(target);
+            Real dmin = 1e30;
+            barrier_.potential(x_, bCand_, kappa_, nullptr, &dmin);
+            bstats_.minDistance = std::min(bstats_.minDistance, dmin);
+            barrierAdapt(dmin);
+        } else {
+            solveBody();
+            if (p_.selfCollision) {
+                solveSelfCollision();
+                solveBody();
+            }
         }
         for (int i = 0; i < N; ++i) {
             if (w_[i] == 0) continue;
