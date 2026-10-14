@@ -441,6 +441,11 @@ itself: slip velocity 1e-3 m/s creeps (soft test 0.0146 mm/frame = that speed), 
 stiff (~1e4 N/m per vertex) that stick and slip alternate. Friction stays opt-in; a better friction model (e.g. an
 exact stick constraint with a slip release, or a time-filtered lambda) is the next step, not part of K2.
 
+### Final runs (branch opus/k2-multipliers, merged to main)
+C++: 13/13 test binaries pass (test_wedge now also asserts the contactAL run: 1.13e-7 J vs old solver 3.13e-5 J;
+test_friction asserts the multipliers carry the normal load). Godot headless 4.3, library rebuilt: 23/23 pass
+(contactAL is off by default, so the editor is unchanged).
+
 ### Not done
 - contactAL with the K1 skin or K5 barrier (refused: the flag is ignored there).
 - The static solve does not use the multipliers.
