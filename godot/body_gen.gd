@@ -1050,6 +1050,17 @@ static func stand(m: Dictionary, body: Dictionary) -> Dictionary:
 			break
 		var shoulder_y: float = float(p["joints"]["l-shoulder"][1])
 		abd = minf(ARM_MAX, abd + (ARM_GAP - float(g["d"])) / maxf(0.15, shoulder_y - float(g["y"])))
+	return _stand_dict(m, body, p, secs, abd)
+
+
+# The standing body with the arms raised sideways to `abd` (radians): the dressing pose (an A-pose, as in CLO or
+# Marvelous Designer). Same fields as stand(); armAbduct is `abd`.
+static func stand_at(m: Dictionary, body: Dictionary, abd: float) -> Dictionary:
+	var p := pose(m, body, 0.0, {"stride": 0.0, "arms": 0.0, "armAbduct": abd})
+	return _stand_dict(m, body, p, sections(m, p["allPos"], 0.01), abd)
+
+
+static func _stand_dict(m: Dictionary, body: Dictionary, p: Dictionary, secs: Dictionary, abd: float) -> Dictionary:
 	var out := {}
 	for k in (body as Dictionary).keys():
 		out[k] = body[k]

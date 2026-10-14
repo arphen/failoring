@@ -69,6 +69,23 @@ tools; the diagnostic scripts are in `tools/dev/` (see "How to look at it").
 * Arm clearance in the gait (`ARM_GAP`, `armAbduct`; curvy 0.202, plus 0.333, others 0.14): arms stay 2 cm clear of the torso hulls
   below the armpit. Needed so the sleeves are not squeezed against the torso; not specific to the tee.
 
+## Done 2026-10-15: dressing in an A-pose (idea 3, Godot editor)
+
+`godot/editor.gd`: a garment with an `arm` wrap is built and sewn on the body with the arms raised sideways
+(`DRESS_ABDUCT` 0.55 rad; `BodyGen.stand_at`), held 26 frames (the seams close in 20), then the arms come down over 18
+frames to the standing pose (the collider is rebaked each of those frames). `FL_DRESS=0` turns it off. Measured on
+the six presets at preview quality (upper-arm skin with cloth within 15 mm, both arms; frame dumps):
+
+| | standing, frame 59 | walking, frame 111 |
+| --- | --- | --- |
+| arms down (before) | 84.4 % | 87.1 % |
+| A-pose dressing | 88.7 % | 88.7 % |
+
+Seam gaps stay at 1-4 mm. By eye (6-preset montages): standing, petite and tall sleeves are attached where they were
+torn; walking, tall, curvy and plus are clean; petite and average still crumple one sleeve. The rest is ideas 1 and 2
+(the cap rows themselves). Also note: much of the "skin through the sleeve" seen in plain renders was cloth lying on the
+arm at ~1 mm (z-fighting); the editor now draws the body 2.5 mm inside its collision surface, which hides it.
+
 ## Ideas, in the order I would try them
 
 1. **Give the shoulder rows a hull that includes the shoulder.** For `fit` rows from the armpit up to the neck use the union of the

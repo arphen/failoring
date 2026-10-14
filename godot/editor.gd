@@ -181,6 +181,16 @@ var place_view = PlaceView.new()   # moving and turning panels in the 3D view (p
 var place_btn: Button
 var soft = SoftTissue.new()   # breasts, seat, belly, thighs, upper arms that bounce while walking; breath (soft_tissue.gd)
 var soft_gain := 1.0
+# Dressing pose (an A-pose, as CLO and Marvelous Designer users dress an avatar): a garment with sleeves is put on and
+# sewn with the arms raised sideways (DRESS_ABDUCT), then the arms come down to the standing pose before the walk. With
+# the arms down, the sleeve tube starts 8-14 cm from the armhole (docs/TEE_NOTES.md) and the seams pull the cap into the
+# armhole crumpled. FL_DRESS=0 turns it off, FL_DRESS=<radians> sets the angle.
+const DRESS_ABDUCT := 0.55
+const DRESS_HOLD := 26        # frames in the dressing pose (the seams close: ramp_frames is 20)
+const DRESS_LOWER := 18       # frames to lower the arms
+var body_dress = null         # BodyGen.stand_at(DRESS_ABDUCT) of the current body
+var _dress_abd := 0.0         # the abduction of the current sim's dressing pose (0: the sim starts standing)
+var _start_v3 := PackedVector3Array()   # the body the current sim starts on (dress or stand)
 
 var plan_opt: OptionButton
 var quality_opt: OptionButton
@@ -3204,6 +3214,8 @@ func regen_and_rebuild() -> void:
 	body_rest = BodyGen.generate(M, meas, prev_body)
 	prev_body = {"x": (body_rest as Dictionary)["x"], "keys": (body_rest as Dictionary)["keys"]}
 	body_stand = BodyGen.stand(M, body_rest)
+	var dress_abd := float(OS.get_environment("FL_DRESS")) if OS.has_environment("FL_DRESS") else DRESS_ABDUCT
+	body_dress = BodyGen.stand_at(M, body_rest, dress_abd) if dress_abd > float(body_stand["armAbduct"]) + 0.05 else null
 	soft.setup(M, meas, int(M["nb"]))
 	soft.gain = soft_gain
 	_store_active()
@@ -3304,14 +3316,24 @@ func rebuild() -> void:
 		status_label.text = ("No garment on the mannequin - add one from the Library tab" if body_stand != null else "starting") + _status_suffix()
 		return
 	_stand_v3 = _to_v3a(body_stand["pos"])
+	# garments with sleeves (an "arm" wrap) are dressed in the A-pose
+	var start_body = body_stand
+	_dress_abd = 0.0
+	if body_dress != null:
+		for p in _sim_pieces:
+			if String((p.get("wrap", {}) as Dictionary).get("mode", "")) == "arm":
+				start_body = body_dress
+				_dress_abd = float(body_dress["armAbduct"])
+				break
+	_start_v3 = _to_v3a(start_body["pos"])
 	var q: Dictionary = QUALITIES[_qual_key()]
 	if body_h_override > 0.0:  # debug and benchmark only (tests/bench_step.gd): another body grid spacing for this quality
 		q = q.duplicate()
 		q["body_h"] = body_h_override
 	# two or more garments need the solver's self collision: it is what keeps them apart (no seams join garments)
 	var collide := self_collision or bool(q.get("self", false)) or gs.size() > 1
-	var built: Dictionary = PlanLoader.build({"pieces": _sim_pieces, "seams": _sim_seams}, body_stand["sections"], body_stand["arms"],
-		_stand_v3, _tris(), fabric_id, q, seam_stiffness, ramp_frames, collide)
+	var built: Dictionary = PlanLoader.build({"pieces": _sim_pieces, "seams": _sim_seams}, start_body["sections"], start_body["arms"],
+		_start_v3, _tris(), fabric_id, q, seam_stiffness, ramp_frames, collide)
 	if built.is_empty():
 		status_label.text = "sim build failed"
 		return
@@ -3328,7 +3350,7 @@ func rebuild() -> void:
 	health_hot = []
 	wraps.clear()
 	for pid in built["order"]:
-		wraps[pid] = Wrap.new(Table.piece_by_id(_sim_pieces, pid), body_stand["sections"], body_stand["arms"])
+		wraps[pid] = Wrap.new(Table.piece_by_id(_sim_pieces, pid), start_body["sections"], start_body["arms"])
 	mesh_edges = sim.get_display_edges()  # display vertex n + e is the middle of pair e (two subdivision levels, C++)
 	_shade.setup(meta, mesh_edges, _sim_pieces, fabric_id, _stand_v3, _disp_idx)
 	_col_key = []  # colours depend on the new meta/mesh_edges
@@ -3445,6 +3467,19 @@ func _make_job() -> Dictionary:
 	_jobs_made += 1
 	frame = _jobs_made
 	var job := {"body": _stand_v3, "move": false}
+	if _dress_abd > 0.0:
+		# dressing pose, then the arms come down (an eased blend of the abduction), then the standing body once. The hold
+		# is shortened so the arms are down before a walk starts (Draft settles in 36 frames).
+		var hold := mini(DRESS_HOLD, settle - DRESS_LOWER - 2)
+		if frame <= hold:
+			job["body"] = _start_v3
+		elif frame <= hold + DRESS_LOWER:
+			var u := _smooth(float(frame - hold) / float(DRESS_LOWER))
+			var abd := lerpf(_dress_abd, float(body_stand["armAbduct"]), u)
+			job["body"] = _to_v3a(BodyGen.pose(M, body_rest, 0.0, {"stride": 0.0, "arms": 0.0, "armAbduct": abd})["pos"])
+			job["move"] = true
+		elif frame == hold + DRESS_LOWER + 1:
+			job["move"] = true
 	if motion == "walk" and frame > settle:
 		walk_k += 1.0
 		var stride: float = _smooth(minf(1.0, walk_k / RAMP))
@@ -3632,7 +3667,7 @@ func _show_stand_body() -> void:
 	if _body_key == "stand":
 		return
 	_body_key = "stand"
-	body_node.show_pose(_stand_v3)
+	body_node.show_pose(_start_v3 if not _start_v3.is_empty() else _stand_v3)  # the body the cloth starts on (A-pose when dressing)
 
 
 var cur_cloth := PackedVector3Array()

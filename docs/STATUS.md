@@ -162,6 +162,10 @@ Living mannequin (`godot/soft_tissue.gd`): breasts, seat, belly, thighs and uppe
 their own acceleration, weighted by the body's morph targets; a breath; stride and arm swing vary a little per cycle.
 Body tab: Alive > Soft tissue (0 = the old rigid body). Frequencies and damping are estimates (see the file).
 
+* Tee sleeves (2026-10-15, opus/tee-sleeve): garments with sleeves are dressed in an A-pose and the arms lowered before
+  the walk; upper-arm coverage 84 -> 89 % standing over the six presets (`docs/TEE_NOTES.md`). Petite and average still
+  crumple one sleeve while walking.
+
 ## Maintenance
 
 A scheduled task ("Failoring browser build upkeep", daily 06:47 Europe/Berlin) rebuilds `failoring.html`, runs the smoke
