@@ -223,6 +223,8 @@ static func cloth_base(hex: String) -> Color:
 
 # Smooth per-vertex normals (area-weighted), the fallback for the cloth mesh when the sim gives no display
 # normals (sim.get_display_normals is empty). Same weighting as the C++ version.
+# Angle-weighted smooth normals (each face weighted by the angle it subtends at the vertex), the same as the C++
+# FailoringSim.get_display_normals, which the editor uses when it can; this is the fallback.
 static func cloth_normals(verts: PackedVector3Array, idx: PackedInt32Array) -> PackedVector3Array:
 	var n := PackedVector3Array()
 	n.resize(verts.size())
@@ -230,10 +232,19 @@ static func cloth_normals(verts: PackedVector3Array, idx: PackedInt32Array) -> P
 		var a := idx[t]
 		var b := idx[t + 1]
 		var c := idx[t + 2]
-		var fn := (verts[b] - verts[a]).cross(verts[c] - verts[a])
-		n[a] += fn
-		n[b] += fn
-		n[c] += fn
+		var pa := verts[a]
+		var pb := verts[b]
+		var pc := verts[c]
+		var e1 := pb - pa
+		var e2 := pc - pa
+		var fn := e1.cross(e2)
+		var len := fn.length()
+		if len <= 1e-12:
+			continue
+		var u := fn / len
+		n[a] += u * e1.angle_to(e2)
+		n[b] += u * (pa - pb).angle_to(pc - pb)
+		n[c] += u * (pa - pc).angle_to(pb - pc)
 	for i in n.size():
 		n[i] = n[i].normalized()
 	return n

@@ -716,13 +716,20 @@ PackedVector3Array FailoringSim::get_display_normals(const PackedVector3Array& p
     const int64_t nd = static_cast<int64_t>(dispVertexCount_) + static_cast<int64_t>(dispEdges_.size() / 2);
     if (positions.size() != nd) return out;  // not the display mesh of this sim: the caller computes them another way
     const Vector3* p = positions.ptr();
+    // Smooth normals, each face weighted by the angle it subtends at the vertex, so long thin triangles do not pull the
+    // shading (as render/godot-editor's cloth_shade.gd did in GDScript; that weighting was lost when the normals moved
+    // here, which weighted by area).
     std::vector<Vector3> n(static_cast<size_t>(nd), Vector3());
     for (size_t t = 0; t + 2 < dispTris_.size(); t += 3) {
         const int a = dispTris_[t], b = dispTris_[t + 1], c = dispTris_[t + 2];
-        const Vector3 fn = (p[b] - p[a]).cross(p[c] - p[a]);
-        n[static_cast<size_t>(a)] += fn;
-        n[static_cast<size_t>(b)] += fn;
-        n[static_cast<size_t>(c)] += fn;
+        const Vector3 e1 = p[b] - p[a], e2 = p[c] - p[a];
+        const Vector3 fn = e1.cross(e2);
+        const real_t len = fn.length();
+        if (len <= 1e-12) continue;
+        const Vector3 u = fn / len;
+        n[static_cast<size_t>(a)] += u * e1.angle_to(e2);
+        n[static_cast<size_t>(b)] += u * (p[a] - p[b]).angle_to(p[c] - p[b]);
+        n[static_cast<size_t>(c)] += u * (p[a] - p[c]).angle_to(p[b] - p[c]);
     }
     out.resize(nd);
     Vector3* o = out.ptrw();
