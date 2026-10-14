@@ -290,6 +290,11 @@ static func make_theme() -> Theme:
 	t.default_font = f
 	t.default_font_size = UI_FONT_SIZE
 
+	# pane splits (editor layout): a wider gap that is easy to grab
+	for ty in ["SplitContainer", "HSplitContainer", "VSplitContainer"]:
+		t.set_constant("separation", ty, 8)
+		t.set_constant("minimum_grab_thickness", ty, 10)
+
 	# Label and text
 	t.set_color("font_color", "Label", UI_INK)
 	t.set_color("font_color", "RichTextLabel", UI_INK)

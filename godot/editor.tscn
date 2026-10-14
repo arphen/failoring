@@ -15,52 +15,83 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 theme_override_constants/separation = 0
 
-[node name="Main" type="HBoxContainer" parent="UI/Root"]
+[node name="LayoutBar" type="HBoxContainer" parent="UI/Root"]
+unique_name_in_owner = true
+theme_override_constants/separation = 4
+
+[node name="Main" type="HSplitContainer" parent="UI/Root"]
+unique_name_in_owner = true
 size_flags_vertical = 3
-theme_override_constants/separation = 0
 
 [node name="Left" type="TabContainer" parent="UI/Root/Main"]
-custom_minimum_size = Vector2(264, 0)
+unique_name_in_owner = true
+custom_minimum_size = Vector2(200, 0)
 
 [node name="Library" type="VBoxContainer" parent="UI/Root/Main/Left"]
+unique_name_in_owner = true
 script = ExtResource("3")
 
 [node name="Controls" type="ScrollContainer" parent="UI/Root/Main/Left"]
 horizontal_scroll_mode = 0
 
 [node name="VBox" type="VBoxContainer" parent="UI/Root/Main/Left/Controls"]
+unique_name_in_owner = true
 size_flags_horizontal = 3
 theme_override_constants/separation = 4
 
-[node name="TablePane" type="VBoxContainer" parent="UI/Root/Main"]
+[node name="Rest" type="HSplitContainer" parent="UI/Root/Main"]
+unique_name_in_owner = true
 size_flags_horizontal = 3
+
+[node name="Work" type="SplitContainer" parent="UI/Root/Main/Rest"]
+unique_name_in_owner = true
+size_flags_horizontal = 3
+
+[node name="TablePane" type="VBoxContainer" parent="UI/Root/Main/Rest/Work"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(160, 120)
+size_flags_horizontal = 3
+size_flags_vertical = 3
 theme_override_constants/separation = 0
 
-[node name="TableBar" type="HBoxContainer" parent="UI/Root/Main/TablePane"]
-theme_override_constants/separation = 6
+[node name="TableBar" type="HFlowContainer" parent="UI/Root/Main/Rest/Work/TablePane"]
+unique_name_in_owner = true
+theme_override_constants/h_separation = 6
+theme_override_constants/v_separation = 4
 
-[node name="Table" type="Control" parent="UI/Root/Main/TablePane"]
+[node name="Table" type="Control" parent="UI/Root/Main/Rest/Work/TablePane"]
+unique_name_in_owner = true
+clip_contents = true
 size_flags_vertical = 3
 size_flags_horizontal = 3
 focus_mode = 2
 script = ExtResource("2")
 
-[node name="ViewPane" type="Control" parent="UI/Root/Main"]
-custom_minimum_size = Vector2(240, 0)
+[node name="ViewPane" type="Control" parent="UI/Root/Main/Rest/Work"]
+unique_name_in_owner = true
+clip_contents = true
+custom_minimum_size = Vector2(160, 120)
 size_flags_horizontal = 3
+size_flags_vertical = 3
 
-[node name="View" type="SubViewport" parent="UI/Root/Main/ViewPane"]
+[node name="View" type="SubViewport" parent="UI/Root/Main/Rest/Work/ViewPane"]
+unique_name_in_owner = true
 own_world_3d = true
 size = Vector2i(800, 600)
 
-[node name="Stage" type="Node3D" parent="UI/Root/Main/ViewPane/View"]
+[node name="Stage" type="Node3D" parent="UI/Root/Main/Rest/Work/ViewPane/View"]
+unique_name_in_owner = true
 
-[node name="Right" type="PanelContainer" parent="UI/Root/Main"]
-custom_minimum_size = Vector2(344, 0)
+[node name="Right" type="PanelContainer" parent="UI/Root/Main/Rest"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(280, 0)
 
-[node name="Tabs" type="TabContainer" parent="UI/Root/Main/Right"]
+[node name="Tabs" type="TabContainer" parent="UI/Root/Main/Rest/Right"]
+unique_name_in_owner = true
 tab_alignment = 1
+clip_tabs = true
 
 [node name="TimelineBar" type="HBoxContainer" parent="UI/Root"]
-custom_minimum_size = Vector2(0, 72)
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 40)
 theme_override_constants/separation = 8

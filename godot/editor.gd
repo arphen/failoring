@@ -22,6 +22,7 @@ const CutSelection = preload("res://selection.gd")
 const Shapes = preload("res://shapes.gd")
 const Geom = preload("res://cut_geom.gd")
 const Seams = preload("res://seams.gd")
+const Layout = preload("res://layout.gd")
 
 # body_h: spacing (m) of the body's signed-distance grid, baked for every walking frame. 7 mm is the reference (the
 # numbers in docs/PERF_NOTES.md are measured with it). Draft and Preview use 10 mm: the bake takes about 1.8x less CPU,
@@ -171,24 +172,25 @@ var _scale_key := ""          # window size + screen the scale was last computed
 var scale_opt: OptionButton
 var view_pane: Control
 var view_image: TextureRect
+var layout = Layout.new()   # pane splits, toggles and their saved state (layout.gd)
 
 var plan_opt: OptionButton
 var quality_opt: OptionButton
 var motion_opt: OptionButton
 var status_label: Label
 var _fold_open := true      # Piece tab "Edges" section, kept across tab rebuilds
-@onready var tabs: TabContainer = $UI/Root/Main/Right/Tabs
-@onready var library_panel = $UI/Root/Main/Left/Library  # library_panel.gd (untyped: calls its own methods)
+@onready var tabs: TabContainer = %Tabs
+@onready var library_panel = %Library  # library_panel.gd (untyped: calls its own methods)
 
 
 func _ready() -> void:
-	table = $UI/Root/Main/TablePane/Table
+	table = %Table
 	table.ed = self
 	history = History.new()
 	selection.changed.connect(func() -> void: table_dirty = true)  # picks and hover redraw the table (and the 3D view later)
 	selection.hover_changed.connect(table._on_selection_hover)
-	stage = $UI/Root/Main/ViewPane/View/Stage
-	sub_view = $UI/Root/Main/ViewPane/View
+	stage = %Stage
+	sub_view = %View
 	_load_settings()
 	_apply_ui_scale()
 	Look.apply_ui($UI/Root, sub_view)
@@ -199,6 +201,7 @@ func _ready() -> void:
 	_apply_auto_env()
 	_build_ui()
 	_build_table_bar()
+	layout.setup($UI/Root, %LayoutBar, func() -> void: table_dirty = true; table.queue_redraw())
 	_bind_view_input()
 	_show_view_texture()
 	if OS.has_environment("FL_STAND"):
@@ -430,7 +433,7 @@ func _build_scene() -> void:
 
 # ------------------------------------------------------------------ UI
 func _build_ui() -> void:
-	var box: VBoxContainer = $UI/Root/Main/Left/Controls/VBox
+	var box: VBoxContainer = %VBox
 	for c in box.get_children():
 		c.queue_free()
 	_add_opt(box, "Plan", "PlanOpt", _plan_entries().map(func(e: Array) -> String: return e[0]), _plan_title(plan_key))
@@ -2748,7 +2751,7 @@ func _exit_tree() -> void:
 
 
 func _build_table_bar() -> void:
-	var bar: HBoxContainer = $UI/Root/Main/TablePane/TableBar
+	var bar: HFlowContainer = %TableBar
 	var sel_btn := Button.new()
 	sel_btn.text = "Select"
 	sel_btn.pressed.connect(func() -> void: table.set_tool("select"))
@@ -2771,6 +2774,32 @@ func _build_table_bar() -> void:
 	fit_btn.text = "Fit"
 	fit_btn.pressed.connect(func() -> void: table.fit())
 	bar.add_child(fit_btn)
+	# View menu: what the table draws on top of the pieces (see table.gd seam_links, show_lengths)
+	var view_btn := MenuButton.new()
+	view_btn.name = "TableViewBtn"
+	view_btn.text = "View"
+	view_btn.tooltip_text = "What the cutting table shows: edge lengths and seam links"
+	var vm := view_btn.get_popup()
+	vm.hide_on_checkable_item_selection = false
+	vm.add_check_item("Edge lengths", 0)
+	vm.add_separator("Seam links")
+	vm.add_radio_check_item("Piece under the pointer", 1)
+	vm.add_radio_check_item("All seams", 2)
+	vm.add_radio_check_item("Picked seams only", 3)
+	var sync_view_menu := func() -> void:
+		vm.set_item_checked(vm.get_item_index(0), table.show_lengths)
+		for pair in [[1, "hover"], [2, "all"], [3, "off"]]:
+			vm.set_item_checked(vm.get_item_index(pair[0]), table.seam_links == pair[1])
+	sync_view_menu.call()
+	vm.id_pressed.connect(func(id: int) -> void:
+		if id == 0:
+			table.show_lengths = not table.show_lengths
+		else:
+			table.seam_links = ["", "hover", "all", "off"][id]
+		sync_view_menu.call()
+		table_dirty = true
+		table.queue_redraw())
+	bar.add_child(view_btn)
 	var shape_btn := MenuButton.new()
 	shape_btn.name = "AddShapeBtn"
 	shape_btn.text = "Add shape"
@@ -2806,7 +2835,7 @@ func _build_table_bar() -> void:
 	hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART  # sew lengths and the warning need the full line
 	hint.add_theme_font_size_override("font_size", 12)
-	($UI/Root/Main/TablePane as VBoxContainer).add_child(hint)
+	(%TablePane as VBoxContainer).add_child(hint)
 	table.hint_label = hint
 	table.set_tool("select")
 
@@ -3784,7 +3813,7 @@ func _set_lines(node: MeshInstance3D, arr: PackedVector3Array, col: PackedColorA
 
 
 func _build_timeline_bar() -> void:
-	var bar: HBoxContainer = $UI/Root/TimelineBar
+	var bar: HBoxContainer = %TimelineBar
 	var start := Button.new()
 	start.text = "|<"
 	start.tooltip_text = "Back to the start"
@@ -3824,6 +3853,8 @@ func _build_timeline_bar() -> void:
 	tl_range.max_value = 4000.0
 	tl_range.step = 1.0
 	tl_range.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tl_range.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	tl_range.custom_minimum_size = Vector2(120, 0)
 	tl_range.value_changed.connect(func(v: float) -> void: _drain(); tl_t = v / 1000.0; playing = false; _sync_tl_ui(); _show_current())
 	bar.add_child(tl_range)
 	tl_stage_label = Label.new()
@@ -3941,7 +3972,7 @@ func _update_camera() -> void:
 # Trackpad: two-finger scroll pans, pinch zooms. Events come from the viewport container only (gui_input), so a drag
 # that starts in the viewport keeps going, and nothing over the side panels reaches the camera.
 func _bind_view_input() -> void:
-	view_pane = $UI/Root/Main/ViewPane as Control
+	view_pane = %ViewPane as Control
 	view_pane.mouse_filter = Control.MOUSE_FILTER_STOP
 	view_pane.gui_input.connect(_on_view_gui_input)
 
@@ -3967,7 +3998,7 @@ func _on_view_gui_input(e: InputEvent) -> void:
 # Tracks where the pointer is from every mouse event (before GUI routing), for the keyboard shortcuts.
 func _input(e: InputEvent) -> void:
 	if e is InputEventMouse and view_pane != null:
-		pointer_over_view = view_pane.get_global_rect().has_point(e.position)
+		pointer_over_view = view_pane.is_visible_in_tree() and view_pane.get_global_rect().has_point(e.position)
 
 
 func _unhandled_key_input(e: InputEvent) -> void:
@@ -3980,7 +4011,8 @@ func _unhandled_key_input(e: InputEvent) -> void:
 			KEY_0, KEY_KP_0:
 				_set_ui_scale_pref(0.0)
 			_:
-				return
+				if e.shift_pressed or e.alt_pressed or not layout.handle_key(e):
+					return
 		get_viewport().set_input_as_handled()
 		return
 	if not pointer_over_view or not (e is InputEventKey) or not e.pressed or e.echo:

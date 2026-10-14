@@ -22,6 +22,13 @@ var _fit_pending := false   # fit() is deferred to the next draw, once the contr
 var _sew_note := ""         # what the last sew said (lengths, warning), shown in the hint line until the next click
 var measure_pts: Array = []  # Measure tool: the first point (and the second once clicked), world metres
 var _pointer := Vector2.ZERO  # the last pointer position in world metres (the measure line follows it)
+# View options (the table bar's View menu). Seam links are the thin lines joining the two sewn edges of a seam: a pattern
+# with many short sewn edges (a FreeSewing curve is dozens of 3 cm edges, each its own seam) draws dozens of crossing
+# lines, so by default only the links of the piece under the pointer and the picked seams are drawn; the sewn part of
+# every edge is always marked in its seam's colour. Edge lengths are drawn only where the label fits beside its edge.
+var seam_links := "hover"     # "hover", "all" or "off" (off: picked seams only)
+var show_lengths := true
+var _link_pid := ""            # the last piece the pointer was over: its links stay drawn while the pointer leaves it
 
 
 # The hovered edge as {"p": piece id, "e": edge index} while the sew tool is on, or null. Hover and picks live in the
@@ -34,6 +41,8 @@ func _hover_edge():
 
 
 func _on_selection_hover() -> void:
+	if ed != null and _hover_pid() != "":
+		_link_pid = _hover_pid()
 	if ed != null and ed.tool == "sew":
 		update_hint()
 	queue_redraw()
@@ -246,7 +255,7 @@ func _ensure_geo() -> void:
 			var el := a2.distance_to(b2)
 			var d := (b2 - a2) / el if el > 0.0 else Vector2.ZERO
 			var txt := "%d: %.1f cm" % [k + 1, el * 100.0]
-			edges.append({"mid": (a2 + b2) * 0.5, "n": Vector2(d.y, d.x), "txt": txt,
+			edges.append({"mid": (a2 + b2) * 0.5, "n": Vector2(d.y, d.x), "txt": txt, "len": el,
 				"tw": fnt.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, LABEL_FS).x})
 		var pid := String(p["id"])
 		var pname := String(p.get("name", p["id"]))
@@ -506,6 +515,56 @@ static func _in_any_hole(p: Dictionary, x: float, y: float) -> bool:
 	return false
 
 
+# The id of the piece under the pointer (or of the hovered edge's piece in sew mode), or "".
+func _hover_pid() -> String:
+	var hk: String = ed.selection.hover_kind()
+	var hid = ed.selection.hover_id()
+	if hk == "piece" and hid != null:
+		return String(hid)
+	if hk == "edge" and hid is Array and (hid as Array).size() > 0:
+		return String(hid[0])
+	return ""
+
+
+# Whether seam k's link line is drawn (and can be clicked): see seam_links.
+func link_shown(k: int) -> bool:
+	if ed.selection.contains("seam", k) or seam_links == "all":
+		return true
+	if seam_links == "off":
+		return false
+	var hp := _hover_pid()
+	if hp == "":
+		hp = _link_pid  # sticky, so a link can be followed off its piece and clicked
+	if hp == "":
+		return false
+	var sg: Dictionary = _geo_seams[k]
+	for key in ["ai", "bi"]:
+		var pi := int(sg[key])
+		if pi >= 0 and pi < ed.pieces.size() and String(ed.pieces[pi]["id"]) == hp:
+			return true
+	return false
+
+
+# The sewn part of one side of seam k, as a screen polyline along its edge ([] when the piece is missing).
+func _seam_mark(k: int, side_name: String) -> PackedVector2Array:
+	var s: Dictionary = ed.seams[k]
+	var sg: Dictionary = _geo_seams[k]
+	var pi := int(sg["ai"]) if side_name == "a" else int(sg["bi"])
+	if pi < 0:
+		return PackedVector2Array()
+	var pts: PackedVector2Array = _geo_pieces[pi]["pts"]
+	var n := pts.size()
+	if n == 0:
+		return PackedVector2Array()
+	var side: Array = s[side_name]
+	var e := ((int(side[1]) % n) + n) % n
+	var r := Seams.side_range(side)
+	var off := _off(ed.pieces[pi])
+	var a := pts[e].lerp(pts[(e + 1) % n], r.x)
+	var b := pts[e].lerp(pts[(e + 1) % n], r.y)
+	return PackedVector2Array([to_screen(a.x + off.x, a.y + off.y), to_screen(b.x + off.x, b.y + off.y)])
+
+
 # index into ed.seams of the seam drawn nearest the point (within 7 px), or -1
 func hit_seam(sx: float, sy: float) -> int:
 	_ensure_geo()
@@ -513,6 +572,8 @@ func hit_seam(sx: float, sy: float) -> int:
 	var best := -1
 	var bd := 7.0
 	for k in _geo_seams.size():
+		if not link_shown(k):
+			continue
 		var seg: Array = _seam_ends(k)
 		if seg.is_empty():
 			continue
@@ -1367,9 +1428,18 @@ func _draw() -> void:
 				var hp := pts[vi]
 				draw_rect(Rect2(hp - Vector2(5, 5), Vector2(10, 10)), Color("#ff9d4d") if ed.sel_v == vi else Color("#14171c"), true)
 				draw_rect(Rect2(hp - Vector2(5, 5), Vector2(10, 10)), Color("#ff9d4d"), false, 2.0)
-	# seams: one thin semi-transparent line between the two edge midpoints, a dot at each end.
-	# Only the picked seam is drawn heavier.
+	# seams: the sewn part of each edge in the seam's colour; then, for the seams whose link is shown (see seam_links),
+	# one thin semi-transparent line between the two edge midpoints, a dot at each end. The picked seam is heavier.
 	for k in _geo_seams.size():
+		var sg0: Dictionary = _geo_seams[k]
+		var pk: bool = ed.selection.contains("seam", k)
+		for side_name in ["a", "b"]:
+			var mk := _seam_mark(k, side_name)
+			if mk.size() == 2:
+				draw_line(mk[0], mk[1], Color(sg0["col"], 0.95 if pk else 0.8), 4.0 if pk else 3.0)
+	for k in _geo_seams.size():
+		if not link_shown(k):
+			continue
 		var seg := _seam_ends(k)
 		if seg.is_empty():
 			continue
@@ -1427,15 +1497,23 @@ func _draw() -> void:
 			var brect := Rect2(Vector2(sc.x - bw * 0.5, sc.y + lh * 0.5 + 2.0), Vector2(bw, lh))
 			if view.intersects(brect) and _claim(taken, brect):
 				draw_string(font, Vector2(brect.position.x, brect.position.y + asc), String(why), HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color("#ffd0d0"))
-	# edge length labels: selected piece, sew mode, or zoomed in
+	# edge length labels: selected piece, sew mode, or zoomed in; each only where its edge is at least about as long on
+	# screen as its label (short edges of a curve would bury the pieces in numbers). The hovered edge always gets one.
+	var hov_edge = ed.selection.hover_id() if ed.selection.hover_kind() == "edge" else null
 	for i in ed.pieces.size():
+		if not show_lengths:
+			break
 		var p: Dictionary = ed.pieces[i]
 		var is_sel: bool = ed.sel == String(p["id"])
 		if not (is_sel or ed.tool == "sew" or cam_z > 200.0):
 			continue
 		var g: Dictionary = _geo_pieces[i]
 		var off := _off(p)
-		for e in g["edges"]:
+		for ei in (g["edges"] as Array).size():
+			var e: Dictionary = g["edges"][ei]
+			var hovered: bool = hov_edge is Array and String(hov_edge[0]) == String(p["id"]) and int(hov_edge[1]) == ei
+			if not hovered and float(e["len"]) * cam_z < float(e["tw"]) * 0.8:
+				continue
 			var m: Vector2 = e["mid"]
 			var n: Vector2 = e["n"]
 			var pp := to_screen(m.x + off.x, m.y + off.y) + n * 15.0
