@@ -364,6 +364,13 @@ int ClothSolver::solveCholPcg(Real h2inv, const std::vector<Vec3>& rhs, std::vec
     return it;
 }
 
+Real ClothSolver::stepKE(Real h) const {
+    Real e = 0;
+    for (size_t i = 0; i < x_.size(); ++i)
+        if (w_[i] != 0) e += 0.5 * mass_[i] * length2(x_[i] - xPrev_[i]) / (h * h);
+    return e;
+}
+
 void ClothSolver::stepImplicit() {
     const int S = std::max(1, p_.substeps);
     const Real h = p_.dt / S;
@@ -385,6 +392,9 @@ void ClothSolver::stepImplicit() {
         return t;
     };
 
+    const bool diag = p_.contactDiagnostics;
+    if (diag && prevSubActive_.size() != static_cast<size_t>(N)) { prevSubActive_.assign(N, 0); prevActive_.assign(N, 0); }
+
     for (int s = 0; s < S; ++s) {
         if (skin) updateSkinAreas();
         for (int i = 0; i < N; ++i) {
@@ -402,6 +412,7 @@ void ClothSolver::stepImplicit() {
         Real prevMaxDx = 1e30;
         int nUsed = 0;
         Real lastDx = 0;
+        bool converged = false, lsFailed = false;
         for (int n = 0; n < std::max(1, p_.newtonIterations); ++n) {
             nUsed = n + 1;
             // Contact inside the solve: lift penetrating vertices onto the body surface first ...
@@ -420,6 +431,7 @@ void ClothSolver::stepImplicit() {
                 }
                 Real phiR = phi + lim;
                 if (phiR < 0) {
+                    if (diag) { ++cdiag_.lifts; cdiag_.liftDist += -phiR; if (n > 0) ++cdiag_.liftsAfterFirstIter; }
                     if (barrier) { xLift_[i] = x_[i] - nrm * phiR; lifted = true; }  // K5: lift is CCD-capped later
                     else x_[i] -= nrm * phiR;
                     phiR = 0; phi = -lim;
@@ -455,6 +467,11 @@ void ClothSolver::stepImplicit() {
                 filt_[i] = P;
                 rigidForce_[i] = contactActive_[i] ? -dot(rhs_[i], contactN_[i]) : 0.0;
             }
+            if (diag) {
+                if (n > 0)
+                    for (int i = 0; i < N; ++i) cdiag_.flipsIter += contactActive_[i] != prevActive_[i];
+                prevActive_.assign(contactActive_.begin(), contactActive_.end());
+            }
             {
                 int used = -1;
                 if (p_.linearSolver == LinearSolver::CholeskyPCG) used = solveCholPcg(invH2, rhs_, dx_);
@@ -466,7 +483,7 @@ void ClothSolver::stepImplicit() {
                 Real maxStep = 0;
                 for (int i = 0; i < N; ++i) maxStep = std::max(maxStep, length(dx_[i]));
                 lastDx = maxStep;
-                if (maxStep < p_.newtonTolerance) break;
+                if (maxStep < p_.newtonTolerance) { converged = true; break; }
             }
             // backtracking line search on the variational energy (keeps Newton from overshooting)
             xBackup_ = x_;
@@ -518,11 +535,26 @@ void ClothSolver::stepImplicit() {
                 }
                 x_ = xBackup_;
                 ++lineSearchFailures_;
+                lsFailed = true;
                 break;
             }
             Real maxDx = 0;
             for (int i = 0; i < N; ++i) maxDx = std::max(maxDx, length(x_[i] - xBackup_[i]));
-            if (maxDx < p_.newtonTolerance) break;
+            if (diag && dxTraceFrame_ == frame_) {
+                int act = 0, lifts = 0, flips = 0, argmax = 0;
+                Real best = -1;
+                for (int i = 0; i < N; ++i) {
+                    act += contactActive_[i];
+                    lifts += contactPhi_[i] == 0;
+                    const Real d = length(x_[i] - xBackup_[i]);
+                    if (d > best) { best = d; argmax = i; }
+                }
+                (void)flips;
+                std::fprintf(stderr, "[trace f%d s%d n%2d] newton dx %.3e  step %.4f  moved %.3e  held %d  on-surface %d  argmax v%d held=%d phi=%.2e\n",
+                             frame_, s, n, lastDx, step, maxDx, act, lifts, argmax, contactActive_[argmax], contactPhi_[argmax]);
+            }
+            lastDx = maxDx;
+            if (maxDx < p_.newtonTolerance) { converged = true; break; }
             if (step < 1.0 || maxDx > 0.5 * prevMaxDx) needFactor = true;  // chord stalled: refresh the Hessian
             prevMaxDx = maxDx;
         }
@@ -530,6 +562,24 @@ void ClothSolver::stepImplicit() {
         newtonIterations_ += nUsed;
         ++substepsDone_;
         if (std::getenv("FL_NEWTON")) std::fprintf(stderr, "[newton frame %d] iters=%d lastMaxDx=%.2e\n", frame_, nUsed, lastDx);
+        if (diag) {
+            ++cdiag_.substeps;
+            cdiag_.newtonIters += nUsed;
+            if (lsFailed) ++cdiag_.lsFail;
+            else if (!converged) { ++cdiag_.iterCapHits; cdiag_.sumDxAtCap += lastDx; }
+            int act = 0;
+            for (int i = 0; i < N; ++i) {
+                if (contactActive_[i]) { ++act; if (contactPhi_[i] > 0) ++cdiag_.activeBandOnly; }
+                cdiag_.flipsSubstep += contactActive_[i] != prevSubActive_[i];
+            }
+            prevSubActive_.assign(contactActive_.begin(), contactActive_.end());
+            cdiag_.activeSum += act;
+            cdiag_.lastActive = act;
+            cdiag_.lastIters = nUsed;
+            cdiag_.lastMaxDx = lastDx;
+            cdiag_.lastKeNewton = stepKE(h);
+            cdiag_.keNewton += cdiag_.lastKeNewton;
+        }
 
         if (barrier) {
             // body friction / push-out after the solve, cut short where it would carry a primitive through another;
@@ -545,10 +595,12 @@ void ClothSolver::stepImplicit() {
             barrierAdapt(dmin);
         } else {
             solveBody();
+            if (diag) { cdiag_.lastKeBody = stepKE(h); cdiag_.keBody += cdiag_.lastKeBody; }
             if (p_.selfCollision) {
                 solveSelfCollision();
                 solveBody();
             }
+            if (diag) { cdiag_.lastKeSelf = stepKE(h); cdiag_.keSelf += cdiag_.lastKeSelf; }
         }
         for (int i = 0; i < N; ++i) {
             if (w_[i] == 0) continue;

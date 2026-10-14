@@ -90,6 +90,33 @@ struct SolverParams {
     // Requires an intersection-free start. Off by default: existing behaviour is unchanged.
     bool barrierContact = false;
     contact::BarrierParams barrier;  // d_hat (gap), stiffness, CCD settings; see barrier_contact.hpp
+
+    // K2 (docs/handoff/OPUS_SESSION_1.md): contact diagnostics and experiment switches. Defaults = old behaviour.
+    bool contactDiagnostics = false;  // fill ClothSolver::contactDiag() (costs a few extra passes per substep)
+    // Body friction: 0 = old (position correction after the solve, budget mu * penetration left after the solve),
+    // 1 = none (diagnostic).
+    int bodyFrictionMode = 0;
+    bool bodyPushAfterSolve = true;   // false (diagnostic): skip the push-out after the solve (in-Newton hold only)
+};
+
+// Per-substep contact diagnostics (filled only with SolverParams::contactDiagnostics). Sums over all substeps since
+// the start; the `last*` fields describe the most recent substep.
+struct ContactDiag {
+    long long substeps = 0, newtonIters = 0, iterCapHits = 0;  // cap hit = the substep used every allowed iteration without converging
+    double sumDxAtCap = 0;          // sum of the last Newton update size (m) over cap hits
+    long long activeSum = 0;        // held vertices in the last Newton iteration, summed over substeps
+    long long activeBandOnly = 0;   // ... of which phi > 0 (held inside the band, not touching)
+    long long flipsIter = 0;        // held/free changes between consecutive Newton iterations of one substep
+    long long flipsSubstep = 0;     // changes of the final held set from one substep to the next
+    long long lifts = 0;            // vertices projected out of the body at the start of a Newton iteration
+    double liftDist = 0;            // total projection distance (m)
+    long long liftsAfterFirstIter = 0;  // lifts in iterations 2.. (the Newton step itself went into the body)
+    long long lsFail = 0;
+    long long pushAfter = 0, frictionAfter = 0;  // vertices moved by the post-solve push-out / friction
+    double keNewton = 0, keBody = 0, keSelf = 0;  // KE of (x - xPrev)/h after Newton, after solveBody, after self collision (sums)
+    double lastKeNewton = 0, lastKeBody = 0, lastKeSelf = 0;
+    int lastActive = 0, lastIters = 0;
+    double lastMaxDx = 0;
 };
 
 struct SeamSpec {
@@ -276,6 +303,13 @@ private:
     void assembleSkin();
     long long newtonIterations_ = 0;  // Newton iterations used, summed over all substeps
     long long substepsDone_ = 0;
+    ContactDiag cdiag_;
+    int dxTraceFrame_ = -1;  // diagnostics: print every Newton iteration of this frame to stderr
+public:
+    void setNewtonTraceFrame(int f) { dxTraceFrame_ = f; }
+private:
+    std::vector<char> prevActive_, prevSubActive_;
+    Real stepKE(Real h) const;  // KE of (x_ - xPrev_)/h
 
 public:
     int lastCgIterations() const { return lastCgIterations_; }
@@ -304,6 +338,8 @@ public:
     // Numeric Cholesky factorisations and symbolic re-analyses (pattern rebuilds after start-up) so far.
     long long factorizations() const { return factorizations_; }
     long long patternRebuilds() const { return patternRebuilds_; }
+    // Contact diagnostics (SolverParams::contactDiagnostics).
+    const ContactDiag& contactDiag() const { return cdiag_; }
     // Barrier contact diagnostics (barrierContact mode).
     const contact::BarrierStats& barrierStats() const { return bstats_; }
     Real barrierKappa() const { return kappa_; }

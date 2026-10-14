@@ -399,7 +399,10 @@ void ClothSolver::solveBody() {
     const bool movingCollider = static_cast<int>(colliderDisp_.size()) == N;
     const bool skin = skinOn();  // K1 compliant skin: the rigid stop sits skinMaxDepth below the soft layer surface
     const Real invS = Real(1) / std::max(1, p_.substeps);
+    const bool diag = p_.contactDiagnostics;
     auto friction = [&](int i, const Vec3& n, Real pen) {
+        if (p_.bodyFrictionMode == 1) return;  // diagnostic: no body friction
+        if (diag) ++cdiag_.frictionAfter;
         Vec3 disp = x_[i] - xPrev_[i];
         if (movingCollider) disp = disp - colliderDisp_[i] * invS;   // motion relative to the surface
         const Vec3 tang = disp - n * dot(disp, n);
@@ -419,7 +422,7 @@ void ClothSolver::solveBody() {
             phi = phiRaw + p_.skinMaxDepth;
         }
         if (phi >= 0) continue;
-        x_[i] -= n * phi;  // push out to the surface
+        if (p_.bodyPushAfterSolve) { x_[i] -= n * phi; if (diag) ++cdiag_.pushAfter; }  // push out to the surface
         friction(i, n, -phiRaw);
     }
 }
