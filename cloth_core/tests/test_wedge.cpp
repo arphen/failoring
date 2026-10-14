@@ -39,7 +39,7 @@ struct Summary {
     long long lsTail = 0, lsTotal = 0, capTail = 0, itersTail = 0, subTail = 0;
     double activeTail = 0, flipsIterTail = 0, flipsSubTail = 0, liftsTail = 0, liftsLateTail = 0, liftDistTail = 0;
     double keNewtonTail = 0, keBodyTail = 0, keSelfTail = 0;  // mean per substep, last 60 frames
-    Real minClr = 1e30, maxStretch = 0, finalStretch = 0, hem = 0, gap = 0;
+    Real minClr = 1e30, maxStretch = 0, finalStretch = 0, hem = 0, gap = 0, alMaxPen = 0;
     bool finite = true;
 };
 
@@ -67,6 +67,9 @@ void applyOverrides(SolverParams& sp, const std::string& ov) {
         else if (k == "sub") sp.substeps = static_cast<int>(v);
         else if (k == "tension") { sp.tensionStiffness = v != 0; sp.hessianAuto = false; }
         else if (k == "auto") sp.hessianAuto = v != 0;
+        else if (k == "al") sp.contactAL = v != 0;
+        else if (k == "alk") sp.contactALStiffness = v;
+        else if (k == "alouter") sp.contactALOuter = static_cast<int>(v);
         else if (k != "tag") std::printf("  (unknown override %s ignored)\n", k.c_str());
     }
 }
@@ -143,6 +146,7 @@ Summary run(int scene, const std::string& ov, int frames) {
     r.finalStretch = wedge::maxEdgeStretch(cs);
     r.hem = wedge::meanHemY(cs, s);
     r.gap = cs.maxSeamGap();
+    r.alMaxPen = d.alMaxPenetration;
 
     std::printf("[scene %d | %s] %d verts, %d frames, %.1f s\n", scene, r.tag.c_str(), r.verts, r.frames, r.secs);
     std::printf("  KE final %.2e J; last %d frames: mean %.2e, max %.2e J\n", r.keFinal, tail, r.keMeanTail, r.keMaxTail);
@@ -155,6 +159,9 @@ Summary run(int scene, const std::string& ov, int frames) {
     std::printf("  step KE after Newton %.2e, after body pass %.2e, after self collision %.2e J (mean per substep)\n",
                 r.keNewtonTail / ns, r.keBodyTail / ns, r.keSelfTail / ns);
     std::printf("  post-solve totals: pushed %lld, friction applied %lld vertex-substeps; Hessian switches %lld\n", d.pushAfter, d.frictionAfter, d.hessianSwitches);
+    if (sp.contactAL)
+        std::printf("  contactAL: Newton solves per substep %.2f, deepest after a solve %.3f mm, largest multiplier %.3e N\n",
+                    double(d.alOuter) / std::max<long long>(1, d.substeps), d.alMaxPenetration * 1e3, d.alMaxLambda);
     std::printf("  min clearance %.3f mm, max stretch %.4f (final %.4f), hem %.1f mm, seam gap %.2f mm, finite %s\n",
                 r.minClr * 1e3, r.maxStretch, r.finalStretch, r.hem * 1e3, r.gap * 1e3, r.finite ? "yes" : "NO");
     if (std::getenv("FL_KE_TOP")) {  // where is the kinetic energy? (held vs free, distance to the body)
@@ -223,7 +230,14 @@ int main(int argc, char** argv) {
     CHECK_MSG(on0.keMeanTail < 5e-6, "scene 0 default: mean KE over the last 60 frames %.2e J", on0.keMeanTail);
     // scene 0's free, collapsed top converges linearly (~10-11 iterations of 12): a few cap hits are not jitter
     CHECK_MSG(on0.capTail <= on0.subTail / 20, "scene 0 default: %lld of %lld substeps hit the cap in the last 60 frames", on0.capTail, on0.subTail);
-    std::printf("[summary] scene 1 mean KE last 60 frames: old solver %.2e J, default %.2e J (%.0fx); scene 0 default %.2e J\n",
-                off.keMeanTail, on.keMeanTail, off.keMeanTail / on.keMeanTail, on0.keMeanTail);
+    // K2 contact multipliers (contactAL) on scene 1: settles like the default, Newton converges, the contact holds within
+    // its tolerance (measured: 1.13e-7 J vs 1.28e-7 J default, 0 cap hits, 1.02 solves per substep, deepest 0.009 mm)
+    const Summary al = run(1, "al=1,tag=contact_al", 240);
+    safety(al);
+    CHECK_MSG(al.keMeanTail < 1e-6, "scene 1 contactAL: mean KE over the last 60 frames %.2e J", al.keMeanTail);
+    CHECK_MSG(al.capTail == 0, "scene 1 contactAL: %lld cap hits in the last 60 frames", al.capTail);
+    CHECK_MSG(al.alMaxPen < 2e-5, "scene 1 contactAL: %.3f mm deep after a solve", al.alMaxPen * 1e3);
+    std::printf("[summary] scene 1 mean KE last 60 frames: old solver %.2e J, default %.2e J (%.0fx), contactAL %.2e J; scene 0 default %.2e J\n",
+                off.keMeanTail, on.keMeanTail, off.keMeanTail / on.keMeanTail, al.keMeanTail, on0.keMeanTail);
     FINISH();
 }

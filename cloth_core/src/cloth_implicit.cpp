@@ -326,7 +326,7 @@ bool ClothSolver::refactor(Real h2inv) {
             sVal_[base + a] += mass_[i] * h2inv;
             if (w_[i] == 0) sVal_[base + a] += kc;
         }
-        if (w_[i] != 0 && contactActive_[i]) {
+        if (w_[i] != 0 && contactActive_[i] && !alOn_) {  // the hold's normal lock (not with contactAL: no hold there)
             const Vec3& n = contactN_[i];
             const Real nn[3] = {n.x, n.y, n.z};
             for (int a = 0; a < 3; ++a) {
@@ -399,6 +399,10 @@ void ClothSolver::stepImplicit() {
 
     const bool diag = p_.contactDiagnostics;
     if (diag && prevSubActive_.size() != static_cast<size_t>(N)) { prevSubActive_.assign(N, 0); prevActive_.assign(N, 0); }
+    // K2 contact multipliers (cloth_contact_al.cpp): replace the projection + hold for the body when on
+    const bool al = p_.contactAL && collider_ && !skin && !barrier;
+    alOn_ = al;
+    if (al && alLambda_.size() != static_cast<size_t>(N)) { alLambda_.assign(N, 0.0); alRho_.assign(N, 1.0); }
 
     for (int s = 0; s < S; ++s) {
         if (skin) updateSkinAreas();
@@ -410,6 +414,8 @@ void ClothSolver::stepImplicit() {
             xTilde_[i] = x_[i] + v_[i] * h;
             if (!barrier) x_[i] = xTilde_[i];
         }
+        if (al)
+            for (int i = 0; i < N; ++i) alRho_[i] = p_.contactALStiffness * std::max(mass_[i], Real(1e-12)) * invH2;
         const bool friction = p_.bodyFrictionMode == 2 && collider_;
         if (friction) frictionLag(skin);  // normal forces and normals of the end of the previous substep
         // barrier mode: the predictor (initial guess) is itself a motion and must not cross a surface
@@ -425,8 +431,15 @@ void ClothSolver::stepImplicit() {
         bool newStalled = false;          // ... and the switched-to model stalled too
         int cutStreak = 0, fullStreak = 0;  // consecutive iterations whose line search cut the step / took the full step
         Real newtonHist[4] = {1e30, 1e30, 1e30, 1e30};  // Newton update sizes of the last iterations (newest first)
+        int nBase = 0;  // contactAL: Newton iterations of the earlier solves in this substep
+        for (int outer = 0;; ++outer) {  // contactAL: Newton solve, multiplier update, repeat (one pass otherwise)
+        if (outer > 0) {
+            needFactor = true; prevMaxDx = 1e30; converged = false; lsFailed = false;
+            nMax = std::max(1, p_.newtonIterations); switched = false; newStalled = false; cutStreak = fullStreak = 0;
+            for (Real& v : newtonHist) v = 1e30;
+        }
         for (int n = 0; n < nMax; ++n) {
-            nUsed = n + 1;
+            nUsed = nBase + n + 1;
             // Contact inside the solve: lift penetrating vertices onto the body surface first ...
             bool lifted = false;
             if (barrier) xLift_ = x_;
@@ -442,7 +455,7 @@ void ClothSolver::stepImplicit() {
                     if (sc > 0) { lim = p_.skinMaxDepth; skinK_[i] = p_.skinStiffness * sc * skinArea_[i]; }
                 }
                 Real phiR = phi + lim;
-                if (phiR < 0) {
+                if (phiR < 0 && !al) {
                     if (diag) { ++cdiag_.lifts; cdiag_.liftDist += -phiR; if (n > 0) ++cdiag_.liftsAfterFirstIter; }
                     if (barrier) { xLift_[i] = x_[i] - nrm * phiR; lifted = true; }  // K5: lift is CCD-capped later
                     else x_[i] -= nrm * phiR;
@@ -460,6 +473,7 @@ void ClothSolver::stepImplicit() {
             if (skin) assembleSkin();
             if (barrier) barrierAddToSystem();
             if (friction) assembleFriction(h, skin);
+            if (al) alAssemble();
             for (int i = 0; i < N; ++i)
                 rhs_[i] = w_[i] == 0 ? Vec3(0, 0, 0) : -((x_[i] - xTilde_[i]) * (mass_[i] * invH2) + grad_[i]);
             // ... then forbid motion into the body for vertices resting on it (unless the net force pulls them away).
@@ -469,6 +483,14 @@ void ClothSolver::stepImplicit() {
             for (int i = 0; i < N; ++i) {
                 Mat3 P;
                 contactActive_[i] = 0;
+                if (w_[i] != 0 && al) {  // contactAL: no hold; "active" = the multiplier term pushes
+                    P.addDiag(1);
+                    const Real f = alLambda_[i] - alRho_[i] * contactPhi_[i];
+                    contactActive_[i] = f > 0;
+                    filt_[i] = P;
+                    rigidForce_[i] = std::max(Real(0), f);
+                    continue;
+                }
                 if (w_[i] != 0) {
                     P.addDiag(1);
                     if (contactPhi_[i] < p_.contactBand && dot(rhs_[i], contactN_[i]) < 0) {
@@ -513,13 +535,14 @@ void ClothSolver::stepImplicit() {
                 for (int i = 0; i < N; ++i)
                     if (skinK_[i] > 0 && skinPhi_[i] < 0) E0 += 0.5 * skinK_[i] * skinPhi_[i] * skinPhi_[i];
             if (friction) E0 += frictionEnergy(h);
+            if (al) E0 += alEnergy();
             bool accepted = false;
             for (int ls = 0; ls < (barrier ? 30 : 10); ++ls) {
                 Real Eskin = 0;
                 bool projected = false;
                 for (int i = 0; i < N; ++i) {
                     x_[i] = xBackup_[i] + dx_[i] * step;
-                    if (collider_ && w_[i] != 0) {  // projected line search: evaluate the energy on the feasible side of the body
+                    if (collider_ && w_[i] != 0 && !al) {  // projected line search: evaluate the energy on the feasible side of the body
                         Vec3 nrm;
                         Real phi = collider_->eval(x_[i], nrm) - radius_[i];
                         const Real lim = (skin && skinK_[i] > 0) ? p_.skinMaxDepth : Real(0);
@@ -534,7 +557,7 @@ void ClothSolver::stepImplicit() {
                     if (barrierMaxStep(xBackup_, x_, sw) < 1) { ++bstats_.trialRejects; step *= 0.5; continue; }
                 }
                 const Real E1 = variationalEnergy(invH2, seamScale) + Eskin + (barrier ? barrierEnergy(x_, bSwept_) : 0) +
-                                (friction ? frictionEnergy(h) : 0);
+                                (friction ? frictionEnergy(h) : 0) + (al ? alEnergy() : 0);
                 if (std::isfinite(E1) && E1 <= E0) { accepted = true; break; }
                 step *= 0.5;
             }
@@ -609,6 +632,24 @@ void ClothSolver::stepImplicit() {
         // hessianAuto: keep the switched-to model for the next substep unless it showed its own stall signature too
         // (requiring full convergence threw it away whenever the iteration budget was small, e.g. the editor's 8)
         if (p_.hessianAuto && switched && !converged && newStalled) autoTension_ = !autoTension_;
+        nBase = nUsed;
+        if (!al) break;
+        // contactAL: first-order multiplier update, lambda <- max(0, lambda - rho g); re-solve while too deep
+        Real maxPen = 0;
+        for (int i = 0; i < N; ++i) {
+            if (w_[i] == 0) continue;
+            Vec3 nrm;
+            const Real g = collider_->eval(x_[i], nrm) - radius_[i];
+            maxPen = std::max(maxPen, -g);
+            alLambda_[i] = std::max(Real(0), alLambda_[i] - alRho_[i] * g);
+            cdiag_.alMaxLambda = std::max(cdiag_.alMaxLambda, double(alLambda_[i]));
+        }
+        ++cdiag_.alOuter;
+        if (maxPen <= p_.contactALTolerance || outer + 1 >= std::max(1, p_.contactALOuter)) {
+            cdiag_.alMaxPenetration = std::max(cdiag_.alMaxPenetration, double(maxPen));
+            break;
+        }
+        }  // outer (contactAL)
         lastCgIterations_ = cg;
         newtonIterations_ += nUsed;
         ++substepsDone_;
@@ -644,6 +685,21 @@ void ClothSolver::stepImplicit() {
             barrier_.potential(x_, bCand_, kappa_, nullptr, &dmin);
             bstats_.minDistance = std::min(bstats_.minDistance, dmin);
             barrierAdapt(dmin);
+        } else if (al) {
+            // contactAL: the solve keeps the cloth within contactALTolerance of the body: no push-out; friction is the
+            // in-solve mode 2 (bodyFrictionMode 0 has no friction here). Self collision can push a vertex into the body:
+            // project those back.
+            if (diag) { cdiag_.lastKeBody = stepKE(h); cdiag_.keBody += cdiag_.lastKeBody; }
+            if (p_.selfCollision) {
+                solveSelfCollision();
+                for (int i = 0; i < N; ++i) {
+                    if (w_[i] == 0) continue;
+                    Vec3 nrm;
+                    const Real g = collider_->eval(x_[i], nrm) - radius_[i];
+                    if (g < -p_.contactALTolerance) x_[i] -= nrm * (g + p_.contactALTolerance);
+                }
+            }
+            if (diag) { cdiag_.lastKeSelf = stepKE(h); cdiag_.keSelf += cdiag_.lastKeSelf; }
         } else {
             solveBody();
             if (diag) { cdiag_.lastKeBody = stepKE(h); cdiag_.keBody += cdiag_.lastKeBody; }

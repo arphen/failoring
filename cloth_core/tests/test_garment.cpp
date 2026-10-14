@@ -44,6 +44,8 @@ int main() {
     // K2 (docs/handoff/OPUS_SESSION_1.md): the Hessian model is chosen automatically by default; FL_TENSION=0 forces
     // Gauss-Newton (the old default), FL_TENSION=1 the tension term (the app until 2026-10-14).
     if (const char* e = std::getenv("FL_TENSION")) { sp.hessianAuto = false; sp.tensionStiffness = std::atoi(e) != 0; }
+    // K2 (docs/handoff/OPUS_SESSION_1.md): FL_AL=1 = contact multipliers instead of projection (with friction mode 2)
+    if (std::getenv("FL_AL")) { sp.contactAL = true; sp.bodyFrictionMode = 2; }
     ClothSolver cs(sp);
     cs.setCollider(body);
 

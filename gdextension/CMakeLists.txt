@@ -14,7 +14,7 @@ add_subdirectory(${GODOT_CPP_DIR} ${CMAKE_BINARY_DIR}/godot-cpp)
 # cloth_core is a plain C++ static library (no Godot dependency)
 set(CORE ${CMAKE_CURRENT_SOURCE_DIR}/../cloth_core)
 add_library(cloth_core STATIC
-  ${CORE}/src/cloth.cpp ${CORE}/src/cloth_implicit.cpp ${CORE}/src/cloth_static.cpp ${CORE}/src/cloth_friction.cpp ${CORE}/src/mesher.cpp ${CORE}/src/material.cpp
+  ${CORE}/src/cloth.cpp ${CORE}/src/cloth_implicit.cpp ${CORE}/src/cloth_static.cpp ${CORE}/src/cloth_friction.cpp ${CORE}/src/cloth_contact_al.cpp ${CORE}/src/mesher.cpp ${CORE}/src/material.cpp
   ${CORE}/src/mesh_sizing.cpp ${CORE}/src/sparse_chol.cpp ${CORE}/src/metrics.cpp ${CORE}/src/sdf_grid.cpp ${CORE}/src/skin.cpp ${CORE}/src/cloth_skin.cpp ${CORE}/src/barrier_contact.cpp ${CORE}/src/barrier_ccd.cpp ${CORE}/src/barrier_selfcontact.cpp ${CORE}/src/cloth_barrier.cpp)
 target_include_directories(cloth_core PUBLIC ${CORE}/include)
 

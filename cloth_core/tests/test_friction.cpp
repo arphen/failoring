@@ -19,7 +19,7 @@ using namespace fl;
 
 namespace {
 
-struct Slide { Real dist = 0, predicted = 0, frictionless = 0, ke = 0; int lsFail = 0; long long cap = 0; Real clr = 0; };
+struct Slide { Real dist = 0, predicted = 0, frictionless = 0, ke = 0; int lsFail = 0; long long cap = 0; Real clr = 0; Real lamRatio = 0; };
 
 Slide run(Real thetaDeg, int mode, const FabricMaterial& fab, Real T) {
     const Real th = thetaDeg * kPi / 180;
@@ -27,7 +27,8 @@ Slide run(Real thetaDeg, int mode, const FabricMaterial& fab, Real T) {
     const Vec3 t(std::cos(th), -std::sin(th), 0);  // downhill direction in the plane
     SolverParams sp;
     sp.substeps = 4;
-    sp.bodyFrictionMode = mode;
+    sp.bodyFrictionMode = mode == 3 ? 2 : mode;
+    sp.contactAL = mode == 3;  // mode 3: K2 contact multipliers with friction mode 2
     sp.contactDiagnostics = true;
     ClothSolver cs(sp);
     cs.setCollider(std::make_shared<PlaneCollider>(Vec3(0, 0, 0), n));
@@ -52,9 +53,15 @@ Slide run(Real thetaDeg, int mode, const FabricMaterial& fab, Real T) {
     r.lsFail = cs.lineSearchFailures();
     r.cap = cs.contactDiag().iterCapHits;
     r.clr = cs.minBodyClearance();
+    if (sp.contactAL) {  // the multipliers are the normal forces: their sum must carry the weight's normal component
+        Real lam = 0;
+        for (Real l : cs.contactMultipliers()) lam += l;
+        r.lamRatio = lam / (cs.totalMass() * 9.81 * std::cos(th));
+    }
     std::printf("  mode %d, %4.1f deg (tan %.3f vs mu %.2f): slid %8.2f mm | Coulomb prediction %8.2f mm | frictionless %8.2f mm | "
                 "ls-fail %d, cap hits %lld, clearance %.2f mm\n",
                 mode, thetaDeg, std::tan(th), mu, r.dist * 1e3, r.predicted * 1e3, r.frictionless * 1e3, r.lsFail, r.cap, r.clr * 1e3);
+    if (sp.contactAL) std::printf("           contact multipliers: sum / (m g cos theta) = %.5f\n", r.lamRatio);
     std::fflush(stdout);
     return r;
 }
@@ -81,5 +88,15 @@ int main(int argc, char** argv) {
               slide.dist * 1e3, slide.predicted * 1e3);
     CHECK_MSG(stick.clr > -0.001 && slide.clr > -0.001, "penetrates the plane");
     CHECK(stick.lsFail == 0 && slide.lsFail == 0);
+    // mode 3: the same friction with K2 contact multipliers as the normal force; the multipliers equal the normal load
+    const Slide stickAL = run(15.0, 3, *fab, T);
+    const Slide slideAL = run(30.0, 3, *fab, T);
+    CHECK_MSG(std::fabs(stickAL.dist) < 0.001, "AL 15 deg: slid %.2f mm, must stick", stickAL.dist * 1e3);
+    CHECK_MSG(std::fabs(slideAL.dist - slideAL.predicted) < 0.05 * slideAL.predicted, "AL 30 deg: slid %.1f mm vs Coulomb %.1f mm",
+              slideAL.dist * 1e3, slideAL.predicted * 1e3);
+    CHECK_MSG(std::fabs(stickAL.lamRatio - 1) < 0.01 && std::fabs(slideAL.lamRatio - 1) < 0.01,
+              "multipliers vs normal load: %.4f (15 deg), %.4f (30 deg)", stickAL.lamRatio, slideAL.lamRatio);
+    CHECK_MSG(stickAL.clr > -0.001 && slideAL.clr > -0.001, "AL: penetrates the plane");
+    CHECK(stickAL.lsFail == 0 && slideAL.lsFail == 0);
     FINISH();
 }

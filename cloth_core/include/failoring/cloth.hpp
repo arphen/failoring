@@ -115,6 +115,19 @@ struct SolverParams {
     // m/s, mode 2: slip speed below which a contact counts as sticking (smoothing). A contact held below the friction
     // limit creeps at up to this speed, so it must be small: 1e-3 let a resting soft-skin tube creep 0.015 mm/frame.
     Real frictionSlipVelocity = 1e-5;
+
+    // K2: body contact by persistent augmented-Lagrangian multipliers instead of projection (cloth_contact_al.cpp).
+    // Each free vertex keeps a multiplier lambda_i >= 0, its normal force (N), warm-started across substeps; inside a
+    // Newton solve the body adds the C1 term -lambda g + rho/2 g^2 (g = distance - contact radius, while
+    // lambda - rho g > 0) to the energy, with no projection of iterates or trial points; after the solve
+    // lambda <- max(0, lambda - rho g), and the solve repeats while a vertex is deeper than contactALTolerance.
+    // rho_i = contactALStiffness * m_i / h^2 (scaled by inertia). Friction mode 2 then takes lambda as its normal force.
+    // Requires skin and barrier off (ignored otherwise). Off by default. 1000 measured best on test_wedge (100: the
+    // contact oscillates, 8-14x the kinetic energy; 10000: Newton hits its cap in half the substeps).
+    bool contactAL = false;
+    Real contactALStiffness = 1000.0;
+    Real contactALTolerance = 1e-5;  // m
+    int contactALOuter = 4;          // max Newton solves per substep
     bool bodyPushAfterSolve = true;   // false (diagnostic): skip the push-out after the solve (in-Newton hold only)
 };
 
@@ -134,6 +147,9 @@ struct ContactDiag {
     long long hessianSwitches = 0;  // hessianAuto: substeps that switched the Hessian model
     long long lsRecovered = 0;      // hessianAuto: line searches that failed and were retried with the other model
     long long frictionActive = 0;   // bodyFrictionMode 2: vertex-iterations with a friction term
+    long long alOuter = 0;          // contactAL: Newton solves summed over substeps (1 per substep = no re-solve)
+    double alMaxPenetration = 0;    // contactAL: deepest vertex after the last solve of a substep (m), max over the run
+    double alMaxLambda = 0;         // contactAL: largest multiplier (N)
     long long pushAfter = 0, frictionAfter = 0;  // vertices moved by the post-solve push-out / friction
     double keNewton = 0, keBody = 0, keSelf = 0;  // KE of (x - xPrev)/h after Newton, after solveBody, after self collision (sums)
     double lastKeNewton = 0, lastKeBody = 0, lastKeSelf = 0;
@@ -416,6 +432,15 @@ private:
     Vec3 frictionSlip(int i, Real invS) const;
     Real frictionEnergy(Real h) const;
     void assembleFriction(Real h, bool skin);
+    // K2 contact multipliers (cloth_contact_al.cpp)
+    std::vector<Real> alLambda_, alRho_;
+    bool alOn_ = false;           // contactAL active in the current step
+    Real alEnergy() const;        // sum of the augmented-Lagrangian terms at x_
+    void alAssemble();            // AL gradient and Gauss-Newton Hessian into grad_ / K_; fills contactPhi_/contactN_
+public:
+    // contactAL: current normal-force multipliers (N) per vertex (empty before the first step with contactAL).
+    const std::vector<Real>& contactMultipliers() const { return alLambda_; }
+private:
     long long newtonIterations_ = 0;  // Newton iterations used, summed over all substeps
     long long substepsDone_ = 0;
     ContactDiag cdiag_;

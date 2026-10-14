@@ -394,6 +394,59 @@ Findings and fixes:
 - The rebuilt godot/bin/libfailoring.so is not committed (tools/build_gdext.sh: a local build product). Run
   tools/build_gdext.sh before opening the editor; the committed .so/.dylib predate this session.
 
+## Phase 4: K2 contact multipliers, finished (2026-10-14, evening)
+The user asked to continue agent/k2-contact-multipliers and merge it once good. Its original purpose (the wedge jitter)
+was already met by hessianAuto (Phase 1/2), so "good" was defined by the K2 handoff's own criteria: option off by
+default, the wedge test off vs on with the on-case no worse on penetration and stretch, test_garment passing with it on,
+everything else unchanged.
+
+### Why the branch's version blew up (read from its code, then confirmed)
+- The penalty rho was 1000 x the vertex's elastic stiffness (1e6-1e7 N/m): one micrometre of residual penetration after
+  an unconverged solve became a ~10 N multiplier on a vertex that weighs ~1e-4 N; a large multiplier keeps pushing until
+  g = lambda/rho (it "reaches out"). The recorded failure: lambda 2e8 N, 54 mm penetration.
+- It was a separate copy of the whole Newton loop (stepImplicitAL), predating the skin, barrier, hessianAuto and friction.
+
+### Re-implementation (not a port): cloth_contact_al.cpp + the Newton loop in cloth_implicit.cpp
+`SolverParams::contactAL` (off), rho_i = contactALStiffness * m_i/h^2 (inertia-scaled), multipliers warm-started across
+substeps, PHR energy term in the unprojected line search, an outer loop (solve, lambda <- max(0, lambda - rho g),
+repeat while deeper than contactALTolerance = 10 um, at most 4 solves), no hold, no push-out (self-collision pushes are
+projected back). Friction mode 2 takes the multiplier as its normal force. Requires skin and barrier off.
+Bugs found on the way (each measured):
+1. refactor() adds a 1e5 x diagonal normal lock for every "contact-active" vertex (the hold); in AL mode that froze the
+   very motion the multiplier pushes for: lambda grew 17 N per frame on the incline. Excluded in AL mode.
+2. A hysteresis band that kept rho n n^T in the Newton model beyond the contact switch made a vertex leaving the body
+   crawl (each step ~1/(1+kappa) of the needed one): cap hit in every substep. Removed (exact Gauss-Newton model).
+3. kappa = contactALStiffness: 100 lets the contact oscillate (8-14x the kinetic energy of the default), 10000 makes
+   Newton hit its cap in half the substeps (36 line-search failures in the tail); 1000 is the default.
+
+### Results (kappa 1000)
+| test_wedge, last 60 frames | Scene 1 default | Scene 1 contactAL | Scene 0 default | Scene 0 contactAL |
+| --- | --- | --- | --- | --- |
+| Mean / max KE | 1.28e-7 / 4.76e-7 J | 1.13e-7 / 2.88e-7 J | 8.7e-7 / 2.2e-6 J | 1.48e-6 / 2.7e-6 J |
+| Max stretch (final) | 1.178 (1.075) | 1.170 (1.095) | 1.102 (1.041) | 1.117 (1.021) |
+| Newton iterations per substep, cap hits | 9.23, 0 | 9.02, 0 | 9.80, 0 | 10.31, 0 |
+| Min clearance / deepest after a solve | 1.648 mm / - | 1.634 mm / 0.009 mm | 1.650 mm / - | 1.641 mm / 0.010 mm |
+| Solves per substep | 1 | 1.02 | 1 | 1.02 |
+Plainly: K2 does not improve the look over today's default (scene 1 slightly better, scene 0 slightly worse); it is
+equal-not-better on jitter. What it adds: contact forces that are exact (incline: sum of multipliers / normal load =
+1.00000 at 15 and 30 degrees, while sticking and sliding), and contact without projection. That is the basis for
+pressure / fit readouts. test_garment with FL_AL=1 (and friction mode 2): pass (KE 4.7e-8 J, seam gap 1.46 mm, no
+penetration, hem 147.9 mm: friction holds the ring where it slid to).
+
+### Friction stick-slip is not a K2 problem
+Hypothesis from Phase 2 (the rigid hold's noisy normal force causes friction stick-slip) is wrong: the narrow-waist tube
+(test_soft_skin standing scene, rigid) shows the same bursts with the multipliers as with the hold (0.10 mm/frame in the
+last 10 frames, 0.17 at frame 300); without friction both creep ~0.04 mm/frame. The cause is the friction smoothing
+itself: slip velocity 1e-3 m/s creeps (soft test 0.0146 mm/frame = that speed), 1e-5 m/s makes the friction term so
+stiff (~1e4 N/m per vertex) that stick and slip alternate. Friction stays opt-in; a better friction model (e.g. an
+exact stick constraint with a slip release, or a time-filtered lambda) is the next step, not part of K2.
+
+### Not done
+- contactAL with the K1 skin or K5 barrier (refused: the flag is ignored there).
+- The static solve does not use the multipliers.
+- Pressure readouts from the multipliers (vertexContactPressure still reads the hold's force estimate in this mode
+  via rigidForce_, which is set to the multiplier force; not separately tested).
+
 ## Open questions
 - Should `test_garment` assert zero self intersections? It would fail today in default mode (87 pairs). Not changed.
 - The app (worker.js) runs Standard quality with 2 substeps and at most 8 Newton iterations, plus the tension term. The

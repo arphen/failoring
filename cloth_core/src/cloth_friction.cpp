@@ -28,7 +28,8 @@ void ClothSolver::frictionLag(bool skin) {
     if (fricLam_.size() != static_cast<size_t>(N)) { fricLam_.assign(N, 0.0); fricN_.assign(N, Vec3(0, 1, 0)); }
     for (int i = 0; i < N; ++i) {
         Real lam = 0;
-        if (rigidForce_.size() == static_cast<size_t>(N) && rigidForce_[i] > 0) lam += rigidForce_[i];
+        if (alOn_ && alLambda_.size() == static_cast<size_t>(N)) lam += alLambda_[i];  // K2: the smooth multiplier
+        else if (rigidForce_.size() == static_cast<size_t>(N) && rigidForce_[i] > 0) lam += rigidForce_[i];
         if (skin && skinK_[i] > 0 && skinPhi_[i] < 0) lam += skinK_[i] * (-skinPhi_[i]);
         fricLam_[i] = (w_[i] != 0 && contactPhi_[i] < 1e29) ? lam * muK_[i] : 0.0;  // mu * lambda (N)
         fricN_[i] = contactN_[i];
@@ -60,7 +61,8 @@ void ClothSolver::assembleFriction(Real h, bool skin) {
         const int i = static_cast<int>(k);
         // only vertices in contact NOW (held within the band, or inside the soft layer); the same set is used for the
         // line-search energy of this iteration
-        const bool touching = contactPhi_[i] < p_.contactBand || (skin && skinK_[i] > 0 && skinPhi_[i] < 0);
+        const bool touching = alOn_ ? (alLambda_[i] - alRho_[i] * contactPhi_[i] > 0)
+                                    : (contactPhi_[i] < p_.contactBand || (skin && skinK_[i] > 0 && skinPhi_[i] < 0));
         if (!touching) continue;
         fricOn_[i] = 1;
         const Vec3 u = frictionSlip(i, invS);
