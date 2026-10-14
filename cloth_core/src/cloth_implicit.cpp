@@ -81,20 +81,7 @@ void ClothSolver::rebuildPattern() {
     }
     K_.rowStart[N] = static_cast<int>(K_.col.size());
     K_.val.assign(K_.col.size(), Mat3());
-
-    for (TriC& c : triC_) {
-        const int idx[3] = {c.i0, c.i1, c.i2};
-        for (int a = 0; a < 3; ++a)
-            for (int b = 0; b < 3; ++b) c.slot[a * 3 + b] = K_.find(idx[a], idx[b]);
-    }
-    for (BendC& bc : bendC_)
-        for (int a = 0; a < 4; ++a)
-            for (int b = 0; b < 4; ++b) bc.slot[a * 4 + b] = K_.find(bc.i[a], bc.i[b]);
-    for (SeamC& s : seamC_) {
-        const int idx[3] = {s.a, s.b0, s.b1};
-        for (int a = 0; a < 3; ++a)
-            for (int b = 0; b < 3; ++b) s.slot[a * 3 + b] = K_.find(idx[a], idx[b]);
-    }
+    bindBlockSlots();
 
     // scalar CSR pattern (3x3 blocks expanded) + fill-reducing ordering for the direct solver
     const int n3 = 3 * N;
@@ -118,10 +105,28 @@ void ClothSolver::rebuildPattern() {
     for (int v : vorder)
         for (int a = 0; a < 3; ++a) perm.push_back(3 * v + a);
     chol_.analyze(n3, sRowStart_, sCol_, perm);
+    ++symbolicAnalyses_;
+    patternValid_ = true;
     cholValid_ = false;
     sVal_.assign(sCol_.size(), 0.0);
     sRhs_.assign(n3, 0.0);
     sSol_.assign(n3, 0.0);
+}
+
+void ClothSolver::bindBlockSlots() {
+    for (TriC& c : triC_) {
+        const int idx[3] = {c.i0, c.i1, c.i2};
+        for (int a = 0; a < 3; ++a)
+            for (int b = 0; b < 3; ++b) c.slot[a * 3 + b] = K_.find(idx[a], idx[b]);
+    }
+    for (BendC& bc : bendC_)
+        for (int a = 0; a < 4; ++a)
+            for (int b = 0; b < 4; ++b) bc.slot[a * 4 + b] = K_.find(bc.i[a], bc.i[b]);
+    for (SeamC& s : seamC_) {
+        const int idx[3] = {s.a, s.b0, s.b1};
+        for (int a = 0; a < 3; ++a)
+            for (int b = 0; b < 3; ++b) s.slot[a * 3 + b] = K_.find(idx[a], idx[b]);
+    }
 }
 
 void ClothSolver::assembleEnergy(Real seamScale) {
