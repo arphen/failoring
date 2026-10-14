@@ -22,6 +22,7 @@
 
 #include "failoring/collider.hpp"
 #include "failoring/math.hpp"
+#include "failoring/skin.hpp"
 
 namespace fl {
 
@@ -89,8 +90,25 @@ public:
     }
     const SdfGrid& grid() const { return *g_; }
 
+    // K1 compliant skin: per-region stiffness. `map` labels the space near the body surface (see skin.hpp);
+    // `scale[label]` is the relative stiffness of that region (1 = SolverParams::skinStiffness, 0 = rigid). Points
+    // with an unknown label or a label beyond the table use the collider's default skinScale_.
+    void setRegionStiffness(std::shared_ptr<const RegionMap> map, std::vector<Real> scale) {
+        regions_ = std::move(map);
+        regionScale_ = std::move(scale);
+    }
+    Real skinScale(const Vec3& p) const override {
+        if (regions_) {
+            const unsigned l = regions_->label(p);
+            if (l < regionScale_.size()) return regionScale_[l];
+        }
+        return skinScale_;
+    }
+
 private:
     std::shared_ptr<const SdfGrid> g_;
+    std::shared_ptr<const RegionMap> regions_;
+    std::vector<Real> regionScale_;
 };
 
 }  // namespace fl

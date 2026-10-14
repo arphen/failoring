@@ -15,6 +15,18 @@ public:
     virtual ~Collider() = default;
     // Returns signed distance; writes the outward unit normal into `n`.
     virtual Real eval(const Vec3& p, Vec3& n) const = 0;
+
+    // ---- compliant skin (K1) -------------------------------------------------------------------------------
+    // Relative stiffness of the soft skin layer at a point near the surface; the solver multiplies it with
+    // SolverParams::skinStiffness (Pa/m). 1 = the global value, 0 = rigid here. Only used when the skin layer is
+    // enabled. Analytic colliders carry one number (setSkinScale); UnionCollider answers with the nearest part;
+    // GridCollider can look it up in a per-region label map (see skin.hpp). UNVERIFIED placeholder semantics: no
+    // tissue stiffness is measured.
+    virtual Real skinScale(const Vec3& /*p*/) const { return skinScale_; }
+    void setSkinScale(Real s) { skinScale_ = s; }
+
+protected:
+    Real skinScale_ = 1.0;
 };
 
 class SphereCollider : public Collider {
@@ -114,6 +126,16 @@ public:
         }
         n = bn;
         return best;
+    }
+    // Skin stiffness scale of the part nearest to p (ties: first part).
+    Real skinScale(const Vec3& p) const override {
+        Real best = 1e30, sc = skinScale_;
+        for (const auto& c : parts_) {
+            Vec3 ni;
+            const Real d = c->eval(p, ni);
+            if (d < best) { best = d; sc = c->skinScale(p); }
+        }
+        return sc;
     }
 private:
     std::vector<std::shared_ptr<Collider>> parts_;
