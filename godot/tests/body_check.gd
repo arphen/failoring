@@ -58,7 +58,7 @@ func _ready() -> void:
 		var wk = BodyView.parse_walk("res://assets/%s/walk.bin" % preset, obj["vertices"])
 		var wworst := 0.0
 		for ph in [0.0, 0.25, 0.5]:
-			var live = BodyGen.pose(m, body, ph, {"stride": 1.0, "arms": 1.0})
+			var live = BodyGen.pose(m, body, ph, {"stride": 1.0, "arms": 1.0, "armAbduct": stand["armAbduct"]})  # the walk uses the stand's arm angle (as the browser and the exported walk.bin)
 			var fr: PackedVector3Array = wk["frames"][int(ph * 24.0)]
 			var lp: PackedFloat32Array = live["pos"]
 			for i in int(m["nb"]):

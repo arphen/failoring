@@ -969,8 +969,87 @@ static func arms(m: Dictionary, pos: PackedFloat32Array, joints: Dictionary) -> 
 	return out
 
 
+# Arm clearance (port of gait.js G.stand / G.armGap): the arms hang so that, below the armpit, they stay ARM_GAP clear of
+# the body's section hulls (the surface garments are wrapped on). A body with wide hips or a belly (plus, curvy) needs its
+# arms held further out, else the cloth is pinched between arm and torso. Never smaller than the default angle.
+const ARM_ABDUCT := 0.14
+const ARM_GAP := 0.02
+const ARM_MAX := 0.5
+
+
+# Signed distance of (x, z) to a convex polygon [x0, z0, x1, z1, ...]; negative inside.
+static func _hull_dist(h: Array, x: float, z: float) -> float:
+	var n: int = h.size() >> 1
+	if n < 3:
+		return 1.0
+	var area := 0.0
+	for i in n:
+		var j := (i + 1) % n
+		area += float(h[2 * i]) * float(h[2 * j + 1]) - float(h[2 * j]) * float(h[2 * i + 1])
+	var sg := 1.0 if area >= 0.0 else -1.0
+	var inside := true
+	var best := 1e9
+	for i in n:
+		var j := (i + 1) % n
+		var ax := float(h[2 * i])
+		var az := float(h[2 * i + 1])
+		var ex := float(h[2 * j]) - ax
+		var ez := float(h[2 * j + 1]) - az
+		var l := sqrt(ex * ex + ez * ez)
+		if l == 0.0:
+			l = 1e-9
+		if (ex * (z - az) - ez * (x - ax)) * sg < 0.0:
+			inside = false
+		var t := clampf(((x - ax) * ex + (z - az) * ez) / (l * l), 0.0, 1.0)
+		var dx := x - ax - t * ex
+		var dz := z - az - t * ez
+		best = minf(best, sqrt(dx * dx + dz * dz))
+	return -best if inside else best
+
+
+# Smallest distance between the arm and hand vertices below the waist + 6 cm and the section hulls: {d, y}.
+static func arm_gap(m: Dictionary, all_pos: PackedFloat32Array, secs: Dictionary) -> Dictionary:
+	var parts: Array = m["parts"]
+	var part: PackedInt32Array = m["part"]
+	var ids := []
+	for nm in ["arm.L", "arm.R", "hand.L", "hand.R"]:
+		ids.append(parts.find(nm))
+	var y_max: float = all_pos[3 * int(m["lm"]["waist"]) + 1] + 0.06
+	var hulls: Array = secs["hulls"]
+	var dy: float = float(secs["dy"])
+	var d := 1e9
+	var y := 0.0
+	for i in int(m["nb"]):
+		if not ids.has(part[i]):
+			continue
+		var vy: float = all_pos[3 * i + 1]
+		if vy > y_max:
+			continue
+		var k := int(round(vy / dy))
+		if k < 0 or k >= hulls.size():
+			continue
+		var h = hulls[k]
+		if h == null or (h as Array).size() < 6:
+			continue
+		var q := _hull_dist(h, all_pos[3 * i], all_pos[3 * i + 2])
+		if q < d:
+			d = q
+			y = vy
+	return {"d": d, "y": y}
+
+
 static func stand(m: Dictionary, body: Dictionary) -> Dictionary:
-	var p := pose(m, body, 0.0, {"stride": 0.0, "arms": 0.0})
+	var abd := ARM_ABDUCT
+	var p: Dictionary
+	var secs: Dictionary
+	for it in 4:
+		p = pose(m, body, 0.0, {"stride": 0.0, "arms": 0.0, "armAbduct": abd})
+		secs = sections(m, p["allPos"], 0.01)
+		var g := arm_gap(m, p["allPos"], secs)
+		if float(g["d"]) >= ARM_GAP - 0.002 or abd >= ARM_MAX:
+			break
+		var shoulder_y: float = float(p["joints"]["l-shoulder"][1])
+		abd = minf(ARM_MAX, abd + (ARM_GAP - float(g["d"])) / maxf(0.15, shoulder_y - float(g["y"])))
 	var out := {}
 	for k in (body as Dictionary).keys():
 		out[k] = body[k]
@@ -985,6 +1064,7 @@ static func stand(m: Dictionary, body: Dictionary) -> Dictionary:
 		if lid is int or lid is float:
 			var ap: PackedFloat32Array = p["allPos"]
 			out["landmarks"][lname] = [ap[3 * int(lid)], ap[3 * int(lid) + 1], ap[3 * int(lid) + 2]]
-	out["sections"] = sections(m, p["allPos"], 0.01)
+	out["sections"] = secs
 	out["arms"] = arms(m, p["pos"], p["joints"])
+	out["armAbduct"] = abd  # the arm angle used; a walk of this body must pass it to pose()
 	return out

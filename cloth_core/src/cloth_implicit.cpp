@@ -422,6 +422,7 @@ void ClothSolver::stepImplicit() {
         bool converged = false, lsFailed = false;
         int nMax = std::max(1, p_.newtonIterations);
         bool switched = false;            // hessianAuto: model already switched in this substep
+        bool newStalled = false;          // ... and the switched-to model stalled too
         int cutStreak = 0, fullStreak = 0;  // consecutive iterations whose line search cut the step / took the full step
         Real newtonHist[4] = {1e30, 1e30, 1e30, 1e30};  // Newton update sizes of the last iterations (newest first)
         for (int n = 0; n < nMax; ++n) {
@@ -578,7 +579,7 @@ void ClothSolver::stepImplicit() {
                 std::fprintf(stderr, "[trace f%d s%d n%2d] newton dx %.3e  step %.4f  moved %.3e  held %d  on-surface %d  argmax v%d held=%d phi=%.2e\n",
                              frame_, s, n, lastDx, step, maxDx, act, lifts, argmax, contactActive_[argmax], contactPhi_[argmax]);
             }
-            if (p_.hessianAuto && !switched) {
+            if (p_.hessianAuto) {
                 // Model too soft (Gauss-Newton on a taut span): the line search keeps cutting the step.
                 // Model too stiff (tension term on a bending-dominated strip): full steps, but the update does not shrink.
                 const Real newtonDx = lastDx;  // size of this iteration's Newton update (before the line search)
@@ -589,12 +590,15 @@ void ClothSolver::stepImplicit() {
                 // stiff-model stall: three full steps and the update has not halved over those three iterations
                 const bool tooSoft = !autoTension_ && cutStreak >= 3;
                 const bool tooStiff = autoTension_ && fullStreak >= 3 && newtonDx > 0.5 * newtonHist[3];
-                if ((tooSoft || tooStiff) && newtonDx > 30 * p_.newtonTolerance) {
+                if (switched && (tooSoft || tooStiff)) newStalled = true;  // the switched-to model stalls as well
+                if (!switched && (tooSoft || tooStiff) && newtonDx > 30 * p_.newtonTolerance) {
                     autoTension_ = !autoTension_;
                     switched = true;
                     nMax = n + 1 + std::max(1, p_.newtonIterations);
                     needFactor = true;
                     ++cdiag_.hessianSwitches;
+                    cutStreak = fullStreak = 0;
+                    for (Real& v : newtonHist) v = 1e30;
                 }
             }
             lastDx = maxDx;
@@ -602,8 +606,9 @@ void ClothSolver::stepImplicit() {
             if (step < 1.0 || maxDx > 0.5 * prevMaxDx) needFactor = true;  // chord stalled: refresh the Hessian
             prevMaxDx = maxDx;
         }
-        // hessianAuto: keep the switched-to model for the next substep only if it converged; otherwise go back
-        if (p_.hessianAuto && switched && !converged) autoTension_ = !autoTension_;
+        // hessianAuto: keep the switched-to model for the next substep unless it showed its own stall signature too
+        // (requiring full convergence threw it away whenever the iteration budget was small, e.g. the editor's 8)
+        if (p_.hessianAuto && switched && !converged && newStalled) autoTension_ = !autoTension_;
         lastCgIterations_ = cg;
         newtonIterations_ += nUsed;
         ++substepsDone_;

@@ -21,6 +21,8 @@ const ARC_N := 720     # arc-length table samples (shared.js N)
 var _piece: Dictionary
 var _wrap: Dictionary
 var _outline: Array    # [x, y] pattern pairs (floats, as in the plan JSON)
+var _outline_eff: Array = []   # outline the rows are measured on (lifted when wrap.lift)
+var _vcap = null               # rows above this v share its extents (wrap.vcap, or derived from wrap.lift)
 var _bb: Array         # [x0, y0, x1, y1]
 var _uc := 0.0
 var _sections: Dictionary
@@ -64,6 +66,38 @@ func _init(piece: Dictionary, sections: Dictionary, arms: Dictionary) -> void:
 	_ny = int(sections.get("ny", 0))
 	_yc = float(sections.get("yCrotch", 0.0))
 	_arms = arms
+	# wrap.lift (trousers, leg mode): rows are measured on the outline with its sloping top edge lifted level (port of
+	# shared.js makeWrapRows: oE, vcap). Without it every point of a sloping waist edge is the last point of its row.
+	_outline_eff = _outline
+	_vcap = null if _wrap.get("vcap", null) == null else float(_wrap["vcap"])
+	if _wrap.get("lift", null) != null:
+		var lifted: Array = []
+		var n_o := _outline.size()
+		var wy := float(_wrap.get("y", 0.0))
+		for i in n_o:
+			var a: Array = _outline[i]
+			var b: Array = _outline[(i + 1) % n_o]
+			var n := maxi(1, int(ceil(Vector2(float(b[0]) - float(a[0]), float(b[1]) - float(a[1])).length() / 0.004)))
+			for j in n:
+				var uu: float = float(a[0]) + (float(b[0]) - float(a[0])) * float(j) / float(n)
+				var vv: float = float(a[1]) + (float(b[1]) - float(a[1])) * float(j) / float(n)
+				var yy: float = wy + (vv - _bb[1])
+				lifted.append([uu, vv + _lift_at(uu, yy) - yy])
+		_outline_eff = lifted
+		_vcap = _bb[1] + (float(_wrap["lift"]["H"]) - wy) - 0.03  # rows above it share its extents (the waist edge)
+
+
+# wrap.lift: { H, x0, dx, y: [] }, y = world height of the piece's top edge per column (dx apart from x0), H the ring
+# height. Stretches the column above the crotch so its top reaches H (port of shared.js liftAt).
+func _lift_at(u: float, y: float) -> float:
+	var lf = _wrap.get("lift", null)
+	if lf == null or not (y > _yc):
+		return y
+	var ly: Array = lf["y"]
+	var f: float = clampf((u - float(lf["x0"])) / float(lf["dx"]), 0.0, float(ly.size() - 1))
+	var i0 := mini(ly.size() - 2, int(floor(f)))
+	var top: float = float(ly[i0]) + (float(ly[i0 + 1]) - float(ly[i0])) * (f - float(i0))
+	return _yc + (y - _yc) * (float(lf["H"]) - _yc) / (top - _yc) if top > _yc + 0.02 else y
 
 
 func clear_dist() -> float:
@@ -75,7 +109,7 @@ func clear_dist() -> float:
 # Returns [t, width]; a zero-width row (apex point, not a real row) keeps JS semantics:
 # t is then garbage in both implementations (see wrap_ref notes), so reference checks skip it.
 func _row_t(u: float, v: float) -> Array:
-	var o: Array = _outline
+	var o: Array = _outline_eff
 	var lo := 1e9
 	var hi := -1e9
 	for i in o.size():
@@ -376,7 +410,11 @@ func _pos_at(u: float, v: float) -> Array:
 		return _arm_pos(u, v)
 	var y: float = float(_wrap.get("y", 0.0)) + (v - _bb[1])
 	var k := clampi(int(round(y / _dy)), 0, _ny - 1)
-	var rt := _row_t(u, v)
+	# the lifted column only gives the row extents; the height on the body stays the unstretched one
+	var vv := v
+	if _wrap.get("lift", null) != null:
+		vv = v + (_lift_at(u, y) - y)
+	var rt := _row_t(u, vv if _vcap == null else minf(vv, float(_vcap)))
 	var t: float = rt[0]
 	var p: Array
 	if mode == "leg":
@@ -398,20 +436,13 @@ func _pos_at(u: float, v: float) -> Array:
 		var i0 := clampi(int(floor(pii)), 0, pw.size() - 1)
 		var i1 := mini(pw.size() - 1, i0 + 1)
 		var pww: float = float(pw[i0]) + (float(pw[i1]) - float(pw[i0])) * clampf(pii - float(i0), 0.0, 1.0)
-		var c0 := _section_curve(k, clear_dist())
-		var d := 0.0
-		if pww > float(c0["per"]):
-			d = minf(0.06, round((pww - float(c0["per"])) / TAU * 1000.0) / 1000.0)
-		var c: Dictionary = _section_curve(k, clear_dist() + d) if d > 0.0 else c0
-		var kk: float = float(c["per"]) / pww
-		var th := _theta()
-		var base: float = th + TAU if th < 0.0 else th
-		var cc: Dictionary = c
-		if _wrap.get("over", null) != null and u * float(_wrap["over"]) < 0.0:
-			cc = _section_curve(k, clear_dist() + d + 0.014)
-		var s: float = _curve_cum(cc, base) + u * kk * (float(cc["per"]) / float(c["per"]))
-		var q := _curve_pt(cc, _curve_phi_at(cc, s))
-		p = [q[0], q[1]]
+		var fr := _fit_at(y, pww, u)
+		# wrap.tilt (a waistband on trousers): the ring's height offset per polar-angle bin, so its lower edge follows the
+		# sloping top edge of the trousers (port of shared.js tiltAt; the section is looked up again at the new height)
+		if _wrap.get("tilt", null) != null:
+			y += _tilt_at(float(fr[2]))
+			fr = _fit_at(y, pww, u)
+		p = [fr[0], fr[1]]
 	else:  # "torso" and "arc" and anything else with sections
 		if mode == "arc":
 			var c := _section_curve(k, clear_dist())
@@ -422,6 +453,37 @@ func _pos_at(u: float, v: float) -> Array:
 		else:
 			p = _regime_torso(k, t)
 	return [p[0], y, p[1]]
+
+
+# "fit" mode at height yy (port of shared.js fitAt): pattern x = distance along the section from the piece's centre line,
+# on a section inflated until its girth equals pww (what all pieces cover at this height). Returns [x, z, phi].
+func _fit_at(yy: float, pww: float, u: float) -> Array:
+	var kf := clampi(int(round(yy / _dy)), 0, _ny - 1)
+	var c0 := _section_curve(kf, clear_dist())
+	var d := 0.0
+	if pww > float(c0["per"]):
+		d = minf(0.06, round((pww - float(c0["per"])) / TAU * 1000.0) / 1000.0)
+	var c: Dictionary = _section_curve(kf, clear_dist() + d) if d > 0.0 else c0
+	var kk: float = float(c["per"]) / pww
+	var th := _theta()
+	var base: float = th + TAU if th < 0.0 else th
+	var cc: Dictionary = c
+	# an underlap that crosses the centre line (back-skirt vent): lifted off the body so it lies over the other half
+	if _wrap.get("over", null) != null and u * float(_wrap["over"]) < 0.0:
+		cc = _section_curve(kf, clear_dist() + d + 0.014)
+	var phi := _curve_phi_at(cc, _curve_cum(cc, base) + u * kk * (float(cc["per"]) / float(c["per"])))
+	var q := _curve_pt(cc, phi)
+	return [q[0], q[1], phi]
+
+
+# wrap.tilt lookup: height offset at polar angle phi, linear between the bins (bin j centred at (j + 0.5) / n of a turn).
+func _tilt_at(phi: float) -> float:
+	var tl: Array = _wrap["tilt"]
+	var n := tl.size()
+	var f: float = fposmod(phi / TAU, 1.0) * float(n) - 0.5
+	var j := int(floor(f))
+	var a: float = f - float(j)
+	return float(tl[posmod(j, n)]) * (1.0 - a) + float(tl[posmod(j + 1, n)]) * a
 
 
 # Start position of the solver mesh vertex with pattern coordinates (u, v).

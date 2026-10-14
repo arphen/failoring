@@ -166,7 +166,9 @@ func _process(_delta: float) -> void:
 func _outfit_actions() -> void:
 	ed._outfit_set(0, "visible", true)
 	ed.regen_and_rebuild()
-	_check(ed._sim_pieces.size() == 8, "showing the tee again restores both garments")
+	# both garments' valid pieces (was a literal 8, stale since the chinos got their waistband: tee 4 + chinos 5 = 9)
+	var both: int = Table.valid_pieces(ed.outfit[0]["pieces"])["pieces"].size() + Table.valid_pieces(ed.outfit[1]["pieces"])["pieces"].size()
+	_check(ed._sim_pieces.size() == both, "showing the tee again restores both garments (%d of %d pieces)" % [ed._sim_pieces.size(), both])
 	var tee_uid: int = int(ed.outfit[0]["uid"])
 	var active_before: int = ed.active_uid()
 	ed._outfit_move(0, 1)  # chinos inner, tee outer

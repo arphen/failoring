@@ -330,6 +330,55 @@ No existing test tolerance was changed. newtonTolerance untouched (1e-6). Change
 session or never passing before: test_wedge scene 0 cap hits (<= 5 % of tail substeps instead of 0), test_static's
 garment check (analytic lodging height instead of the dynamic hem) and drape reference (4 substeps instead of 1).
 
+## Phase 3: branch audit for the Godot editor (2026-10-14, afternoon)
+The user's request: make sure main has all the functionality of the "editor vX" branches; the focus is the Godot
+frontend, not the browser.
+
+### What exists
+No pull requests on GitHub (open or closed): the work is in 35 branches. Commits not in main (origin/main @ 842609f):
+- Editor branches (godot/editor, godot/editor-combined, godot/editor-v2..v6, and the 14 */godot-editor branches:
+  camera, dogfood, fix-design, fix-robust, fix-vanish, library, look, perf, perf2, polish, render, showcase, skirt,
+  table, table2, thread, ui-scale), wip/godot-native-agent, agent/k1, agent/k5: **0 commits each** (all merged).
+- mac/perf-2026-10-12: 1 commit, Godot-side (walk_demo.gd per-frame stats, startup timing, FL_SHOOT screenshots,
+  visible body; Mac timing notes in NATIVE_NOTES.md). **Not in main: merged here.**
+- wip/fit-2026-10-13: 1 WIP commit, browser fit work; main has the finished version (599529e). Superseded, not merged.
+- agent/k2 (contact multipliers, blows up), agent/k4 (lazy SDF, partial), agent/t1 (fabric bench, does not
+  converge): unfinished core experiments, not editor functionality. Not merged (see their handoff notes).
+- agent/s1: merged earlier in this session.
+
+### Merged is not the same as present: line-level check
+For every editor branch: files it has that main lacks: none. Lines in branch tips absent from main: 454, of which
+400 were removed by ordinary later commits (deliberate rewrites) and 54 inside merge commits. Those 54 checked by hand:
+all features are present in main in another form (seam labels with edge numbers, edge-length entry, field tooltips,
+sewing note, History + Showcase tabs, solver status), except one: **angle-weighted cloth normals**
+(render/godot-editor f836da2) became area-weighted when the normals moved to C++ in the perf2 -> editor-v6 merge
+(dae3af8). Restored in FailoringSim.get_display_normals and Look.cloth_normals.
+
+### Godot tests, run for the first time in this session (Godot 4.3 headless, Linux; library built from source)
+Baseline = main's sources (library built from them), branch = this branch. 23 checks (22 scenes + render_check).
+| Check | main | branch (before fixes) |
+| --- | --- | --- |
+| 20 others | pass | pass |
+| outfit_check | FAIL ("showing the tee again restores both garments") | same |
+| wrap_check | FAIL (max error 268 mm against the browser's wrap) | same |
+| skirt_cover_check | pass | FAIL: penelope/petite back coverage 0.673 (my hessianAuto change) |
+
+Findings and fixes:
+- outfit_check: a stale literal (8 pieces; the chinos gained a waistband, the outfit has 9). Test fixed to count.
+- skirt_cover_check: the editor sets tension_stiffness = 1, which hessianAuto overrides; with the editor's 8 Newton
+  iterations the "keep the switched model only if it converged" rule kept throwing the tension model away. New rule:
+  keep it unless it shows its own stall signature. penelope/petite back coverage 0.995 (main 1.000); test_wedge scene 1
+  1.28e-7 J, 0 cap hits; cantilever unchanged.
+- wrap_check: two causes. (1) The Godot assets were stale: only the "average" preset had been re-exported after the
+  browser fit work, so for petite, tall, curvy, athletic and plus the editor had the OLD garment plans (no chinos
+  waistband, old skirt/tee drafts), the old gait (walk.bin), and for curvy/plus the old body and skeleton (arms before
+  the arm-clearance fix); body_ref.json, draft_ref.json and wrap_ref.json were stale too. All regenerated with
+  tools/export_godot_assets.js, export_godot_plans.js, export_godot_body.js (exporters are deterministic: average came
+  out byte-identical). (2) wrap.gd lacked the browser's waistband `tilt` (the band follows the trousers' sloping top
+  edge); ported (_fit_at, _tilt_at). Average preset: max error 0.000000 mm.
+  Still not ported: `lift` (row extents of sloping trouser top edges; the check passes without it, so the reference
+  grid does not exercise it) and the experimental sleeve cap (`cap`, off by default in the browser).
+
 ## Open questions
 - Should `test_garment` assert zero self intersections? It would fail today in default mode (87 pairs). Not changed.
 - The app (worker.js) runs Standard quality with 2 substeps and at most 8 Newton iterations, plus the tension term. The

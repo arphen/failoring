@@ -8,7 +8,7 @@
 //   sections.json   {preset, sections, arms}: body sections + arm tubes for the wrap port
 //     (godot/wrap.gd); hulls/legs as plain arrays, null where a row has no section.
 //   wrap_ref.json   spot values [{piece, u, v, p}] from the real FL.makeWrap, one 3x3 grid per
-//     piece; rows narrower than 1e-9 m are skipped (the wrap angle is trig garbage there in any
+//     piece (plus a 4x5 grid over the upper rows of pieces with wrap.lift or wrap.vcap); rows narrower than 1e-9 m are skipped (the wrap angle is trig garbage there in any
 //     implementation, so they cannot verify a port). Read by godot/tests/wrap_check.tscn.
 // Bodies (body.obj, walk.bin) come from tools/export_godot_assets.js; this tool only adds what
 // the editor needs on top. Ends by reading everything back and checking it.
@@ -62,6 +62,14 @@ function exportPreset(name) {
         if (rowW(pc.outline, v) < 1e-9) continue;
         refs.push({ piece: pc.id, garment: g, u, v, p: w.point(u, v) });
       }
+      // pieces whose rows are measured on a lifted outline or capped (wrap.lift, wrap.vcap): the 3x3 grid misses the rows
+      // that matter (the sloping waist edge), so add a denser grid over the upper part of the piece
+      if (pc.wrap.lift || pc.wrap.vcap != null)
+        for (const fu of [0.2, 0.4, 0.6, 0.8]) for (const fv of [0.6, 0.75, 0.9, 0.97, 1.0]) {
+          const u = bb.x0 + (bb.x1 - bb.x0) * fu, v = bb.y0 + (bb.y1 - bb.y0) * fv;
+          if (rowW(pc.outline, v) < 1e-9) continue;
+          refs.push({ piece: pc.id, garment: g, u, v, p: w.point(u, v) });
+        }
     }
   }
   fs.writeFileSync(path.join(dir, 'wrap_ref.json'), JSON.stringify({ preset: name, refs }));

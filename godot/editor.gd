@@ -3300,7 +3300,7 @@ func _make_job() -> Dictionary:
 		walk_k += 1.0
 		var stride: float = _smooth(minf(1.0, walk_k / RAMP))
 		var phase: float = fposmod(walk_k / CYCLE, 1.0)
-		var pose := BodyGen.pose(M, body_rest, phase, {"stride": stride, "arms": stride})
+		var pose := BodyGen.pose(M, body_rest, phase, {"stride": stride, "arms": stride, "armAbduct": body_stand.get("armAbduct", BodyGen.ARM_ABDUCT)})
 		job["body"] = _to_v3a(pose["pos"])
 		job["move"] = true
 	var f := float(frame)
