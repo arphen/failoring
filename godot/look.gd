@@ -182,6 +182,12 @@ static func body_material() -> StandardMaterial3D:
 	m.rim_enabled = true            # soft edge light on the silhouette
 	m.rim = 0.2
 	m.rim_tint = 0.4
+	# drawn 2.5 mm inside its collision surface: where cloth lies on the skin (0.8 mm display margin over a collision
+	# surface that is itself a sampled grid, about 1-2 mm off the mesh at knees and shoulders), the skin poked through in
+	# specks. A 2.5 mm thinner body is not visible; measured on walking chinos, body edges crossing the cloth went from
+	# ~400 to ~140 per frame (the rest are inside sleeves and trouser legs, where no camera sees them).
+	m.grow = true
+	m.grow_amount = -0.0025
 	return m
 
 

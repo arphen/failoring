@@ -26,6 +26,7 @@ const Layout = preload("res://layout.gd")
 const Guides = preload("res://guides.gd")
 const Place3D = preload("res://place3d.gd")
 const PlaceView = preload("res://place_view.gd")
+const SoftTissue = preload("res://soft_tissue.gd")
 
 # body_h: spacing (m) of the body's signed-distance grid, baked for every walking frame. 7 mm is the reference (the
 # numbers in docs/PERF_NOTES.md are measured with it). Draft and Preview use 10 mm: the bake takes about 1.8x less CPU,
@@ -178,6 +179,8 @@ var view_image: TextureRect
 var layout = Layout.new()   # pane splits, toggles and their saved state (layout.gd)
 var place_view = PlaceView.new()   # moving and turning panels in the 3D view (place_view.gd)
 var place_btn: Button
+var soft = SoftTissue.new()   # breasts, seat, belly, thighs, upper arms that bounce while walking; breath (soft_tissue.gd)
+var soft_gain := 1.0
 
 var plan_opt: OptionButton
 var quality_opt: OptionButton
@@ -2185,6 +2188,15 @@ func _build_body_tab_content() -> void:
 			func() -> float: return float(meas.get(spec[0], 0.0)) * 100.0,
 			func(v: float) -> void: meas[spec[0]] = v / 100.0; _schedule(),
 			func(v: float) -> String: return "%.1f cm" % v)
+	vb.add_child(_h4("Alive"))
+	_slider_row(vb, "Soft tissue", 0.0, 2.0, 0.1,
+		func() -> float: return soft_gain,
+		func(v: float) -> void:
+			soft_gain = v
+			soft.gain = v
+			_schedule(),
+		func(v: float) -> String: return "off" if v <= 0.0 else "%d%%" % roundi(v * 100.0),
+		"How much the breasts, seat, belly, thighs and upper arms bounce while walking, and the breath (100% is the estimate in soft_tissue.gd; off is a rigid body). Applies from the next simulation.")
 	vb.add_child(_h4("More measurements"))
 	for spec in [["arm", "Arm length", 44.0, 68.0], ["inseam", "Inseam", 62.0, 96.0], ["neck", "Neck", 28.0, 48.0], ["thigh", "Thigh", 40.0, 85.0], ["upperarm", "Upper arm", 20.0, 45.0], ["back", "Back length", 30.0, 48.0]]:
 		var row := HBoxContainer.new()
@@ -3192,6 +3204,8 @@ func regen_and_rebuild() -> void:
 	body_rest = BodyGen.generate(M, meas, prev_body)
 	prev_body = {"x": (body_rest as Dictionary)["x"], "keys": (body_rest as Dictionary)["keys"]}
 	body_stand = BodyGen.stand(M, body_rest)
+	soft.setup(M, meas, int(M["nb"]))
+	soft.gain = soft_gain
 	_store_active()
 	if _need_outfit:
 		_need_outfit = false
@@ -3266,6 +3280,7 @@ func rebuild() -> void:
 	walk_k = 0.0
 	_planned = {}
 	_jobs_made = 0
+	soft.reset()  # the tissue starts at rest with the new simulation
 	_store_active()
 	# the shown garments, merged into one plan (outfit.gd): ids are garment-prefixed, each piece keeps its fabric
 	var gs := []
@@ -3314,7 +3329,7 @@ func rebuild() -> void:
 	wraps.clear()
 	for pid in built["order"]:
 		wraps[pid] = Wrap.new(Table.piece_by_id(_sim_pieces, pid), body_stand["sections"], body_stand["arms"])
-	_build_mesh_edges()
+	mesh_edges = sim.get_display_edges()  # display vertex n + e is the middle of pair e (two subdivision levels, C++)
 	_shade.setup(meta, mesh_edges, _sim_pieces, fabric_id, _stand_v3, _disp_idx)
 	_col_key = []  # colours depend on the new meta/mesh_edges
 	_build_stitches()
@@ -3328,6 +3343,7 @@ func rebuild() -> void:
 	walk_k = 0.0
 	_planned = {}
 	_jobs_made = 0
+	soft.reset()
 	var qf: int = QUALITIES[_qual_key()]["frames"]
 	target = qf + (96 if motion == "walk" else qf)
 	if OS.has_environment("FL_AUTO"):
@@ -3433,8 +3449,12 @@ func _make_job() -> Dictionary:
 		walk_k += 1.0
 		var stride: float = _smooth(minf(1.0, walk_k / RAMP))
 		var phase: float = fposmod(walk_k / CYCLE, 1.0)
-		var pose := BodyGen.pose(M, body_rest, phase, {"stride": stride, "arms": stride, "armAbduct": body_stand.get("armAbduct", BodyGen.ARM_ABDUCT)})
-		job["body"] = _to_v3a(pose["pos"])
+		# a person does not repeat a step exactly: stride and arm swing vary a little from cycle to cycle (smooth, repeatable)
+		var cyc := walk_k / CYCLE
+		var vary := 0.6 * sin(TAU * 0.37 * cyc) + 0.4 * sin(TAU * 0.71 * cyc + 1.3)
+		var pose := BodyGen.pose(M, body_rest, phase, {"stride": stride * (1.0 + 0.04 * vary), "arms": stride * (1.0 + 0.08 * vary),
+			"armAbduct": body_stand.get("armAbduct", BodyGen.ARM_ABDUCT)})
+		job["body"] = soft.apply(_to_v3a(pose["pos"]), true)
 		job["move"] = true
 	var f := float(frame)
 	if f <= float(ramp_frames) + 1.0 and ramp_frames > 0:
@@ -3628,7 +3648,6 @@ func _set_cloth_mesh(disp: PackedVector3Array, nrm := PackedVector3Array()) -> v
 	_shade.fill(_cloth_am, cloth_node, disp, _cloth_colors(), nrm)
 
 
-var _mid_panel := PackedInt32Array()
 var _cloth_am := ArrayMesh.new()
 var _disp_idx := PackedInt32Array()   # sim.get_display_indices(), fixed per build (set in rebuild)
 var _stand_v3 := PackedVector3Array()  # standing body positions as Vector3, fixed per build (set in rebuild)
@@ -3673,12 +3692,12 @@ func _compute_cloth_colors() -> PackedColorArray:
 		for k in int(r["count"]):
 			col[int(r["first"]) + k] = c
 	for e in ecount:
-		col[n + e] = col[_mid_panel[e]]
+		col[n + e] = col[mesh_edges[2 * e]]   # a midpoint takes its piece's colour (its first end is on the same piece)
 	return col
 
 
-# display positions for a cloth mesh: vertices plus plain edge midpoints (browser
-# FL.withMidpoints; the solver's body-following lift only exists in sim frames).
+# display positions for a cloth mesh: vertices plus plain midpoints, in order (a midpoint's ends come before it; browser
+# FL.withMidpoints; the solver's body-following push-out only exists in sim frames).
 func _with_midpoints(cloth: PackedVector3Array) -> PackedVector3Array:
 	var n: int = meta["n"]
 	var out := PackedVector3Array()
@@ -3686,9 +3705,7 @@ func _with_midpoints(cloth: PackedVector3Array) -> PackedVector3Array:
 	for i in n:
 		out[i] = cloth[i]
 	for e in mesh_edges.size() / 2:
-		var a: int = mesh_edges[2 * e]
-		var b: int = mesh_edges[2 * e + 1]
-		out[n + e] = (cloth[a] + cloth[b]) * 0.5
+		out[n + e] = (out[mesh_edges[2 * e]] + out[mesh_edges[2 * e + 1]]) * 0.5
 	return out
 
 
@@ -3704,31 +3721,6 @@ func _line_node(col: Color, alpha: float) -> MeshInstance3D:
 	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	stage.add_child(node)
 	return node
-
-
-func _build_mesh_edges() -> void:
-	var seen := {}
-	var edges := PackedInt32Array()
-	var tris: PackedInt32Array = meta["tris"]
-	for t in tris.size() / 3:
-		for k in 3:
-			var a: int = tris[3 * t + k]
-			var b: int = tris[3 * t + (k + 1) % 3]
-			var key := "%d_%d" % [mini(a, b), maxi(a, b)]
-			if not seen.has(key):
-				seen[key] = true
-				edges.append(mini(a, b))
-				edges.append(maxi(a, b))
-	mesh_edges = edges
-	_mid_panel.resize(edges.size() / 2)
-	var order: Array = meta["order"]
-	for e in edges.size() / 2:
-		_mid_panel[e] = -1
-		for i in order.size():
-			var r: Dictionary = meta["ranges"][String(order[i])]
-			if edges[2 * e] >= int(r["first"]) and edges[2 * e] < int(r["first"]) + int(r["count"]):
-				_mid_panel[e] = i
-				break
 
 
 func _table_layout() -> Dictionary:

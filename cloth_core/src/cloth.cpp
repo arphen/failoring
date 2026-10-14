@@ -569,6 +569,13 @@ Real ClothSolver::maxSeamGap() const {
     return g;
 }
 
+std::vector<ClothSolver::SeamLink> ClothSolver::seamLinks() const {
+    std::vector<SeamLink> out;
+    out.reserve(seamC_.size());
+    for (const SeamC& s : seamC_) out.push_back({s.a, s.b0, s.b1, s.t});
+    return out;
+}
+
 Real ClothSolver::minBodyClearance() const {
     if (!collider_) return 1e30;
     Real m = 1e30;

@@ -166,6 +166,7 @@ public:
     // get_display_indices / get_display_positions report an error (and return empty arrays) until it is called again.
     void setup_display();
     PackedInt32Array get_display_indices() const;  // display triangles, 3 per triangle
+    PackedInt32Array get_display_edges() const;    // the midpoint pairs: display vertex n + e is the middle of pair e
     // Display vertex positions: cloth vertices, then edge midpoints pushed out of a body (wasm fl_display_positions).
     // `margin` (m): display triangles are kept at least this far outside the body. Pass 0.0008 for the browser default.
     PackedVector3Array get_display_positions(real_t margin) const;
@@ -253,7 +254,8 @@ private:
     std::unique_ptr<PendingBake> pending_;
 
     // display mesh
-    std::vector<int> dispEdges_;  // pairs of cloth vertices, one per midpoint
+    std::vector<int> dispEdges_;  // pairs of display vertices, one per midpoint (vertex n + e), each pair earlier than it
+    int dispLevels_ = 2;          // midpoint subdivisions of the display mesh (set_param "display_levels", 1 or 2)
     std::vector<int> dispTris_;   // display triangles over the cloth vertices and midpoints
     int dispVertexCount_ = -1;    // cloth vertex count when setup_display() ran (-1 = not set up)
 };

@@ -282,6 +282,9 @@ public:
     // ---- diagnostics -------------------------------------------------------
     Real kineticEnergy() const;
     Real maxSeamGap() const;          // metres, over all seam constraints
+    // Seam pairs for display: vertex a is sewn to the point b0*(1-t) + b1*t of the other side.
+    struct SeamLink { int a, b0, b1; Real t; };
+    std::vector<SeamLink> seamLinks() const;
     Real minBodyClearance() const;    // metres between cloth vertices and the collider surface (negative = penetration)
     Real totalMass() const;
     int framesSimulated() const { return frame_; }

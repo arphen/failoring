@@ -12,7 +12,7 @@ extends RefCounted
 
 const PlanLoader = preload("res://plan_loader.gd")
 const MAGIC := "FLSHOW01"
-const VERSION := 1          # bump when the solver setup, the scenario data or the file format changes
+const VERSION := 2          # 2: display mesh with two subdivision levels (more vertices). Bump when the solver setup, the scenario data or the file format changes
 const LEAD := 0.5           # seconds the body moves from the standing pose into the scenario's first pose
 const SIM_DT := 1.0 / 60.0
 const DISPLAY_MARGIN := 0.0008

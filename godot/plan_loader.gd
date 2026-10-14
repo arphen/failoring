@@ -73,6 +73,15 @@ static func build(plan: Dictionary, sections: Dictionary, arms: Dictionary, stan
 	sim.set_param("seam_ramp_frames", ramp_frames)
 	sim.set_param("self_collision", 1 if self_collision else 0)
 	sim.set_param("tension_stiffness", 1)  # the browser turns this on for garments
+	# Skin friction inside the Newton solve (cloth_friction.cpp, mode 2): Coulomb with the contact force. The solver's
+	# default (mode 0) scales friction with how deep a vertex sank into the body after the solve, and the contact keeps
+	# that depth near zero, so it was almost frictionless: on a 15 degree slope a cotton patch slid 290 mm in 0.5 s where
+	# Coulomb says 0 (test_friction). Walking average body, preview: cloth on the skin slid 4.4 -> 1.1 mm/frame (chinos)
+	# and 3.2 -> 1.6 (tee), the tee sagged 18 -> 9 mm over the walk, its standing motion 2.1 -> 0.3 mm/frame.
+	# FL_FRICTION=0 restores the old mode (comparisons).
+	sim.set_param("body_friction_mode", float(OS.get_environment("FL_FRICTION")) if OS.has_environment("FL_FRICTION") else 2.0)
+	if OS.has_environment("FL_SLIP"):
+		sim.set_param("friction_slip_velocity", float(OS.get_environment("FL_SLIP")))
 	sim.add_plane(Vector3.ZERO, Vector3.UP)  # feet stand on y = 0, like the browser floor
 	if sim.set_body_mesh(standing, body_tris, float(quality.get("body_h", 0.007))) < 0.0:
 		push_error("plan_loader: body bake failed")

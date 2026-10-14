@@ -142,6 +142,26 @@ Product spec for what is wanted next: `docs/EDITOR_V2_SPEC.md`; reports: `docs/D
 * Checks: godot/tests/cad_check (36), place_check (25), and the full Godot suite headless. Screens rendered under Xvfb
   with Godot's OpenGL renderer (llvmpipe), not on a GPU.
 
+## Contact, friction and a living mannequin (2026-10-14 night, opus/contact-friction)
+
+Measured on walking tee and chinos (average body, preview quality, frame dumps analysed against the exact body mesh):
+cloth vertices stay out of the body (deepest about 0.5-3 mm), so the skin seen through the cloth came from the display:
+* coarse cloth triangles (tee 475 vertices, chinos 722 at preview): flat 5-7 cm triangles cut into knees, shins, chest
+  and arms between their corners (up to 16-20 mm); at fine quality (2.8 cm) the same walk shows 5x less. Now the display
+  mesh is split twice (16 display triangles per cloth triangle, `display_levels`, C++ setup_display) and every display
+  vertex is pushed out of the body (iterated: the body's distance field is exact only within 6 mm of the skin);
+* soft seams: the two sides of a seam sit 5-6 mm apart while walking and skin showed in the crack along every seam;
+  now drawn closed (each sewn vertex on the point it is sewn to);
+* the drawn body is 2.5 mm inside its collision surface (material grow), which hides the remaining sub-3 mm specks where
+  cloth lies on skin (body edges crossing the cloth: ~400 -> ~140 per frame, the rest inside sleeves and legs).
+Skin friction: the solver's default friction was effectively off (test_friction: a patch on a 15 degree slope slid
+290 mm in 0.5 s, Coulomb says 0). The editor now uses friction inside the Newton solve (mode 2): cloth sliding over the
+skin while walking 4.4 -> 1.1 mm/frame (chinos), 3.2 -> 1.6 (tee); the tee sags 18 -> 9 mm over the walk; standing
+settles (tee 2.1 -> 0.3 mm/frame). The C++ default stays 0 (core tests); `FL_FRICTION=0` restores it in the editor.
+Living mannequin (`godot/soft_tissue.gd`): breasts, seat, belly, thighs and upper arms are damped springs driven by
+their own acceleration, weighted by the body's morph targets; a breath; stride and arm swing vary a little per cycle.
+Body tab: Alive > Soft tissue (0 = the old rigid body). Frequencies and damping are estimates (see the file).
+
 ## Maintenance
 
 A scheduled task ("Failoring browser build upkeep", daily 06:47 Europe/Berlin) rebuilds `failoring.html`, runs the smoke

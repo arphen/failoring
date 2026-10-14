@@ -622,6 +622,11 @@ PackedFloat32Array FailoringSim::body_eval(const PackedVector3Array& points) con
     return out;
 }
 
+// Each level splits every display triangle into four at its edge midpoints. Level 1's midpoints are of cloth vertices,
+// level 2's of level-1 display vertices; a midpoint is always numbered after both of its ends, so positions, colours and
+// UVs can be filled in order (out[n + e] from out[a] and out[b]). Two levels make a 5 cm cloth triangle 16 display
+// triangles of 1.25 cm: the chord of a flat 5 cm triangle across a 3.5 cm shin is ~9 mm deep (skin shows through it),
+// of a 1.25 cm one ~0.6 mm, and get_display_positions pushes every display vertex out of the body.
 void FailoringSim::setup_display() {
     const auto& tris = solver_->triangles();
     const int64_t n = solver_->vertexCount();
@@ -629,7 +634,7 @@ void FailoringSim::setup_display() {
     dispTris_.clear();
     std::unordered_map<int64_t, int> edgeOf;
     auto mid = [&](int a, int b) {  // the midpoint vertex n + e of the edge (a, b)
-        const int64_t k = a < b ? a * n + b : b * n + a;
+        const int64_t k = a < b ? (int64_t(a) << 32) | b : (int64_t(b) << 32) | a;
         auto it = edgeOf.find(k);
         if (it != edgeOf.end()) return static_cast<int>(n) + it->second;
         const int e = static_cast<int>(dispEdges_.size() / 2);
@@ -638,14 +643,31 @@ void FailoringSim::setup_display() {
         dispEdges_.push_back(b);
         return static_cast<int>(n) + e;
     };
-    dispTris_.reserve(tris.size() * 12);
-    for (const auto& t : tris) {
-        const int a = t[0], b = t[1], c = t[2];
-        const int ab = mid(a, b), bc = mid(b, c), ca = mid(c, a);
-        const int quad[12] = {a, ab, ca, ab, b, bc, ca, bc, c, ab, bc, ca};
-        dispTris_.insert(dispTris_.end(), quad, quad + 12);
+    std::vector<int> cur;
+    cur.reserve(tris.size() * 3);
+    for (const auto& t : tris) cur.insert(cur.end(), {t[0], t[1], t[2]});
+    const int levels = std::max(1, std::min(dispLevels_, 3));
+    for (int lv = 0; lv < levels; ++lv) {
+        std::vector<int> next;
+        next.reserve(cur.size() * 4);
+        for (size_t i = 0; i + 2 < cur.size(); i += 3) {
+            const int a = cur[i], b = cur[i + 1], c = cur[i + 2];
+            const int ab = mid(a, b), bc = mid(b, c), ca = mid(c, a);
+            next.insert(next.end(), {a, ab, ca, ab, b, bc, ca, bc, c, ab, bc, ca});
+        }
+        cur.swap(next);
     }
+    dispTris_.swap(cur);
     dispVertexCount_ = static_cast<int>(n);
+}
+
+PackedInt32Array FailoringSim::get_display_edges() const {
+    PackedInt32Array out;
+    if (!displayCurrent("get_display_edges")) return out;
+    out.resize(static_cast<int64_t>(dispEdges_.size()));
+    int32_t* o = out.ptrw();
+    for (size_t i = 0; i < dispEdges_.size(); ++i) o[i] = dispEdges_[i];
+    return out;
 }
 
 // The display topology is tied to the cloth vertex count at setup_display(): the midpoint of edge e is vertex n + e.
@@ -675,21 +697,43 @@ PackedVector3Array FailoringSim::get_display_positions(real_t margin) const {
     std::vector<fl::Vec3> P(nd), N(nd, fl::Vec3(0, 1, 0));
     std::vector<fl::Real> phi(nd, 1e30), lift(nd, 0);
     for (size_t i = 0; i < n; ++i) P[i] = x[i];
+    // seams are soft: the two sides sit a few mm apart while walking, and skin shows through the crack. Shown closed: each
+    // sewn vertex is drawn on the point of the other side's edge it is sewn to (a shift of the seam gap, a few mm).
+    if (dispLevels_ >= 2)
+        for (const auto& s : solver_->seamLinks()) P[s.a] = x[s.b0] * (1 - s.t) + x[s.b1] * s.t;
     if (active_)
-        for (size_t i = 0; i < n; ++i) phi[i] = active_->eval(x[i], N[i]);
+        for (size_t i = 0; i < n; ++i) phi[i] = active_->eval(P[i], N[i]);
+    if (active_ && dispLevels_ >= 2)
+        for (size_t i = 0; i < n; ++i)   // cloth vertices closer than the margin are shown at the margin
+            for (int it = 0; it < 4 && phi[i] < fl::Real(margin) - 1e-5; ++it) {
+                P[i] += N[i] * (fl::Real(margin) - phi[i]);
+                phi[i] = active_->eval(P[i], N[i]);
+            }
     for (size_t e = 0; e < ne; ++e) {
         const int i = dispEdges_[2 * e], j = dispEdges_[2 * e + 1];
         fl::Vec3& m = P[n + e];
-        m = (x[i] + x[j]) * 0.5;
-        if (!active_ || (phi[i] > 0.012 && phi[j] > 0.012)) continue;
-        const fl::Real target = std::min(phi[i], phi[j]);
+        m = (P[i] + P[j]) * 0.5;
+        if (!active_) continue;
+        const bool closeEnds = !(phi[i] > 0.012 && phi[j] > 0.012);
+        if (dispLevels_ < 2 && !closeEnds) continue;
+        // a midpoint keeps the clearance of its ends (at least the margin): over a curved body the straight chord between
+        // two cloth vertices dips into the skin, the cloth would follow the body there. With two levels every midpoint is
+        // checked, also between two vertices that are far from the body: a coarse sleeve's hem edge can cut straight
+        // through the arm with both ends 2 cm away.
+        const fl::Real target = dispLevels_ >= 2 ? (closeEnds ? std::max(std::min(phi[i], phi[j]), fl::Real(margin)) : fl::Real(margin))
+                                                  : std::min(phi[i], phi[j]);
         fl::Vec3 nm;
-        const fl::Real pm = active_->eval(m, nm);
-        if (pm < target) m += nm * (target - pm);
+        fl::Real pm = active_->eval(m, nm);
+        // the body's distance field is exact only within 6 mm of the skin (SdfGrid band); deeper (a chord 2 cm into a
+        // swinging arm) one step lands short, so step again from where it landed
+        for (int it = 0; it < 4 && pm < target - 1e-5; ++it) {
+            m += nm * (target - pm);
+            pm = active_->eval(m, nm);
+        }
         phi[n + e] = std::max(pm, target);
         N[n + e] = nm;
     }
-    if (active_)
+    if (active_ && dispLevels_ < 2)   // one level: lift whole triangles (at most 4 mm) where their middles dip in
         for (size_t t = 0; t + 2 < dispTris_.size(); t += 3) {
             const int a = dispTris_[t], b = dispTris_[t + 1], c = dispTris_[t + 2];
             if (phi[a] > 0.012 && phi[b] > 0.012 && phi[c] > 0.012) continue;
@@ -742,9 +786,12 @@ void FailoringSim::set_param(const String& name, real_t v) {
     if (name == "substeps") p.substeps = static_cast<int>(v);
     else if (name == "newton_iterations") p.newtonIterations = static_cast<int>(v);
     else if (name == "dt") p.dt = v;
+    else if (name == "display_levels") dispLevels_ = std::max(1, std::min(3, static_cast<int>(v)));  // before setup_display()
     else if (name == "seam_stiffness") p.seamStiffness = v;
     else if (name == "seam_ramp_frames") p.seamRampFrames = static_cast<int>(v);
     else if (name == "self_collision") p.selfCollision = v != 0;
+    else if (name == "body_friction_mode") p.bodyFrictionMode = static_cast<int>(v);      // 0 after the solve, 2 inside it
+    else if (name == "friction_slip_velocity") p.frictionSlipVelocity = v;              // m/s, mode 2 smoothing
     else if (name == "contact_offset") p.contactOffset = v;
     else if (name == "contact_band") p.contactBand = v;
     else if (name == "tension_stiffness") p.tensionStiffness = v != 0;
@@ -901,6 +948,7 @@ void FailoringSim::_bind_methods() {
     ClassDB::bind_method(D_METHOD("setup_display"), &FailoringSim::setup_display);
     ClassDB::bind_method(D_METHOD("get_display_indices"), &FailoringSim::get_display_indices);
     ClassDB::bind_method(D_METHOD("get_display_normals", "positions"), &FailoringSim::get_display_normals);
+    ClassDB::bind_method(D_METHOD("get_display_edges"), &FailoringSim::get_display_edges);
     ClassDB::bind_method(D_METHOD("get_display_positions", "margin"), &FailoringSim::get_display_positions, DEFVAL(0.0008));
 
     ClassDB::bind_method(D_METHOD("set_param", "name", "value"), &FailoringSim::set_param);
