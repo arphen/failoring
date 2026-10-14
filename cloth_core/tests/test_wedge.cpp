@@ -65,7 +65,8 @@ void applyOverrides(SolverParams& sp, const std::string& ov) {
         else if (k == "self") sp.selfCollision = v != 0;
         else if (k == "iters") sp.newtonIterations = static_cast<int>(v);
         else if (k == "sub") sp.substeps = static_cast<int>(v);
-        else if (k == "tension") sp.tensionStiffness = v != 0;
+        else if (k == "tension") { sp.tensionStiffness = v != 0; sp.hessianAuto = false; }
+        else if (k == "auto") sp.hessianAuto = v != 0;
         else if (k != "tag") std::printf("  (unknown override %s ignored)\n", k.c_str());
     }
 }
@@ -153,7 +154,7 @@ Summary run(int scene, const std::string& ov, int frames) {
                 r.liftsLateTail / ns, r.liftsTail > 0 ? r.liftDistTail / r.liftsTail : 0.0);
     std::printf("  step KE after Newton %.2e, after body pass %.2e, after self collision %.2e J (mean per substep)\n",
                 r.keNewtonTail / ns, r.keBodyTail / ns, r.keSelfTail / ns);
-    std::printf("  post-solve totals: pushed %lld, friction applied %lld vertex-substeps\n", d.pushAfter, d.frictionAfter);
+    std::printf("  post-solve totals: pushed %lld, friction applied %lld vertex-substeps; Hessian switches %lld\n", d.pushAfter, d.frictionAfter, d.hessianSwitches);
     std::printf("  min clearance %.3f mm, max stretch %.4f (final %.4f), hem %.1f mm, seam gap %.2f mm, finite %s\n",
                 r.minClr * 1e3, r.maxStretch, r.finalStretch, r.hem * 1e3, r.gap * 1e3, r.finite ? "yes" : "NO");
     if (std::getenv("FL_KE_TOP")) {  // where is the kinetic energy? (held vs free, distance to the body)
@@ -195,29 +196,34 @@ int main(int argc, char** argv) {
         FINISH();
     }
     // Default run. Diagnosis (docs/handoff/OPUS_SESSION_1.md): the jitter of the wedged tube is the free span bridging
-    // the crease between the two bodies fluttering, because Newton never converges there; the Gauss-Newton Hessian lacks
-    // the tension (geometric) stiffness of the taut span. SolverParams::tensionStiffness adds it (off by default).
+    // the crease between the two bodies fluttering, because Newton never converges there with the Gauss-Newton Hessian,
+    // which lacks the tension (geometric) stiffness of the taut span. The default solver (hessianAuto) switches to the
+    // tension term where Gauss-Newton stalls.
     auto safety = [](const Summary& r) {
         CHECK_MSG(r.finite, "scene %d %s: non-finite", r.scene, r.tag.c_str());
         CHECK_MSG(r.minClr > -0.001, "scene %d %s: penetrates by %.2f mm", r.scene, r.tag.c_str(), -r.minClr * 1e3);  // as test_garment
         CHECK_MSG(r.gap < 0.004, "scene %d %s: seam gap %.2f mm", r.scene, r.tag.c_str(), r.gap * 1e3);              // as test_garment
     };
-    // scene 1 with the default solver: the known jitter (reported, not asserted; measured mean tail KE 3.1e-5 J)
-    const Summary off = run(1, "tag=off", 240);
+    // scene 1 with the old solver (Gauss-Newton, friction after the solve): the known jitter (reported, not asserted;
+    // measured 3.1e-5 J)
+    const Summary off = run(1, "tension=0,fric=0,tag=old_solver", 240);
     safety(off);
-    // scene 1 with the tension term: Newton converges, the ring settles (measured mean tail KE 2.7e-7 J, 0 cap hits)
-    const Summary on = run(1, "tension=1,tag=tension", 240);
+    // scene 1 with the default solver (automatic Hessian model): Newton converges and the ring settles (measured
+    // 1.9e-7 J; with bodyFrictionMode 2 as well, 2.1e-10 J)
+    const Summary on = run(1, "tag=default", 240);
     safety(on);
-    CHECK_MSG(on.keMeanTail < 1e-6, "scene 1 tension: mean KE over the last 60 frames %.2e J", on.keMeanTail);
-    CHECK_MSG(on.keMeanTail * 100 < off.keMeanTail, "scene 1: tension term reduces the tail KE only %.0fx (%.2e -> %.2e J)",
+    CHECK_MSG(on.keMeanTail < 1e-6, "scene 1 default: mean KE over the last 60 frames %.2e J", on.keMeanTail);
+    CHECK_MSG(on.keMeanTail * 100 < off.keMeanTail, "scene 1: default solver reduces the tail KE only %.0fx (%.2e -> %.2e J)",
               off.keMeanTail / on.keMeanTail, off.keMeanTail, on.keMeanTail);
-    CHECK_MSG(on.capTail == 0, "scene 1 tension: %lld substeps hit the Newton iteration cap in the last 60 frames", on.capTail);
-    CHECK_MSG(on.lsTail == 0, "scene 1 tension: %lld line-search failures in the last 60 frames", on.lsTail);
-    // scene 0 (the test_garment geometry) with the tension term: settles as well (measured 6.6e-7 J)
-    const Summary on0 = run(0, "tension=1,tag=tension", 240);
+    CHECK_MSG(on.capTail == 0, "scene 1 default: %lld substeps hit the Newton iteration cap in the last 60 frames", on.capTail);
+    CHECK_MSG(on.lsTail == 0, "scene 1 default: %lld line-search failures in the last 60 frames", on.lsTail);
+    // scene 0 (the test_garment geometry) with the default solver: settles as well (measured 8.7e-7 J)
+    const Summary on0 = run(0, "tag=default", 240);
     safety(on0);
-    CHECK_MSG(on0.keMeanTail < 5e-6, "scene 0 tension: mean KE over the last 60 frames %.2e J", on0.keMeanTail);
-    std::printf("[summary] scene 1 mean KE last 60 frames: off %.2e J, tension %.2e J (%.0fx); scene 0 tension %.2e J\n",
+    CHECK_MSG(on0.keMeanTail < 5e-6, "scene 0 default: mean KE over the last 60 frames %.2e J", on0.keMeanTail);
+    // scene 0's free, collapsed top converges linearly (~10-11 iterations of 12): a few cap hits are not jitter
+    CHECK_MSG(on0.capTail <= on0.subTail / 20, "scene 0 default: %lld of %lld substeps hit the cap in the last 60 frames", on0.capTail, on0.subTail);
+    std::printf("[summary] scene 1 mean KE last 60 frames: old solver %.2e J, default %.2e J (%.0fx); scene 0 default %.2e J\n",
                 off.keMeanTail, on.keMeanTail, off.keMeanTail / on.keMeanTail, on0.keMeanTail);
     FINISH();
 }

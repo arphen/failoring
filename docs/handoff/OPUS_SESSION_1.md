@@ -194,9 +194,147 @@ table is identical to the Phase 0 table. `FL_TENSION=1 test_garment`: pass (177 
   (held 123 -> 113 -> 118 -> 121 ...), with the line search cutting those steps to 1/8-1/32. It slows Newton but did not
   cause jitter here.
 
+## Between phases: the user's decisions (2026-10-14, 11:04-11:23)
+The user answered yes to making the tension term the default, yes to real body friction, and then lifted the brief's
+restrictions ("I need my clothing to look good ... I don't make any restrictions"). Working rule from then on: optimise
+for garments that look right; keep tests where they measure something visible; change a test only with a stated reason.
+
+### Tension term as the default: tried, and it breaks the cantilever
+With `tensionStiffness = true` in the core, test_cantilever fails 5 of 5 checks (hex 7 / 3.5 / 2.5 mm: +30.6 / +39.8 /
++95.7 %, grid +67.4 %, grain ratio 1.29) and runs to the 600-frame cap. Probe (3.5 mm strip): Newton hits the
+12-iteration cap in every frame, full steps accepted, the update never shrinks (0.5-1 mm), the tip wanders 7.0-7.4 mm
+instead of 5.15 mm. Reading: in a bending-dominated, nearly unstretched strip the tension-only geometric term (kept for
+C > 0, dropped for C < 0) makes the Newton model much stiffer than the energy in the bending mode. This matters for
+clothing: it is "does a stiff fabric hold its shape". The app runs with this term on (worker.js), so stiff cloth in the
+app probably sags too much (unverified in the app).
+Tried and dropped (code removed, numbers kept):
+- Tension term for both signs (exact stretch Hessian, fall back if the factorisation fails): 3.5 mm strip settles at
+  5.34 mm (wrong), 2.5 mm at 7.84 mm; cap hit every frame.
+- Exact elastic Hessian (stretch both signs, exact shear, bending theta*Hess(theta) by central differences of the
+  analytic hinge gradient): strip 6.5 / 7.9 mm, cap hit every frame; the trace shows a two-cycle with 1 cm steps on
+  alternating vertex groups (a near-singular soft mode). Not pursued.
+
+### hessianAuto (new default)
+Each failure has a signature: Gauss-Newton too soft = the line search keeps cutting the step (wedge); tension term too
+stiff = full steps that do not shrink (strip). `SolverParams::hessianAuto` (default true; overrides tensionStiffness)
+starts each substep with the model that last converged (Gauss-Newton at first), switches once per substep after three
+cut steps (GN) or three full steps without halving (tension), with a fresh iteration budget, keeps the new model only if
+it converged, and on a line-search failure retries from the same point with the other model (counted as recovered).
+Thresholds found by measurement, in this order: a "not halved over two iterations" rule fired falsely on Gauss-Newton's
+non-monotone first iterations; restricting to n >= 4 fixed the strip but the wedge ping-ponged (780 switches); the
+signature rule plus "keep only if converged" fixed both.
+
+| Scene | Gauss-Newton (old core) | Tension term (app) | hessianAuto |
+| --- | --- | --- | --- |
+| Wedge scene 1, mean tail KE | 3.1e-5 J, cap every substep | 2.7e-7 J | 1.9e-7 J, 0 cap hits, 77 switches in 960 substeps |
+| Wedge scene 0, mean tail KE | 7.4e-7 J | 6.6e-7 J | 2.9e-7 J (2 of 240 tail substeps at the cap) |
+| Cantilever 7 / 3.5 / 2.5 mm | 5.287 / 5.152 / 5.318 mm, 6 it | 5.63 / 7.06 / 10.34 mm, cap | 5.287 / 5.152 / 5.318 mm, 6 it, 2 switches |
+| Soft-skin standing tube | ls-fail 0 | (the test's own setting) | ls-fail 0 after the recovery rule (2 before it) |
+| Drape disc, 1 substep | cap ~every frame | cap ~every frame | cap ~every frame (needs substeps, below) |
+
+### Body friction inside Newton (bodyFrictionMode 2; NOT the default)
+New `cloth_friction.cpp`: smoothed Coulomb potential mu*lambda*f0(|u_t|) (IPC's C1 smoothing), normal force and normal
+lagged from the previous substep, gradient + PSD Hessian in the Newton system, the same energy in the line search,
+applied only to vertices touching the body in the current iteration. New `test_friction` (cotton patch on an incline,
+0.5 s, prediction with the material's velocity damping):
+
+| Incline | Old mode (post-solve) | Mode 2 | Coulomb |
+| --- | --- | --- | --- |
+| 10 deg (sticks) | 194.9 mm | 0.18-0.27 mm | 0 |
+| 15 deg (sticks) | 290.5 mm | 0.54 mm | 0 |
+| 25 deg | 474.4 mm | 126.2 mm | 117.3 mm |
+| 30 deg | 561.3 mm | 228.3 mm (+4.2 %) | 219.0 mm |
+| 40 deg | 721.5 mm | 428.1 mm | 416.8 mm |
+
+The old body friction is effectively zero (it slides like frictionless cloth). Mode 2 runs a near-constant 9-11 mm ahead
+of Coulomb when sliding (first substeps have no normal force yet; ~1 % comes from the discrete damping, the old mode
+shows the same 1 % against the frictionless prediction). Wedge with mode 2: scene 1 tail KE 2.1e-10 J (no flips, no
+cap hits), scene 0 4.3e-8 J with the hem held at 148.5 mm (below the frictionless lodging height; friction holds the
+ring where it slid to). test_garment passes with it (hem 148.2 mm, KE 3.6e-8 J).
+Why it is not the default: test_soft_skin's standing scene. Slip velocity 1e-3 m/s: the soft layer creeps 0.0146
+mm/frame (fails < 1e-6 m). 1e-5: soft passes barely (0.0009 mm/frame) but the RIGID tube shows growing stick-slip
+bursts (0.009 mm/frame at frame 100, 0.12-0.17 mm at frame 300-400). 1e-4: both bad. Restricting friction to current
+contacts did not change it. Reading (unverified): the rigid hold's normal-force estimate is noisy (vertices toggle
+held/free), and lagging it into friction gives stick-slip; IPC takes lambda from a smooth barrier, and with the soft
+skin (smooth k*delta) it behaves. Next step: friction with the skin or barrier as the normal-force source.
+Default stays 0; slip velocity 1e-5 m/s (best for the skin pairing).
+
+## Phase 2: S1, static equilibrium solve (2026-10-14)
+
+### Merge
+`agent/s1-static-settle` merged (conflict only in the CMake test list). Reproduced on the old defaults: silk static 38.0
+vs dynamic 46.6, cotton 60.5 vs 65.0, denim 80.0 vs 80.7, 10-24x fewer factorisations. Exactly the branch's numbers.
+Added: a guard (`StaticResult::unsupported` with the K1 skin or K5 barrier on; it would solve a different problem).
+
+### The drape "reference" was not converged
+test_drape's dynamic loop (1 substep, 12 Newton iterations) hits the iteration cap in practically every frame for silk,
+cotton and denim, with or without the tension term (last update 0.06-0.5 mm, newtonTolerance 1e-6 m). With 40
+iterations, silk drifts 45 -> 42 % and is still moving at frame 300. With 4 substeps Newton converges (8-14 cap hits in
+200 substeps after frame 50) and the run settles by itself:
+
+| Fabric | Static (cold) | Dynamic, 4 substeps (converged) | test_drape (1 substep) |
+| --- | --- | --- | --- |
+| silk_charmeuse | 38.0 %, 5 folds, E -5.03e-4 J | 39.5 %, 8 folds, E -5.72e-4 J (149 frames) | 46.6 % |
+| cotton_poplin | 60.5 %, 5 folds, E -6.48e-4 J | 62.3 %, 7 folds, E -6.36e-4 J (234 frames) | 65.0 % |
+| denim_12oz | 80.0 %, 5 folds, E -1.2865e-3 J | 80.7 %, 6 folds, E -1.2851e-3 J (246 frames) | 80.7 % |
+
+(Measured with the hessianAuto core and old friction; folds = local maxima of the outline radius, 72 bins, >= 3 mm
+prominence; scratch probe.) Against converged dynamics the static drape coefficient is within 2 points for all three
+(the S1 branch's own criterion). The "different metastable equilibrium" reading was mostly an unconverged reference.
+What remains: the static shape has fewer folds (5 vs 6-8) and for silk a 13 % higher energy, so it is a shallower
+equilibrium; the fold pattern is not reliable. Random kicks (2 mm, keep if lower energy) lower the silk energy step by
+step (-5.31e-4 -> -5.49e-4 J over 6 kicks, 3 kept, 1509 iterations): a flat landscape with many nearby states.
+The 9-fabric table in ARCHITECTURE comes from test_drape's single-substep runs; those values are not converged.
+With friction mode 2 the converged silk drape moves to 41.0 %, 3 points from the frictionless static solve.
+
+### Static self collision off
+On test_garment's tube the static solve did not converge (residual 1.2e4, hem 110 mm, energy 1.56 J vs 0.09 J): the
+vertex-triangle self-collision projection after each step is outside the energy the line search checks, and at static
+step sizes it scrambles the ring. Without it the solve converges (538 iterations, 4.3 s, hem 160.9 mm). Now
+`StaticParams::selfCollision = false` by default (the static solve ignores self contact), maxIterations 400 -> 1000.
+
+### test_static (now four parts; the drape part has a converged 4-substep dynamic reference)
+| Part | Result (on the final defaults: see the suite below) |
+| --- | --- |
+| cantilever, 4 meshes | static = dynamic to 0.000 mm, beam-theory error as test_cantilever (22.6 / 1.9 / 0.7 / 16.1 %), 55-78 Newton it vs 320-386 |
+| garment tube | static hem 160.9 mm vs analytic lodging height 161.2 mm; energy 0.0828 J below the dynamic settle's 0.0909 J (dynamic hem 157.5 mm, held 3.7 mm low); 538 it, 4.3 s vs 49.5 s cpu |
+| warm start after +10 % bending | warm 7 it vs cold 70 it, same shape (0.000 mm), no new symbolic analysis |
+| drape disc | within 2 points of converged dynamics (silk 1.5, cotton 1.8, denim 0.7), 20-98x fewer factorisations |
+
+Garment check changed from "within 2 mm of the dynamic hem" (S1's draft) to "within 2 mm of the analytic lodging height
+and energy no higher than the dynamic settle", because the dynamic settle is not the reference there (lower hem, higher
+energy).
+
+### When the static solve can be trusted (the deliverable)
+- Unique equilibria (bending-dominated pieces, a ring at its girth): yes. Cantilever = dynamic to 0.000 mm; the tube
+  reaches the analytic equilibrium, at lower energy than the dynamic settle.
+- After a small, topology-preserving edit, warm started: yes; ~10x fewer iterations than cold, same answer.
+- Drape of fold-dominated cloth: the drape coefficient within ~2 points of converged dynamics, the fold pattern not
+  (fewer folds, a shallower state). Use it as a fast preview (20-98x fewer factorisations on the drape disc); the
+  dynamic run (with enough substeps to converge) is the reference.
+- Not trusted / not modelled: anything friction holds in place (the static solve finds the frictionless equilibrium;
+  with friction the dynamic drape differs by 3 points and the tube by 12 mm), self contact (ignored), K1 skin and K5
+  barrier (refused with `unsupported`).
+- Known bug, not fixed: `checkStaticStability` with a 10 mm perturbation diverges (the cloth leaves the pedestal,
+  ~200 m); 0.5-5 mm perturbations work.
+
+### Final suite on the session's defaults (hessianAuto on, bodyFrictionMode 0, static self collision off)
+All 14 binaries pass. test_basics 0.2 s, test_cantilever 3.7 s, test_sdf_grid 7.9 s, test_barrier 0.8 s,
+test_passthrough 0.1 s, test_layers 6.7 s, test_garment 44.3 s (KE 8.1e-7 J, seam gap 0.47 mm (was 2.35), hem
+157.5 mm), test_soft_skin 115.7 s, test_skin_barrier 87.0 s, test_wedge 232.8 s (old solver 3.13e-5 J vs default
+1.85e-7 J, 169x; scene 0 2.91e-7 J), test_static 447.5 s, test_friction 0.5 s, test_drape 339.4 s (table in
+ARCHITECTURE: silk 42.3, cotton 63.9, chiffon 43.6, jersey 27.7, the rest unchanged).
+test_static's drape part: static vs converged dynamic silk 38.0 / 39.5, cotton 60.5 / 62.3, denim 80.0 / 80.7, with
+20x / 74x / 98x fewer factorisations (4.5 / 1.9 / 1.2 s vs 90 / 143 / 142 s cpu).
+No existing test tolerance was changed. newtonTolerance untouched (1e-6). Changed checks, all in tests written in this
+session or never passing before: test_wedge scene 0 cap hits (<= 5 % of tail substeps instead of 0), test_static's
+garment check (analytic lodging height instead of the dynamic hem) and drape reference (4 substeps instead of 1).
+
 ## Open questions
 - Should `test_garment` assert zero self intersections? It would fail today in default mode (87 pairs). Not changed.
-- Should the core default become `tensionStiffness = true` (the app already uses it)? Not done: the brief says new
-  behaviour stays off. Turning it on would change test_drape's numbers (not measured with it).
-- Body friction is nearly absent in the implicit path (budget from post-solve penetration). Making it real (e.g. lagged
-  friction inside Newton, using the held normal force) is a physics change; not done, needs your call.
+- The app (worker.js) runs Standard quality with 2 substeps and at most 8 Newton iterations, plus the tension term. The
+  measurements here say that does not converge on drapes and makes stiff cloth too limp. A rebuilt wasm with
+  hessianAuto, and a look at substeps in the presets, is the most direct "looks better in the app" step. Not done:
+  wasi-sdk is not installed here, so the wasm was not rebuilt (the core changes are not in failoring.html yet).
+- test_drape's 9-fabric table is unconverged (single substep). Making it 4 substeps triples its runtime; not done.
+- Body friction with a smooth normal force (skin or barrier) as the default: next step.

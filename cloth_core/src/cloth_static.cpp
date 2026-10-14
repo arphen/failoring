@@ -132,7 +132,7 @@ ClothSolver::StaticNewton ClothSolver::staticNewton(Real alpha, Real lam, int ma
             out.ok = false;
             return out;
         }
-        if (p_.selfCollision) {  // projection after the step (not part of the line-search energy): see notes
+        if (p_.selfCollision && staticSelfCollision_) {  // projection after the step (not part of the line-search energy)
             xPrev_ = xBackup_;
             solveSelfCollision();
         }
@@ -142,10 +142,16 @@ ClothSolver::StaticNewton ClothSolver::staticNewton(Real alpha, Real lam, int ma
 
 StaticResult ClothSolver::solveStatic(const StaticParams& sp) {
     if (!finalized_) finalize();
+    if (skinOn() || p_.barrierContact) {  // not modelled here (see StaticResult::unsupported)
+        StaticResult u;
+        u.unsupported = true;
+        return u;
+    }
     const auto wall0 = std::chrono::steady_clock::now();
     const std::clock_t cpu0 = std::clock();
     const int analyses0 = symbolicAnalyses_;
     const int lsf0 = lineSearchFailures_;
+    staticSelfCollision_ = sp.selfCollision;
     const int N = vertexCount();
     StaticResult R;
 

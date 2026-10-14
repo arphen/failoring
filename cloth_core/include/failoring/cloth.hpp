@@ -72,7 +72,19 @@ struct SolverParams {
     int seamRampFrames = 0;        // >0: seams fade in over this many frames (helps assembling far-apart panels)
     Real contactOffset = 0.0015;   // m, extra clearance cloth <-> body
     Real contactBand = 1e-4;       // m, implicit: a vertex this close to the body and pushed towards it is held (not released)
-    bool tensionStiffness = false;  // garment option (the app turns it on): exact PSD tension term, see ARCHITECTURE.md  // implicit: include the (PSD) tension part of the stretch Hessian; changes convergence, not the physics
+    // Implicit: include the (PSD) tension part of the stretch Hessian (off in the core, on in the app). Without it Newton
+    // has no stiffness across a taut span and never converges on a ring bridging a gap (the "wedge jitter"); with it,
+    // Newton stops converging on a bending-dominated, nearly unstretched strip (test_cantilever fails 5 of 5). Both
+    // measured 2026-10-14, docs/handoff/OPUS_SESSION_1.md. Changes convergence, so it changes the results of runs that
+    // do not converge.
+    bool tensionStiffness = false;
+    // Choose the Hessian model per substep (implicit only; overrides tensionStiffness). Default since 2026-10-14.
+    // Gauss-Newton is too soft on taut spans (the line search keeps cutting the step: wedge jitter), the tension term
+    // is too stiff on bending-dominated, nearly unstretched cloth (full steps that do not shrink: test_cantilever fails).
+    // Each substep starts with the model that last converged (Gauss-Newton at first); on three cut steps (Gauss-Newton)
+    // or three full steps without halving (tension) it switches once, with a fresh iteration budget, and keeps the new
+    // model only if it converged. Measured in docs/handoff/OPUS_SESSION_1.md.
+    bool hessianAuto = true;
     bool selfCollision = true;
     Real selfThickness = 0.002;    // m, vertex-triangle contact distance
     // K1 compliant skin (implicit integrator only; see docs/agent_notes/K1_compliant_skin.md). A cloth vertex whose
@@ -93,9 +105,16 @@ struct SolverParams {
 
     // K2 (docs/handoff/OPUS_SESSION_1.md): contact diagnostics and experiment switches. Defaults = old behaviour.
     bool contactDiagnostics = false;  // fill ClothSolver::contactDiag() (costs a few extra passes per substep)
-    // Body friction: 0 = old (position correction after the solve, budget mu * penetration left after the solve),
-    // 1 = none (diagnostic).
+    // Body friction: 0 = old (position correction after the solve, budget mu * penetration left after the solve, which
+    // the in-Newton projection has already removed: nearly frictionless), 1 = none (diagnostic), 2 = smoothed Coulomb
+    // potential inside the Newton solve with lagged normal force (cloth_friction.cpp, implicit integrator). Mode 2 is
+    // right on an incline (test_friction) and stills the wedge, but with the rigid hold its lagged normal force is
+    // noisy and a wedged tube on a narrow-waist body shows growing stick-slip bursts (~0.1 mm/frame), so it is not the
+    // default yet; with the K1 soft skin (smooth normal force) it settles. docs/handoff/OPUS_SESSION_1.md.
     int bodyFrictionMode = 0;
+    // m/s, mode 2: slip speed below which a contact counts as sticking (smoothing). A contact held below the friction
+    // limit creeps at up to this speed, so it must be small: 1e-3 let a resting soft-skin tube creep 0.015 mm/frame.
+    Real frictionSlipVelocity = 1e-5;
     bool bodyPushAfterSolve = true;   // false (diagnostic): skip the push-out after the solve (in-Newton hold only)
 };
 
@@ -112,6 +131,9 @@ struct ContactDiag {
     double liftDist = 0;            // total projection distance (m)
     long long liftsAfterFirstIter = 0;  // lifts in iterations 2.. (the Newton step itself went into the body)
     long long lsFail = 0;
+    long long hessianSwitches = 0;  // hessianAuto: substeps that switched the Hessian model
+    long long lsRecovered = 0;      // hessianAuto: line searches that failed and were retried with the other model
+    long long frictionActive = 0;   // bodyFrictionMode 2: vertex-iterations with a friction term
     long long pushAfter = 0, frictionAfter = 0;  // vertices moved by the post-solve push-out / friction
     double keNewton = 0, keBody = 0, keSelf = 0;  // KE of (x - xPrev)/h after Newton, after solveBody, after self collision (sums)
     double lastKeNewton = 0, lastKeBody = 0, lastKeSelf = 0;
@@ -138,13 +160,21 @@ struct StaticParams {
     // Final convergence (alpha = 0, full load): scaled force imbalance AND largest vertex step per Newton iteration.
     Real residualTolerance = 1e-3;     // |filtered force| / |weight|, both in the 2-norm over free vertices
     Real displacementTolerance = 1e-5; // m
-    int maxIterations = 400;           // cap on Newton iterations (= numeric factorisations) over the whole solve
+    int maxIterations = 1000;          // cap on Newton iterations (= numeric factorisations) over the whole solve
     bool warmStart = false;            // start from the current positions at full load with small alpha
+    // Vertex-triangle self-collision projection after each static step (SolverParams::selfCollision must be on too).
+    // Off by default: the projection is not part of the energy the line search checks, and with static step sizes it
+    // scrambles a wedged ring (test_garment's tube: residual 1e4, hem 50 mm too low; converges without it).
+    // So the static solve ignores self contact. Measured 2026-10-14, docs/handoff/OPUS_SESSION_1.md.
+    bool selfCollision = false;
     bool verbose = false;
 };
 
 struct StaticResult {
     bool converged = false;
+    // The static solve handles rigid body contact only. With the K1 skin or K5 barrier contact on it does nothing
+    // and sets this (it would otherwise solve a different problem than step()).
+    bool unsupported = false;
     int iterations = 0;       // Newton iterations (each one numeric Cholesky factorisation), all stages
     int stages = 0;           // pseudo-transient stages / load steps taken (successful ones)
     int failedStages = 0;     // stages rolled back (load increment halved or alpha raised)
@@ -318,6 +348,7 @@ private:
     void buildBlockPattern();
     void bindBlockSlots();     // (re)assign the K_ slot of every constraint for the current pattern
     bool patternValid_ = false;
+    bool staticSelfCollision_ = false;  // StaticParams::selfCollision of the running solveStatic
     int symbolicAnalyses_ = 0;
     // static solver internals (cloth_static.cpp)
     Real staticEnergy(Real alpha, Real lam) const;
@@ -377,9 +408,18 @@ private:
     bool skinOn() const { return p_.skinStiffness > 0 && p_.skinMaxDepth > 0; }
     void updateSkinAreas();
     void assembleSkin();
+    // body friction inside Newton (cloth_friction.cpp, bodyFrictionMode 2): mu * lambda and normal lagged per substep
+    std::vector<Real> fricLam_;
+    std::vector<Vec3> fricN_;
+    std::vector<char> fricOn_;  // vertices with a friction term in the current Newton iteration
+    void frictionLag(bool skin);
+    Vec3 frictionSlip(int i, Real invS) const;
+    Real frictionEnergy(Real h) const;
+    void assembleFriction(Real h, bool skin);
     long long newtonIterations_ = 0;  // Newton iterations used, summed over all substeps
     long long substepsDone_ = 0;
     ContactDiag cdiag_;
+    bool autoTension_ = false;  // hessianAuto: current model (true = with the tension term)
     int dxTraceFrame_ = -1;  // diagnostics: print every Newton iteration of this frame to stderr
 public:
     void setNewtonTraceFrame(int f) { dxTraceFrame_ = f; }

@@ -52,7 +52,7 @@ Run runScene(const std::string& name, bool skin, bool barrier, int frames) {
     sp.seamRampFrames = 0;
     if (skin) { sp.skinStiffness = kSkinK; sp.skinMaxDepth = kSkinDepth; }
     if (barrier) { sp.barrierContact = true; sp.selfCollision = false; }  // as test_garment's FL_BARRIER switch
-    if (std::getenv("FL_TENSION")) sp.tensionStiffness = true;  // K2: tension Hessian term (opt-in, as test_garment)
+    if (const char* e = std::getenv("FL_TENSION")) { sp.hessianAuto = false; sp.tensionStiffness = std::atoi(e) != 0; }  // K2: FL_TENSION=0 Gauss-Newton, =1 tension term (default: automatic)
     ClothSolver cs(sp);
     cs.setCollider(body);
 

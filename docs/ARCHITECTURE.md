@@ -14,7 +14,8 @@ core (`failoring.html`). Two builds exist and are kept deliberately separate; se
 cloth_core/            C++17 library, no dependencies, no Godot  (the simulator)
   include/failoring/   math, material, collider, mesher, mesh_sizing, cloth, sdf_grid, sparse_chol, metrics
   src/
-  tests/               test_basics, test_cantilever, test_drape, test_garment, test_sdf_grid  (ctest)
+  tests/               test_basics, test_cantilever, test_drape, test_garment, test_sdf_grid, test_soft_skin, test_barrier,
+                       test_passthrough, test_layers, test_skin_barrier, test_wedge, test_static, test_friction  (ctest)
 materials/fabrics.json fabric presets (SI units, grain-aware)
 gdextension/           godot-cpp wrapper -> class FailoringSim (GDScript API)
 godot/                 demo project: tube dress on an ellipsoid mannequin, fabric switcher
@@ -50,8 +51,8 @@ Godot module: `cmake -S gdextension -B build-gd && cmake --build build-gd -j` (w
 | In-plane | Per-triangle warp stretch, weft stretch, shear (Baraff-Witkin style) - independent stiffness per direction (N/m), reduced compression stiffness (`compression_ratio`) so cloth buckles instead of locking |
 | Bending | Dihedral hinge energy, directional rigidity by mixing compliance `1/B(psi) = cos^4/Bu + sin^4/Bv + 2 sin^2 cos^2 / sqrt(Bu Bv)`, mesh factor calibrated against beam theory |
 | Time integration | Implicit Euler written as a variational problem; Newton with Gauss-Newton Hessian, backtracking line search on the variational energy, sparse Cholesky (nested-dissection ordering). CG+SSOR fallback. XPBD kept as `Integrator::XPBD` (too soft for stiff fine meshes) |
-| Tension term | `SolverParams::tensionStiffness`: adds the (PSD) tension part of the stretch Hessian. **Off in the core by default**; the browser app turns it on (`fl_set_param(7, 1)` in `worker.js`) so taut seams and waistbands do not creep. Changes convergence, not the physics |
-| Contact with body | Signed-distance colliders: analytic primitives (sphere, capsule, cylinder, plane, ellipsoid, union) or a baked distance grid of a closed mesh (the mannequin, see "Mannequin, collider and walking"). Handled **inside** the solve: per-vertex projection + motion filters, projected line search. `contactBand = 1e-4` m: a vertex this close to the body and pushed towards it stays held. Coulomb friction after the solve, measured **relative to the collider's own motion** (a walking body drags the cloth along) |
+| Hessian model | Gauss-Newton converges a bending-dominated strip but stalls on a taut span (a ring bridging a gap: the "wedge jitter"); adding the tension part of the stretch Hessian (`tensionStiffness`) does the opposite (test_cantilever fails 5/5 with it). **Default since 2026-10-14: `hessianAuto`**, which switches per substep on the stall signature (see `docs/handoff/OPUS_SESSION_1.md`). The browser app still sets `tensionStiffness` (`fl_set_param(7, 1)` in `worker.js`), which `hessianAuto` overrides once the wasm is rebuilt (not rebuilt yet). Changes convergence, so it changes the results of runs that did not converge |
+| Contact with body | Signed-distance colliders: analytic primitives (sphere, capsule, cylinder, plane, ellipsoid, union) or a baked distance grid of a closed mesh (the mannequin, see "Mannequin, collider and walking"). Handled **inside** the solve: per-vertex projection + motion filters, projected line search. `contactBand = 1e-4` m: a vertex this close to the body and pushed towards it stays held. Coulomb friction after the solve, measured **relative to the collider's own motion** (a walking body drags the cloth along); its budget is mu x the penetration left after the solve, which the in-Newton projection already removed, so in practice it is **almost frictionless** (`test_friction`: a patch on a 10 degree slope slides 19 cm in 0.5 s). Optional `bodyFrictionMode = 2`: Coulomb friction inside the Newton solve (`cloth_friction.cpp`), right on an incline, not the default yet (stick-slip with the rigid hold) |
 | Self contact | Vertex-triangle with spatial hash, thickness `selfThickness` |
 | Seams | Arc-length matched point-to-segment springs (exact quadratic energy). Unequal edge lengths are allowed = **ease**. Optional stiffness ramp (`seamRampFrames`) to pull panels together gently |
 | Units | SI throughout: N/m for in-plane stiffness, N*m for bending, kg/m^2 for density |
@@ -73,20 +74,27 @@ floor. Reproduces the paper's Table 1 to 0.57 % (test_basics). Not yet implement
 | `test_garment` | Two panels sewn into a tube, lodging on an ellipsoid mannequin. The hem must stop where the body girth equals the tube circumference (computed independently): predicted 161 mm, simulated 158 mm; seams within 0.2 mm; no penetration | pass |
 | `test_sdf_grid` | The baked distance grid (collider of the mesh mannequin). Not read or re-run for this document update | unverified here |
 | `test_skin_barrier` | K1 compliant skin and K5 barrier self contact enabled together (the test_garment tube on a 3 cm mesh, four modes: neither, skin, barrier, both). Runs, settles, seams closed, no self intersections in the barrier modes, penetration within the soft layer depth. Numbers in `docs/handoff/OPUS_SESSION_1.md` | pass (2026-10-14) |
+| `test_wedge` | A tube wedged on one / two convex bodies: per-frame kinetic energy, Newton cap hits, held-set changes, projections. Old solver vs the default (`hessianAuto`): the two-body jitter drops >100x, no cap hits | pass (2026-10-14) |
+| `test_static` | Static solve vs dynamic: cantilever strips, the garment tube (vs the analytic lodging height), warm start after an edit, drape disc (vs a converged 4-substep dynamic run, within 2 points) | see the session log |
+| `test_friction` | Cotton patch on an incline: `bodyFrictionMode 2` sticks below tan = mu and slides within 5 % of Coulomb (the default mode slides like frictionless cloth) | pass (2026-10-14) |
 
-Drape coefficients from `test_drape`, measured 2026-10-14 on main @ 842609f (Release build, 2-core Linux container,
-306 s for the whole test). Scene: 30 cm disc on an 18 cm pedestal, dropped from 12 mm, 1 substep per 60 Hz frame. Mesh
-edge length = the Zhang et al. estimate floored at 10 mm, which is 10.0 mm for every preset. The run stops once
-KE < 1e-8 J after frame 100, or at frame 300; "300" below means the cap was reached and the DC is the frame-300 value
-(KE still 6e-8 to 4e-7 J, below the test's 1e-4 J pass limit).
+**Caveat (measured later the same day):** test_drape's loop (1 substep, 12 Newton iterations) hits the Newton iteration
+cap in nearly every frame, so the table below is not a converged result. With 4 substeps (converged) the values are
+silk 39.5 %, cotton 62.3 %, denim 80.7 % (others not re-measured); see `docs/handoff/OPUS_SESSION_1.md`.
+
+Drape coefficients from `test_drape` on the current defaults (`hessianAuto`), measured 2026-10-14 (branch
+opus/session-1, Release build, 2-core Linux container, 339 s for the whole test). Scene: 30 cm disc on an 18 cm
+pedestal, dropped from 12 mm, 1 substep per 60 Hz frame. Mesh edge length = the Zhang et al. estimate floored at 10 mm,
+which is 10.0 mm for every preset. The run stops once KE < 1e-8 J after frame 100, or at frame 300 ("300" below; the DC
+is then the frame-300 value). In brackets: the same test on main @ 842609f (Gauss-Newton only), where it differs.
 
 | Fabric | DC % | Frames | KE at end (J) |
 | --- | --- | --- | --- |
-| cotton_jersey | 27.6 | 223 | 8.9e-09 |
-| polyester_chiffon | 43.1 | 300 | 1.9e-07 |
-| silk_charmeuse | 46.6 | 300 | 2.2e-07 |
+| cotton_jersey | 27.7 (27.6) | 259 (223) | 9.9e-09 |
+| silk_charmeuse | 42.3 (46.6) | 300 | 5.0e-07 |
+| polyester_chiffon | 43.6 (43.1) | 300 | 3.2e-07 |
+| cotton_poplin | 63.9 (65.0) | 300 | 2.2e-08 |
 | wool_suiting | 64.8 | 125 | 8.8e-09 |
-| cotton_poplin | 65.0 | 300 | 3.6e-07 |
 | denim_12oz | 80.7 | 214 | 9.3e-09 |
 | linen_medium | 81.2 | 300 | 8.1e-08 |
 | lambskin_leather | 90.9 | 300 | 5.9e-08 |
@@ -109,6 +117,11 @@ ordering and magnitudes are plausible. **These are not validated against measure
   leaves the tangential direction with no stiffness once contact removes the normal one.
 * Contact projection injects energy when a ring is wedged on a convex body; 4 substeps keep the
   `test_garment` ring within 2 % strain (1 substep let it stretch 12 %).
+* An extra Hessian term that is "more exact" can make Newton worse: the tension term alone (stretched yarn only) fixes
+  the wedge but makes a nearly unstretched, bending-dominated strip stall (test_cantilever 5/5 fail); the full exact
+  elastic Hessian also stalls (near-singular soft modes). Check convergence (cap hits per substep), not just the result.
+* A dynamic run is only a reference if Newton converges: the drape disc at 1 substep hits the 12-iteration cap in nearly
+  every frame and settles 7 points higher (silk) than the converged run.
 * "Contact jitter" can be an unconverged free span, not contact: in `test_wedge` the energy sat in hem vertices
   bridging a gap between two bodies, never touching them, because the Gauss-Newton Hessian had no tension stiffness.
   Measure where the kinetic energy is (held vs free vertices) before changing the contact model.
@@ -350,16 +363,15 @@ cutting table (2D canvas)  <->  App state (pieces, seams, fabric, body)  ->  Web
   unequal edge lengths.
 * Godot wrapper compiled but **not run inside Godot** in the build environment (no Godot binary);
   `godot/demo.gd` is untested. The wrapper binds only analytic colliders, not the mesh collider.
-* A garment wedged on convex bodies keeps jittering with the core defaults: in `test_wedge` scene 1 (a tube on two
-  overlapping ellipsoids) the mean kinetic energy stays at 2-3e-5 J (peaks ~1e-4 J) for 8 s, with **no** line-search
-  failures (the older "one failure per frame" reproduces only with `contactBand = 0`). Cause, measured 2026-10-14:
-  the free span bridging the crease flutters because Newton never converges there (12-iteration cap hit in every
-  substep); the Gauss-Newton Hessian lacks the tension stiffness of a taut span. `tensionStiffness = true` (off in the
-  core, on in the app) removes it: the energy keeps decaying (2.7e-9 J at 8 s) and Newton converges in every substep.
-  Details: `docs/handoff/OPUS_SESSION_1.md`.
-* Body friction is nearly absent in the implicit path: the post-solve friction budget is mu x the penetration left
-  after the solve, which the in-Newton projection already removed (friction acted in ~4 % of held vertex-substeps in
-  `test_wedge`).
+* Wedge jitter (fixed by the `hessianAuto` default, 2026-10-14): with Gauss-Newton only, a tube on two overlapping
+  ellipsoids (`test_wedge` scene 1) kept 2-3e-5 J for 8 s with **no** line-search failures (the older "one failure per
+  frame" reproduces only with `contactBand = 0`): the free span bridging the crease fluttered because Newton never
+  converged there. Now 1.9e-7 J with 0 cap hits (2.1e-10 J with friction mode 2). Details: `docs/handoff/OPUS_SESSION_1.md`.
+* The drape disc at 1 substep does not converge Newton (see Verification); garments in the browser app run 1-3 substeps
+  with 6-12 Newton iterations and probably do not converge either (not measured in the app).
+* Body friction is nearly absent in the default implicit path (see the contact row above). `bodyFrictionMode = 2` is
+  correct on an incline and stills the wedge, but with the rigid hold a wedged tube shows growing stick-slip bursts
+  (~0.1 mm/frame), so it is opt-in; next step: take the normal force from the soft skin or the barrier.
 * Self-collision is vertex-triangle only (no edge-edge) - thin tangles can pass. Measured 2026-10-14: the
   `test_garment` scene (default mode, which passes) has 87 exactly intersecting triangle pairs at frame 150 (re-run in a
   scratch probe with the same setup; the counter skips pairs sharing a vertex or a seam link), most of them within one panel and
@@ -384,8 +396,12 @@ Browser app and mannequin:
 
 ## Performance ideas not yet done (from the 2025-26 papers)
 
-1. Static solve: the preview only needs the settled drape. Ramp gravity in, run Newton to equilibrium, warm-start from the previous
-   result after an edit (small edits move the answer little). Expected to replace 36-60 timesteps by a handful of solves. Unmeasured.
+1. Static solve: **done** (`ClothSolver::solveStatic`, from agent/s1-static-settle; `test_static`). Gravity ramp with a
+   pseudo-transient term relaxed to zero, warm start after topology-preserving edits. When to trust it (measured
+   2026-10-14, `docs/handoff/OPUS_SESSION_1.md`): unique equilibria (cantilever = dynamic to 0.000 mm; the garment tube
+   reaches the analytic lodging height at lower energy than the dynamic settle) and warm starts (~10x fewer iterations,
+   same answer) yes; fold-dominated drapes only as a preview (drape coefficient within ~2 points of converged dynamics,
+   fold pattern not). It finds the frictionless equilibrium, ignores self contact, and refuses the K1 skin / K5 barrier.
 2. Distance-grid collider: **done for the mannequin** (signed-distance grid of a closed mesh, see "Collider"). Still open:
    the bake costs 185-390 ms in wasm (`docs/WIP_HANDOFF.md`), which is paid again on every walk frame. Lipschitz pruning
    (Barbier et al., CGF 2025) is the paper's method for baking a detailed primitive-based body quickly; its use for the

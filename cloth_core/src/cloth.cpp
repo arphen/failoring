@@ -402,7 +402,7 @@ void ClothSolver::solveBody() {
     const Real invS = Real(1) / std::max(1, p_.substeps);
     const bool diag = p_.contactDiagnostics;
     auto friction = [&](int i, const Vec3& n, Real pen) {
-        if (p_.bodyFrictionMode == 1) return;  // diagnostic: no body friction
+        if (p_.bodyFrictionMode != 0) return;  // 1: no body friction (diagnostic); 2: friction is inside the Newton solve
         if (diag) ++cdiag_.frictionAfter;
         Vec3 disp = x_[i] - xPrev_[i];
         if (movingCollider) disp = disp - colliderDisp_[i] * invS;   // motion relative to the surface
