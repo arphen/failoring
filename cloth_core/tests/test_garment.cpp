@@ -41,6 +41,8 @@ int main() {
     // K5 option (off unless FL_BARRIER is set in the environment): IPC-style barrier self contact instead of the
     // vertex-triangle projection. The default run is unchanged.
     if (std::getenv("FL_BARRIER")) { sp.barrierContact = true; sp.selfCollision = false; }
+    // K2 (docs/handoff/OPUS_SESSION_1.md): the tension part of the stretch Hessian, off unless FL_TENSION is set.
+    if (std::getenv("FL_TENSION")) sp.tensionStiffness = true;
     ClothSolver cs(sp);
     cs.setCollider(body);
 

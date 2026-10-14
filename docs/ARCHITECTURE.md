@@ -109,6 +109,9 @@ ordering and magnitudes are plausible. **These are not validated against measure
   leaves the tangential direction with no stiffness once contact removes the normal one.
 * Contact projection injects energy when a ring is wedged on a convex body; 4 substeps keep the
   `test_garment` ring within 2 % strain (1 substep let it stretch 12 %).
+* "Contact jitter" can be an unconverged free span, not contact: in `test_wedge` the energy sat in hem vertices
+  bridging a gap between two bodies, never touching them, because the Gauss-Newton Hessian had no tension stiffness.
+  Measure where the kinetic energy is (held vs free vertices) before changing the contact model.
 * Test geometry matters: a tube of circumference C cannot be put around a belly with girth > C, and flat
   panels placed beside the body collapse into a pillow. `test_garment` pre-wraps the panels onto a
   cylinder so seams start closed.
@@ -347,8 +350,16 @@ cutting table (2D canvas)  <->  App state (pieces, seams, fabric, body)  ->  Web
   unequal edge lengths.
 * Godot wrapper compiled but **not run inside Godot** in the build environment (no Godot binary);
   `godot/demo.gd` is untested. The wrapper binds only analytic colliders, not the mesh collider.
-* A garment wedged on a convex body keeps jittering at ~1e-4 J (about one line-search failure per frame)
-  instead of reaching exactly zero kinetic energy; positions are stable to ~1 mm.
+* A garment wedged on convex bodies keeps jittering with the core defaults: in `test_wedge` scene 1 (a tube on two
+  overlapping ellipsoids) the mean kinetic energy stays at 2-3e-5 J (peaks ~1e-4 J) for 8 s, with **no** line-search
+  failures (the older "one failure per frame" reproduces only with `contactBand = 0`). Cause, measured 2026-10-14:
+  the free span bridging the crease flutters because Newton never converges there (12-iteration cap hit in every
+  substep); the Gauss-Newton Hessian lacks the tension stiffness of a taut span. `tensionStiffness = true` (off in the
+  core, on in the app) removes it: the energy keeps decaying (2.7e-9 J at 8 s) and Newton converges in every substep.
+  Details: `docs/handoff/OPUS_SESSION_1.md`.
+* Body friction is nearly absent in the implicit path: the post-solve friction budget is mu x the penetration left
+  after the solve, which the in-Newton projection already removed (friction acted in ~4 % of held vertex-substeps in
+  `test_wedge`).
 * Self-collision is vertex-triangle only (no edge-edge) - thin tangles can pass. Measured 2026-10-14: the
   `test_garment` scene (default mode, which passes) has 87 exactly intersecting triangle pairs at frame 150 (re-run in a
   scratch probe with the same setup; the counter skips pairs sharing a vertex or a seam link), most of them within one panel and

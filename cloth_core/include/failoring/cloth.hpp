@@ -139,6 +139,8 @@ public:
     void addSeam(int panelA, int edgeA, int panelB, int edgeB, bool reverse = false);
 
     void setCollider(std::shared_ptr<Collider> c) { collider_ = std::move(c); }
+    const std::shared_ptr<Collider>& collider() const { return collider_; }
+    Real vertexMass(int i) const { return mass_[i]; }
     // Displacement of the collider surface at each cloth vertex over the coming frame (a moving body). Used only
     // by the friction in solveBody (cloth is dragged along by the surface it rests on, not held back by it).
     // Empty vector = a static collider.
@@ -156,6 +158,9 @@ public:
     int triangleCount() const { return static_cast<int>(tris_.size()); }
     int panelCount() const { return static_cast<int>(panels_.size()); }
     const std::vector<Vec3>& positions() const { return x_; }
+    const std::vector<Vec3>& velocities() const { return v_; }
+    // Diagnostics: per-vertex "held on the body" flag of the last Newton iteration (1 = motion filter active).
+    const std::vector<char>& heldFlags() const { return contactActive_; }
     const std::vector<std::array<int, 3>>& triangles() const { return tris_; }
     const std::vector<Vec2>& restUV() const { return restUV_; }  // grain-aligned rest coordinates
     int firstVertex(int panel) const { return panels_[panel].firstVertex; }

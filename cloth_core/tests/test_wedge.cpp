@@ -16,6 +16,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <algorithm>
 #include <cstring>
 #include <sstream>
 #include <string>
@@ -155,6 +156,29 @@ Summary run(int scene, const std::string& ov, int frames) {
     std::printf("  post-solve totals: pushed %lld, friction applied %lld vertex-substeps\n", d.pushAfter, d.frictionAfter);
     std::printf("  min clearance %.3f mm, max stretch %.4f (final %.4f), hem %.1f mm, seam gap %.2f mm, finite %s\n",
                 r.minClr * 1e3, r.maxStretch, r.finalStretch, r.hem * 1e3, r.gap * 1e3, r.finite ? "yes" : "NO");
+    if (std::getenv("FL_KE_TOP")) {  // where is the kinetic energy? (held vs free, distance to the body)
+        const auto& V = cs.velocities();
+        const auto& held = cs.heldFlags();
+        const auto& X = cs.positions();
+        std::vector<int> id(V.size());
+        for (size_t i = 0; i < id.size(); ++i) id[i] = static_cast<int>(i);
+        std::sort(id.begin(), id.end(), [&](int a, int b) { return length2(V[a]) > length2(V[b]); });
+        Real total = 0, heldKE = 0;
+        for (size_t i = 0; i < V.size(); ++i) {
+            const Real e = 0.5 * cs.vertexMass(static_cast<int>(i)) * length2(V[i]);
+            total += e;
+            if (held[i]) heldKE += e;
+        }
+        std::printf("  KE held vertices %.2e of %.2e J\n", heldKE, total);
+        for (int k = 0; k < 10; ++k) {
+            const int i = id[k];
+            Vec3 n;
+            const Real phi = cs.collider()->eval(X[i], n);
+            const Vec3 v = V[i];
+            std::printf("    v%-4d |v| %.2e m/s  normal part %+.2e  held %d  phi %.2e m  y %.1f mm\n", i, length(v), dot(v, n), held[i],
+                        phi, X[i].y * 1e3);
+        }
+    }
     std::fflush(stdout);
     return r;
 }
@@ -170,12 +194,30 @@ int main(int argc, char** argv) {
         CHECK(r.finite);
         FINISH();
     }
-    // default run: both scenes, default solver. Safety checks only (the jitter itself is reported, see the log).
-    for (int scene : {0, 1}) {
-        const Summary r = run(scene, "", 240);
-        CHECK_MSG(r.finite, "scene %d: non-finite", scene);
-        CHECK_MSG(r.minClr > -0.001, "scene %d: penetrates by %.2f mm", scene, -r.minClr * 1e3);
-        CHECK_MSG(r.gap < 0.004, "scene %d: seam gap %.2f mm", scene, r.gap * 1e3);
-    }
+    // Default run. Diagnosis (docs/handoff/OPUS_SESSION_1.md): the jitter of the wedged tube is the free span bridging
+    // the crease between the two bodies fluttering, because Newton never converges there; the Gauss-Newton Hessian lacks
+    // the tension (geometric) stiffness of the taut span. SolverParams::tensionStiffness adds it (off by default).
+    auto safety = [](const Summary& r) {
+        CHECK_MSG(r.finite, "scene %d %s: non-finite", r.scene, r.tag.c_str());
+        CHECK_MSG(r.minClr > -0.001, "scene %d %s: penetrates by %.2f mm", r.scene, r.tag.c_str(), -r.minClr * 1e3);  // as test_garment
+        CHECK_MSG(r.gap < 0.004, "scene %d %s: seam gap %.2f mm", r.scene, r.tag.c_str(), r.gap * 1e3);              // as test_garment
+    };
+    // scene 1 with the default solver: the known jitter (reported, not asserted; measured mean tail KE 3.1e-5 J)
+    const Summary off = run(1, "tag=off", 240);
+    safety(off);
+    // scene 1 with the tension term: Newton converges, the ring settles (measured mean tail KE 2.7e-7 J, 0 cap hits)
+    const Summary on = run(1, "tension=1,tag=tension", 240);
+    safety(on);
+    CHECK_MSG(on.keMeanTail < 1e-6, "scene 1 tension: mean KE over the last 60 frames %.2e J", on.keMeanTail);
+    CHECK_MSG(on.keMeanTail * 100 < off.keMeanTail, "scene 1: tension term reduces the tail KE only %.0fx (%.2e -> %.2e J)",
+              off.keMeanTail / on.keMeanTail, off.keMeanTail, on.keMeanTail);
+    CHECK_MSG(on.capTail == 0, "scene 1 tension: %lld substeps hit the Newton iteration cap in the last 60 frames", on.capTail);
+    CHECK_MSG(on.lsTail == 0, "scene 1 tension: %lld line-search failures in the last 60 frames", on.lsTail);
+    // scene 0 (the test_garment geometry) with the tension term: settles as well (measured 6.6e-7 J)
+    const Summary on0 = run(0, "tension=1,tag=tension", 240);
+    safety(on0);
+    CHECK_MSG(on0.keMeanTail < 5e-6, "scene 0 tension: mean KE over the last 60 frames %.2e J", on0.keMeanTail);
+    std::printf("[summary] scene 1 mean KE last 60 frames: off %.2e J, tension %.2e J (%.0fx); scene 0 tension %.2e J\n",
+                off.keMeanTail, on.keMeanTail, off.keMeanTail / on.keMeanTail, on0.keMeanTail);
     FINISH();
 }
