@@ -23,6 +23,7 @@ const Shapes = preload("res://shapes.gd")
 const Geom = preload("res://cut_geom.gd")
 const Seams = preload("res://seams.gd")
 const Layout = preload("res://layout.gd")
+const Guides = preload("res://guides.gd")
 
 # body_h: spacing (m) of the body's signed-distance grid, baked for every walking frame. 7 mm is the reference (the
 # numbers in docs/PERF_NOTES.md are measured with it). Draft and Preview use 10 mm: the bake takes about 1.8x less CPU,
@@ -1358,13 +1359,11 @@ func _curve_edge(p: Dictionary, e: int) -> void:
 	var vb := Vector2(float(b[0]), float(b[1]))
 	var bulge := 0.12 * va.distance_to(vb)
 	push_undo("Curve edge %d" % (e + 1))
-	var dropped := Table.insert_points(self, p, e, Geom.bezier_points(va, vb, bulge, Geom.CURVE_SEGMENTS))
+	Table.insert_points(self, p, e, Geom.bezier_points(va, vb, bulge, Geom.CURVE_SEGMENTS))
 	var curves: Array = p.get("curves", [])
 	curves.append({"a": [va.x, va.y], "b": [vb.x, vb.y], "bulge": bulge, "n": Geom.CURVE_SEGMENTS})
 	p["curves"] = curves
 	_sym_sync(p)
-	if dropped > 0:
-		notify("Curving that edge removed %d seam(s). Ctrl+Z restores them." % dropped)
 	changed("structure")
 
 
@@ -1522,6 +1521,7 @@ func _delete_hole(p: Dictionary, i: int) -> void:
 	if i < 0 or i >= holes.size():
 		return
 	push_undo("Delete hole %d" % (i + 1))
+	Guides.on_remove_hole(p, i)
 	holes.remove_at(i)
 	p["holes"] = holes
 	_sym_sync(p)
@@ -1529,8 +1529,11 @@ func _delete_hole(p: Dictionary, i: int) -> void:
 
 
 # The Add hole dialog: a circle or a rectangle, sized and placed in cm from the piece's bottom-left corner.
-func _open_hole_dialog(p: Dictionary) -> void:
+func _open_hole_dialog(p: Dictionary, at: Variant = null) -> void:
 	var b := Table.bbox_of(p["outline"])
+	var c0 := Vector2((float(b[2]) - float(b[0])) * 50.0, (float(b[3]) - float(b[1])) * 50.0)  # centre, cm from bottom-left
+	if at is Vector2:
+		c0 = ((at as Vector2) - Vector2(float(b[0]), float(b[1]))) * 100.0
 	var dlg := AcceptDialog.new()
 	dlg.title = "Add a hole to %s" % String(p.get("name", p["id"]))
 	dlg.ok_button_text = "Add hole"
@@ -1546,8 +1549,8 @@ func _open_hole_dialog(p: Dictionary) -> void:
 	grid.add_child(shape_opt)
 	var fields := {}
 	var rows := [["d", "Diameter, or width for a rectangle (cm)", 10.0], ["h", "Height, rectangle only (cm)", 10.0],
-		["x", "Centre across, from the left edge (cm)", (float(b[2]) - float(b[0])) * 50.0],
-		["y", "Centre up, from the bottom edge (cm)", (float(b[3]) - float(b[1])) * 50.0]]
+		["x", "Centre across, from the left edge (cm)", c0.x],
+		["y", "Centre up, from the bottom edge (cm)", c0.y]]
 	for r in rows:
 		var l := Label.new()
 		l.text = String(r[1])
@@ -2762,7 +2765,9 @@ func _build_table_bar() -> void:
 	bar.add_child(sew_btn)
 	for tool_def in [["Split", "split", "SplitToolBtn", "Split tool: press on an edge to add a corner there"],
 			["Rotate", "rotate", "RotateToolBtn", "Rotate tool: drag a piece (or the selection) around its centre. Shift snaps to 15 degrees"],
-			["Measure", "measure", "MeasureToolBtn", "Measure tool: click two points to read the distance in cm"]]:
+			["Measure", "measure", "MeasureToolBtn", "Measure tool: click two points to read the distance in cm"],
+			["Point", "point", "PointToolBtn", "Construction point: click on a piece. Snaps to corners, edge middles, the centre of mass and other construction geometry; not cut"],
+			["Line", "line", "LineToolBtn", "Construction line: click two points of a piece for a line through them; not cut"]]:
 		var tb := Button.new()
 		tb.name = String(tool_def[2])
 		tb.text = String(tool_def[0])

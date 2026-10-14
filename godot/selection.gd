@@ -5,6 +5,8 @@
 #   "edge"   id = [piece id, edge index]         edge i runs from corner i to corner i+1
 #   "corner" id = [piece id, corner index]
 #   "seam"   id = seam index (into the garment's seams array)
+#   "hole"   id = [piece id, hole index]
+#   "guide"  id = [piece id, guide id]          a construction point or line (guides.gd)
 # Selection is a set per kind, kept in pick order. The last piece picked is the primary piece: the Piece tab shows it,
 # and a corner selection belongs to it. Hover is one item at a time, and is separate from the selection.
 #
@@ -16,9 +18,9 @@ extends RefCounted
 signal changed
 signal hover_changed
 
-const KINDS := ["piece", "edge", "corner", "seam"]
+const KINDS := ["piece", "edge", "corner", "seam", "hole", "guide"]
 
-var _items := {"piece": [], "edge": [], "corner": [], "seam": []}   # kind -> Array of ids, in pick order
+var _items := {"piece": [], "edge": [], "corner": [], "seam": [], "hole": [], "guide": []}   # kind -> Array of ids, in pick order
 var _hover := {}          # {"kind": String, "id": Variant} or {} for none
 
 
@@ -27,8 +29,10 @@ static func _key(kind: String, id: Variant) -> String:
 	match kind:
 		"piece":
 			return String(id)
-		"edge", "corner":
+		"edge", "corner", "hole":
 			return "%s:%d" % [String(id[0]), int(id[1])]
+		"guide":
+			return "%s:%s" % [String(id[0]), String(id[1])]
 		_:
 			return str(int(id))
 
@@ -191,13 +195,21 @@ func _hover_equal(nh: Dictionary) -> bool:
 func prune(pieces: Array, seam_count: int) -> void:
 	var before := _snapshot()
 	var outlines := {}
+	var holes := {}
+	var guides := {}
 	for p in pieces:
 		outlines[String(p["id"])] = (p["outline"] as Array).size()
+		holes[String(p["id"])] = (p.get("holes", []) as Array).size()
+		for g in p.get("guides", []):
+			guides["%s:%s" % [String(p["id"]), String(g.get("id", ""))]] = true
 	(_items["piece"] as Array).assign((_items["piece"] as Array).filter(func(x) -> bool: return outlines.has(String(x))))
 	for kind in ["edge", "corner"]:
 		(_items[kind] as Array).assign((_items[kind] as Array).filter(func(x) -> bool:
 			return outlines.has(String(x[0])) and int(x[1]) >= 0 and int(x[1]) < int(outlines[String(x[0])])))
 	(_items["seam"] as Array).assign((_items["seam"] as Array).filter(func(x) -> bool: return int(x) >= 0 and int(x) < seam_count))
+	(_items["hole"] as Array).assign((_items["hole"] as Array).filter(func(x) -> bool:
+		return holes.has(String(x[0])) and int(x[1]) >= 0 and int(x[1]) < int(holes[String(x[0])])))
+	(_items["guide"] as Array).assign((_items["guide"] as Array).filter(func(x) -> bool: return guides.has(_key("guide", x))))
 	if not _hover.is_empty():
 		var hk := String(_hover["kind"])
 		var hid = _hover["id"]
@@ -209,6 +221,10 @@ func prune(pieces: Array, seam_count: int) -> void:
 				gone = not outlines.has(String(hid[0])) or int(hid[1]) >= int(outlines.get(String(hid[0]), 0))
 			"seam":
 				gone = int(hid) >= seam_count
+			"hole":
+				gone = int(hid[1]) >= int(holes.get(String(hid[0]), 0))
+			"guide":
+				gone = not guides.has(_key("guide", hid))
 		if gone:
 			_hover = {}
 			hover_changed.emit()

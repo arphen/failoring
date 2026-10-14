@@ -4,6 +4,7 @@
 # Everything here is static; the table and the editor call it inside their undoable actions.
 extends RefCounted
 
+const Guides = preload("res://guides.gd")
 const CURVE_SEGMENTS := 8   # an edge turned into a curve has this many segments (7 new corners)
 
 
@@ -59,6 +60,7 @@ static func _map_piece(p: Dictionary, f: Callable) -> void:
 		for c in p["curves"]:
 			c["a"] = _map_pt(c["a"], o, f)
 			c["b"] = _map_pt(c["b"], o, f)
+	Guides.map_points(p, o, f)  # free construction points move with the cloth
 
 
 static func _map_pt(q: Array, o: Vector2, f: Callable) -> Array:
@@ -75,6 +77,7 @@ static func rotate_pieces(pieces: Array, angle: float, centre: Vector2) -> void:
 			var d := w - centre
 			return centre + Vector2(d.x * c - d.y * s, d.x * s + d.y * c))
 		p["grain"] = float(p.get("grain", 0.0)) + angle
+		Guides.rotate_lines(p, angle)
 
 
 # Scales each piece by `factor` about the world point `centre`. Grain and placement on the body are unchanged.

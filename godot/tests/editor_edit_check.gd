@@ -5,6 +5,7 @@
 extends Node
 
 const Table = preload("res://table.gd")
+const Seams = preload("res://seams.gd")
 const BodyGen = preload("res://body_gen.gd")
 const SETTLE_S := 0.45  # the editor's debounce is 0.25 s; the rebuild runs inside it
 const TIMEOUT_S := 180.0
@@ -246,8 +247,29 @@ func _run() -> void:
 	_check(edref["seams"].size() == 1, "re-sewing leaves one seam")
 	_check(Table.insert_vertex(edref, edref["pieces"][1], 2, [0.5, 1.0]) == 0, "splitting an edge with no seam drops none")
 	_check(Table.insert_vertex(edref, edref["pieces"][1], 0, [0.5, -0.1]) == 0 and edref["seams"].size() == 1, "splitting an earlier edge keeps the seam")
-	_check(Table.insert_vertex(edref, edref["pieces"][1], 2, [0.5, 1.0]) == 1, "splitting the seamed edge reports the seam it drops")
-	_check(edref["seams"].is_empty(), "the split removed the seam")
+	# splitting a sewn edge keeps the seam: it is cut at the new corner into one seam per sub-edge, and the partner's range
+	# is cut at the same place (from its other end: sew_edges makes reversed seams). Was: the seam was dropped (changed
+	# 2026-10-14 so a corner can be added on a sewn edge, as the user asked).
+	var ed2 := {"pieces": [{"id": "a", "outline": [[0, 0], [1, 0], [1, 1], [0, 1]]}, {"id": "b", "outline": [[0, 0], [1, 0], [1, 1], [0, 1]]}],
+		"seams": [], "sel": null, "sel_v": -1}
+	Table.sew_edges(ed2, ["a", 0], ["b", 2])
+	_check(Table.insert_vertex(ed2, ed2["pieces"][1], 2, [0.5, 1.0]) == 0, "splitting the seamed edge drops no seam")
+	var sp: Array = ed2["seams"]
+	_check(sp.size() == 2, "the split seam becomes two seams (%d)" % sp.size())
+	if sp.size() == 2:
+		var by_b := {}
+		for s2 in sp:
+			by_b[int(s2["b"][1])] = s2
+		_check(by_b.has(2) and by_b.has(3) and Seams.is_full(by_b[2]["b"]) and Seams.is_full(by_b[3]["b"]), "each half of b's edge is sewn whole (edges 2 and 3)")
+		var r2 := Seams.side_range(by_b[2]["a"])
+		var r3 := Seams.side_range(by_b[3]["a"])
+		_check(r2.is_equal_approx(Vector2(0.5, 1.0)) and r3.is_equal_approx(Vector2(0.0, 0.5)), "a's edge is cut at its middle, halves matched in reverse (%s, %s)" % [r2, r3])
+		_check(bool(by_b[2].get("reverse", false)) and bool(by_b[3].get("reverse", false)), "both halves keep the seam's direction")
+	# a range that ends before the new corner moves onto the first sub-edge with its fractions rescaled
+	var ed3 := {"pieces": [{"id": "a", "outline": [[0, 0], [1, 0], [1, 1], [0, 1]]}, {"id": "b", "outline": [[0, 0], [1, 0], [1, 1], [0, 1]]}],
+		"seams": [{"a": ["a", 0, 0.0, 0.25], "b": ["b", 0], "reverse": false}], "sel": null, "sel_v": -1}
+	Table.insert_vertex(ed3, ed3["pieces"][0], 0, [0.5, 0.0])
+	_check(ed3["seams"].size() == 1 and Seams.side_range(ed3["seams"][0]["a"]).is_equal_approx(Vector2(0.0, 0.5)) and int(ed3["seams"][0]["a"][1]) == 0, "a range before the new corner is rescaled onto the first half")
 	Table.sew_edges(edref, ["a", 0], ["b", 3])
 	_check(Table.remove_vertex(edref["pieces"][0], 0, edref["seams"]) == 1, "deleting a corner reports the seam on its edges")
 	_check((edref["pieces"][0]["outline"] as Array).size() == 3, "the corner is gone")
