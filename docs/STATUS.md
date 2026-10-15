@@ -166,6 +166,10 @@ Body tab: Alive > Soft tissue (0 = the old rigid body). Frequencies and damping 
   the walk; upper-arm coverage 84 -> 89 % standing over the six presets (`docs/TEE_NOTES.md`). Petite and average still
   crumple one sleeve while walking.
 
+* Arrangement points and "Will it sew?" (2026-10-15, opus/arrange): CLO-style dots round the body to put pieces on
+  (Arrange, A), a sewing check of the start pose per piece pair (Seams tab, coloured stitch lines), and the tee's
+  shoulders and sleeve caps placed so its sleeves attach (upper-arm coverage standing 92 %, walking 90 %).
+
 ## Maintenance
 
 A scheduled task ("Failoring browser build upkeep", daily 06:47 Europe/Berlin) rebuilds `failoring.html`, runs the smoke

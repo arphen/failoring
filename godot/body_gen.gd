@@ -652,9 +652,13 @@ static func _eval_x(m: Dictionary, pm: PackedFloat32Array, p: PackedFloat32Array
 
 
 # ---------------------------------------------------------------- wrap sections
-static func sections(m: Dictionary, p: PackedFloat32Array, dy: float) -> Dictionary:
+# extra: more triangles to slice with the torso set (stand_at adds the shoulder end of the arms: see there).
+static func sections(m: Dictionary, p: PackedFloat32Array, dy: float, extra := PackedInt32Array()) -> Dictionary:
 	var tris: PackedInt32Array = m["tris"]
 	var set: PackedInt32Array = (m["sets"] as Dictionary)["section"]
+	if not extra.is_empty():
+		set = set.duplicate()
+		set.append_array(extra)
 	var ymax := 0.0
 	for i in int(m["nb"]):
 		ymax = maxf(ymax, p[3 * i + 1])
@@ -1055,9 +1059,23 @@ static func stand(m: Dictionary, body: Dictionary) -> Dictionary:
 
 # The standing body with the arms raised sideways to `abd` (radians): the dressing pose (an A-pose, as in CLO or
 # Marvelous Designer). Same fields as stand(); armAbduct is `abd`.
+#
+# Its sections enclose the shoulders: the arm triangles above the armpit (SHOULDER_DROP below the shoulder joint) are
+# sliced with the torso, so the torso rows from the armpit up reach over the deltoid to the shoulder tip, like a CLO torso
+# bounding volume. With the torso-only hull a top's armhole ended about 5 cm short of the shoulder tip and its sleeve cap
+# started 7-10 cm from the armhole, through the shoulder (docs/TEE_NOTES.md; sew_check.gd measures it).
+const SHOULDER_DROP := 0.07
 static func stand_at(m: Dictionary, body: Dictionary, abd: float) -> Dictionary:
 	var p := pose(m, body, 0.0, {"stride": 0.0, "arms": 0.0, "armAbduct": abd})
-	return _stand_dict(m, body, p, sections(m, p["allPos"], 0.01), abd)
+	var all: PackedFloat32Array = p["allPos"]
+	var cut: float = float(p["joints"]["l-shoulder"][1]) - SHOULDER_DROP
+	var arm_tris := _tri_set(m, ["arm.L", "arm.R"])
+	var tris: PackedInt32Array = m["tris"]
+	var extra := PackedInt32Array()
+	for t in arm_tris:
+		if all[3 * tris[3 * t] + 1] > cut and all[3 * tris[3 * t + 1] + 1] > cut and all[3 * tris[3 * t + 2] + 1] > cut:
+			extra.append(t)
+	return _stand_dict(m, body, p, sections(m, all, 0.01, extra), abd)
 
 
 static func _stand_dict(m: Dictionary, body: Dictionary, p: Dictionary, secs: Dictionary, abd: float) -> Dictionary:

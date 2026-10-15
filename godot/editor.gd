@@ -27,6 +27,8 @@ const Guides = preload("res://guides.gd")
 const Place3D = preload("res://place3d.gd")
 const PlaceView = preload("res://place_view.gd")
 const SoftTissue = preload("res://soft_tissue.gd")
+const SewCheck = preload("res://sew_check.gd")
+const Arrange = preload("res://arrange.gd")
 
 # body_h: spacing (m) of the body's signed-distance grid, baked for every walking frame. 7 mm is the reference (the
 # numbers in docs/PERF_NOTES.md are measured with it). Draft and Preview use 10 mm: the bake takes about 1.8x less CPU,
@@ -179,8 +181,10 @@ var view_image: TextureRect
 var layout = Layout.new()   # pane splits, toggles and their saved state (layout.gd)
 var place_view = PlaceView.new()   # moving and turning panels in the 3D view (place_view.gd)
 var place_btn: Button
+var arrange_btn: Button
 var soft = SoftTissue.new()   # breasts, seat, belly, thighs, upper arms that bounce while walking; breath (soft_tissue.gd)
 var soft_gain := 1.0
+var sew_check = SewCheck.new()   # "will it sew?" on the start pose of the current build (sew_check.gd)
 # Dressing pose (an A-pose, as CLO and Marvelous Designer users dress an avatar): a garment with sleeves is put on and
 # sewn with the arms raised sideways (DRESS_ABDUCT), then the arms come down to the standing pose before the walk. With
 # the arms down, the sleeve tube starts 8-14 cm from the armhole (docs/TEE_NOTES.md) and the seams pull the cap into the
@@ -191,6 +195,7 @@ const DRESS_LOWER := 18       # frames to lower the arms
 var body_dress = null         # BodyGen.stand_at(DRESS_ABDUCT) of the current body
 var _dress_abd := 0.0         # the abduction of the current sim's dressing pose (0: the sim starts standing)
 var _start_v3 := PackedVector3Array()   # the body the current sim starts on (dress or stand)
+var _start_body = null                  # its stand dictionary (sections, arms, landmarks): arrangement points, wraps
 
 var plan_opt: OptionButton
 var quality_opt: OptionButton
@@ -628,6 +633,7 @@ func _refresh_seams_tab() -> void:
 		return
 	for c in vb.get_children():
 		c.queue_free()
+	_sew_check_section(vb)
 	var h := Label.new()
 	h.text = "Seams"
 	vb.add_child(h)
@@ -647,6 +653,39 @@ func _refresh_seams_tab() -> void:
 	note.text = "Pick the Sew tool on the cutting table, click one edge, then the edge it joins. A seam joins the whole of both edges unless you change its start and end below (cm from the edge's first corner); the parts of an edge outside the seam stay open. Lengths are measured on the cut outline; a warning means the drape will ease the difference."
 	vb.add_child(note)
 	_lock_editing(vb)
+
+
+# "Will it sew?" (sew_check.gd): one line per pair of pieces sewn together, green / yellow / red, on the start pose of
+# the current build. The 3D view draws each seam's stitch lines in the same colours before the drape.
+func _sew_check_section(vb: VBoxContainer) -> void:
+	vb.add_child(_h4("Will it sew? (where the pieces start)"))
+	if sew_check.groups.is_empty():
+		var none := Label.new()
+		none.text = "Nothing to check yet: the check runs on the start pose when the garment is built."
+		none.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		vb.add_child(none)
+		return
+	var uid := active_uid()
+	for g in sew_check.groups:
+		if Outfit.uid_of(String(g["a"])) != uid and Outfit.uid_of(String(g["b"])) != uid:
+			continue
+		var row := HBoxContainer.new()
+		var dot := ColorRect.new()
+		dot.color = SewCheck.status_color(int(g["status"]))
+		dot.custom_minimum_size = Vector2(12, 12)
+		dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		row.add_child(dot)
+		var l := Label.new()
+		l.text = String(g["text"])
+		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(l)
+		vb.add_child(row)
+	var tip := Label.new()
+	tip.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	tip.modulate = Color(1, 1, 1, 0.7)
+	tip.text = "Green: the edges start close and line up. Yellow: far apart, it will sew but may crumple. Red: the seam runs through the body, is twisted, or is very far. Move pieces with Arrange in the 3D view (A) or Move panels (M)."
+	vb.add_child(tip)
 
 
 # One seam: its colour, its two sides with their lengths and ease, flip and delete, and for each side the start and end
@@ -3318,14 +3357,23 @@ func rebuild() -> void:
 	_stand_v3 = _to_v3a(body_stand["pos"])
 	# garments with sleeves (an "arm" wrap) are dressed in the A-pose
 	var start_body = body_stand
+	_start_body = body_stand
 	_dress_abd = 0.0
 	if body_dress != null:
 		for p in _sim_pieces:
 			if String((p.get("wrap", {}) as Dictionary).get("mode", "")) == "arm":
 				start_body = body_dress
+				_start_body = body_dress
 				_dress_abd = float(body_dress["armAbduct"])
 				break
 	_start_v3 = _to_v3a(start_body["pos"])
+	# sleeves that were never arranged by hand start the CLO way: a set-in sleeve's cap climbs the arm to the shoulder, and
+	# the sleeve slides along the arm to where its seams start closest to the armholes (arrange.gd fit_sleeve). Only the
+	# simulated copy changes; the pattern keeps its own wrap. A sleeve arranged on a dot carries "cap" and is left alone.
+	for p in _sim_pieces:
+		var pw: Dictionary = p.get("wrap", {})
+		if String(pw.get("mode", "")) == "arm" and not pw.has("cap"):
+			p["wrap"] = Arrange.fit_sleeve(p, pw, _sim_pieces, _sim_seams, start_body["sections"], start_body["arms"])
 	var q: Dictionary = QUALITIES[_qual_key()]
 	if body_h_override > 0.0:  # debug and benchmark only (tests/bench_step.gd): another body grid spacing for this quality
 		q = q.duplicate()
@@ -3346,6 +3394,8 @@ func rebuild() -> void:
 	for e in outfit:
 		garment_names[int(e["uid"])] = String(e["name"])
 	health = FailoringGarmentHealth.new(built, _sim_pieces, _sim_seams, garment_names)
+	sew_check.run(built, _sim_pieces, _sim_seams)
+	_refresh_seams_tab()
 	health_text = ""
 	health_hot = []
 	wraps.clear()
@@ -3885,12 +3935,17 @@ func _build_stitches() -> void:
 		if ca.size() < 2 or cb.size() < 2:
 			continue
 		var col := Color(Table.SEAM_COLORS[(si - 1) % Table.SEAM_COLORS.size()])
+		var stitch_col := col
+		for e in sew_check.seams:   # stitch lines in the sewing check's colour (green, yellow, red)
+			if int(e["si"]) == si - 1:
+				stitch_col = SewCheck.status_color(int(e["status"]))
+				break
 		var pairs := []
 		var m: int = maxi(ca.size(), cb.size())
 		for k in m:
 			var tt: float = float(k) / float(maxi(1, m - 1))
 			pairs.append([ca[mini(ca.size() - 1, int(round(tt * float(ca.size() - 1))))], cb[mini(cb.size() - 1, int(round((1.0 - tt if bool(s.get("reverse", false)) else tt) * float(cb.size() - 1))))]])
-		stitch_nodes.append({"pairs": pairs, "si": si, "col": col})
+		stitch_nodes.append({"pairs": pairs, "si": si, "col": stitch_col})
 		var seg := []
 		for ch in [ca, cb]:
 			for k in ch.size() - 1:
@@ -4131,6 +4186,14 @@ func _show_view_texture() -> void:
 	place_btn.focus_mode = Control.FOCUS_NONE
 	place_btn.tooltip_text = "Move and turn panels on the body before they are sewn (M). Drag a panel, a coloured arrow to move along it, or a ring to turn. Shift snaps to 1 cm / 15°. The placement is saved with the pattern."
 	place_btn.toggled.connect(func(on: bool) -> void: _set_place_mode(on))
+	arrange_btn = Button.new()
+	arrange_btn.name = "ArrangeBtn"
+	arrange_btn.text = "Arrange"
+	arrange_btn.toggle_mode = true
+	arrange_btn.focus_mode = Control.FOCUS_NONE
+	arrange_btn.tooltip_text = "Arrangement points (A): pick a piece, hover a dot to see it there, click to put it there. Dots on the torso (blue), arms (yellow) and legs (violet). The mirror twin follows."
+	arrange_btn.toggled.connect(func(on: bool) -> void: _set_arrange_mode(on))
+	bar.add_child(arrange_btn)
 	bar.add_child(place_btn)
 	var reset := Button.new()
 	reset.name = "ResetPlacementBtn"
@@ -4150,10 +4213,27 @@ func _show_view_texture() -> void:
 func _set_place_mode(on: bool) -> void:
 	if place_btn != null:
 		place_btn.set_pressed_no_signal(on)
+	if arrange_btn != null:
+		arrange_btn.set_pressed_no_signal(false)
 	place_view.set_active(on)
 	var ph = view_pane.get_node_or_null("ViewBar/PlaceHint")
 	if ph != null:
 		(ph as Label).text = ("Click a panel; drag it, an arrow or a ring. Esc leaves." if on else "")
+
+
+func _set_arrange_mode(on: bool) -> void:
+	if arrange_btn != null:
+		arrange_btn.set_pressed_no_signal(on)
+	if place_btn != null:
+		place_btn.set_pressed_no_signal(false)
+	if on:
+		place_view.set_arrange(true)
+	else:
+		place_view.set_active(false)
+		place_view.set_arrange(false)
+	var ph = view_pane.get_node_or_null("ViewBar/PlaceHint")
+	if ph != null:
+		(ph as Label).text = ("Pick a piece, then click a dot to put it there. Seam lines: green ready, yellow far, red a problem. Esc leaves." if on else "")
 
 
 # Drops the selected piece's 3D move and turn (one undoable action).
@@ -4204,8 +4284,14 @@ func _unhandled_key_input(e: InputEvent) -> void:
 	elif e.keycode == KEY_M:
 		_set_place_mode(not place_view.active)
 		get_viewport().set_input_as_handled()
+	elif e.keycode == KEY_A:
+		_set_arrange_mode(not place_view.arrange)
+		get_viewport().set_input_as_handled()
 	elif e.keycode == KEY_ESCAPE and place_view.active:
-		_set_place_mode(false)
+		if place_view.arrange:
+			_set_arrange_mode(false)
+		else:
+			_set_place_mode(false)
 		get_viewport().set_input_as_handled()
 	elif e.keycode == KEY_G:
 		_cycle_render_quality()

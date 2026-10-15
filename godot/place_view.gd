@@ -11,6 +11,9 @@ extends RefCounted
 const Place3D = preload("res://place3d.gd")
 const Outfit = preload("res://outfit.gd")
 const Table = preload("res://table.gd")
+const Arrange = preload("res://arrange.gd")
+const SewCheck = preload("res://sew_check.gd")
+const Wrap = preload("res://wrap.gd")
 
 const AXIS_COL := [Color("#ff5a5a"), Color("#5ad35a"), Color("#5a9bff")]
 const AXES := [Vector3.RIGHT, Vector3.UP, Vector3.BACK]
@@ -24,6 +27,15 @@ var _im := ImmediateMesh.new()
 var drag := {}                 # {mode: "move"|"axis"|"ring", axis, start (pane px), base (positions), c (centre), ...}
 var hover := ""                # "axis0".."axis2", "ring0".."ring2", or ""
 var preview := PackedVector3Array()
+# Arrange mode (arrange.gd): dots round the body; hovering one with a piece picked shows the piece there (a ghost),
+# clicking puts it there.
+var arrange := false
+var arr = Arrange.new()
+var _arr_key = null            # the start body the dots were built for
+var dots: MeshInstance3D
+var _dim := ImmediateMesh.new()
+var hover_pt := -1
+const DOT_PX := 12.0
 
 
 func setup(editor) -> void:
@@ -39,10 +51,33 @@ func setup(editor) -> void:
 	gizmo.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	gizmo.visible = false
 	ed.stage.add_child(gizmo)
+	dots = MeshInstance3D.new()
+	dots.mesh = _dim
+	var dmat := StandardMaterial3D.new()
+	dmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	dmat.vertex_color_use_as_albedo = true
+	dmat.no_depth_test = true
+	dmat.render_priority = 10
+	dots.material_override = dmat
+	dots.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	dots.visible = false
+	ed.stage.add_child(dots)
+
+
+# Arrange mode: the dots, and a click on one puts the picked piece there. It shows the start positions like Move panels.
+func set_arrange(on: bool) -> void:
+	arrange = on
+	hover_pt = -1
+	if on:
+		set_active(true)
+	else:
+		_draw_dots()
 
 
 func set_active(on: bool) -> void:
 	active = on
+	if not on:
+		arrange = false
 	drag = {}
 	if on:
 		ed._drain()
@@ -199,6 +234,8 @@ static func _seg_dist(p: Vector2, a: Vector2, b: Vector2) -> float:
 func input(e: InputEvent) -> bool:
 	if not active or ed.meta.is_empty():
 		return false
+	if arrange:
+		return _arrange_input(e)
 	if e is InputEventMouseMotion:
 		var m := e as InputEventMouseMotion
 		if not drag.is_empty():
@@ -344,13 +381,149 @@ func _release() -> void:
 	ed.changed("structure")
 
 
+# ------------------------------------------------------------------ arrange
+func _ensure_points() -> void:
+	var body = ed._start_body
+	if body == null:
+		return
+	if _arr_key == null or not is_same(_arr_key, body):
+		arr.build(body)
+		_arr_key = body
+
+
+func dot_at(local: Vector2) -> int:
+	_ensure_points()
+	var best := -1
+	var bd := DOT_PX
+	for i in arr.points.size():
+		var d := _to_pane(arr.points[i]["pos"]).distance_to(local)
+		if d < bd:
+			bd = d
+			best = i
+	return best
+
+
+func _arrange_input(e: InputEvent) -> bool:
+	if e is InputEventMouseMotion:
+		if (e as InputEventMouseMotion).button_mask != 0:
+			return false   # a drag orbits the camera
+		var h := dot_at((e as InputEventMouseMotion).position)
+		if h != hover_pt:
+			hover_pt = h
+			_draw_dots()
+		return false
+	if e is InputEventMouseButton:
+		var b := e as InputEventMouseButton
+		if b.button_index != MOUSE_BUTTON_LEFT or not b.pressed or b.double_click:
+			return false
+		var h2 := dot_at(b.position)
+		if h2 >= 0:
+			put_on(h2)
+			return true
+		var hit := pick(b.position)
+		if not hit.is_empty():
+			_select(String(hit[0]))
+			_draw_dots()
+			return true
+	return false
+
+
+# Puts the selected piece (the table's selection) on arrangement point i: its wrap is set (arrange.gd), any free 3D move
+# is dropped, the mirror twin follows. One undoable action; the garment is rebuilt from there.
+func put_on(i: int) -> bool:
+	_ensure_points()
+	var p = ed._piece()
+	if p == null:
+		ed.notify("Arrange: pick a piece first (click it on the cutting table or in the 3D view), then click a dot.")
+		return false
+	if ed.active_locked():
+		ed.notify("This garment is locked: unlock it in the Outfit tab to arrange its pieces.")
+		return false
+	var pt: Dictionary = arr.points[i]
+	ed.push_undo("Arrange %s on %s" % [String(p.get("name", p["id"])), String(pt["label"]).to_lower()])
+	var w := Arrange.wrap_for(p, pt, ed._start_body["sections"])
+	if String(pt["kind"]) == "arm":   # slide it along the arm to where its seams start closest (arrange.gd)
+		w = Arrange.fit_sleeve(p, w, ed.pieces, ed.seams, ed._start_body["sections"], ed._start_body["arms"])
+	p["wrap"] = w
+	p.erase("place")
+	ed._sym_sync(p)
+	ed.changed("structure")
+	ed.notify("%s arranged on %s." % [String(p.get("name", p["id"])), String(pt["label"]).to_lower()])
+	return true
+
+
+# The dots (a small diamond each; bigger and white when hovered) and, while one is hovered with a piece picked, the piece
+# drawn there as a wire ghost.
+func _draw_dots() -> void:
+	_dim.clear_surfaces()
+	dots.visible = active and arrange
+	if not dots.visible:
+		return
+	_ensure_points()
+	if arr.points.is_empty():
+		return
+	_dim.surface_begin(Mesh.PRIMITIVE_LINES)
+	for i in arr.points.size():
+		var pt: Dictionary = arr.points[i]
+		var c: Vector3 = pt["pos"]
+		var hot: bool = i == hover_pt
+		var r: float = (0.022 if hot else 0.013) * (_size(c) / 0.25)
+		var col: Color = Color.WHITE if hot else {"torso": Color("#7dd3fc"), "arm": Color("#fbbf24"), "leg": Color("#c4b5fd")}[String(pt["kind"])]
+		var tips := [Vector3(r, 0, 0), Vector3(0, r, 0), Vector3(0, 0, r), Vector3(-r, 0, 0), Vector3(0, -r, 0), Vector3(0, 0, -r)]
+		for a in 6:
+			for b in range(a + 1, 6):
+				if a + 3 == b:
+					continue  # opposite tips: the octahedron's edges only
+				_im_line(_dim, c + tips[a], c + tips[b], col)
+	if hover_pt >= 0:
+		_ghost(hover_pt)
+	_dim.surface_end()
+
+
+func _im_line(im: ImmediateMesh, a: Vector3, b: Vector3, col: Color) -> void:
+	im.surface_set_color(col)
+	im.surface_add_vertex(a)
+	im.surface_set_color(col)
+	im.surface_add_vertex(b)
+
+
+# The selected piece as it would start on point i (its mesh edges, white).
+func _ghost(i: int) -> void:
+	var p = ed._piece()
+	var m: String = ed._merged_sel()
+	if p == null or m == "" or not (ed.meta["uv"] as Dictionary).has(m):
+		return
+	var q: Dictionary = (p as Dictionary).duplicate(true)
+	q["wrap"] = Arrange.wrap_for(q, arr.points[i], ed._start_body["sections"])
+	var w = Wrap.new(q, ed._start_body["sections"], ed._start_body["arms"])
+	var uv: PackedVector2Array = ed.meta["uv"][m]
+	var r: Dictionary = ed.meta["ranges"][m]
+	var f0 := int(r["first"])
+	var pos := PackedVector3Array()
+	pos.resize(uv.size())
+	for k in uv.size():
+		pos[k] = w.point(uv[k].x, uv[k].y)
+	var tris: PackedInt32Array = ed.meta["tris"]
+	var col := Color(1, 1, 1, 0.85)
+	for t in tris.size() / 3:
+		var a := tris[3 * t] - f0
+		if a < 0 or a >= uv.size():
+			continue
+		var b := tris[3 * t + 1] - f0
+		var c := tris[3 * t + 2] - f0
+		_im_line(_dim, pos[a], pos[b], col)
+		_im_line(_dim, pos[b], pos[c], col)
+
+
 # ------------------------------------------------------------------ drawing
 func refresh(at: Variant = null) -> void:
+	if arrange:
+		_draw_dots()
 	if drag.is_empty():
 		pid = ed._merged_sel()   # the picked panel is the table's selected piece (of the active garment)
 	_im.clear_surfaces()
 	var c = at if at != null else centre()
-	gizmo.visible = active and pid != "" and c != null
+	gizmo.visible = active and not arrange and pid != "" and c != null
 	if not gizmo.visible:
 		return
 	var L := _size(c)

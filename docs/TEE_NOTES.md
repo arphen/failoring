@@ -90,6 +90,22 @@ Tried 2026-10-15 and not kept: a finer mesh for arm pieces (0.55 of the quality'
 vertices, 5-6 round the arm). Sleeves became proper tubes on tall, athletic and plus, but the petite and average right
 sleeves slid off while walking; coverage standing 88.7 -> 86.6 %, walking 88.7 -> 84.2 %. Not the bottleneck on its own.
 
+## Done 2026-10-15: shoulders in the dressing pose, a sleeve cap, and the sleeve fitted to the armholes
+
+The dressing pose's torso sections enclose the shoulders (idea 1, `BodyGen.stand_at`); sleeves get `wrap.cap` (ported
+to `godot/wrap.gd`) and slide along the arm to where their seams start closest to the armholes (`Arrange.fit_sleeve`,
+idea 2 done as a search). The editor's "Will it sew?" check (`godot/sew_check.gd`) on average: sleeve to front 9 -> 8 cm,
+to back 9 -> 7 cm, the seam line through the body 38-50 % -> 0-25 %. Six presets, preview, upper-arm skin covered:
+
+| | standing, frame 59 | walking, frame 111 |
+| --- | --- | --- |
+| A-pose dressing (morning) | 88.7 % | 88.7 % |
+| + shoulders, cap, fitted sleeves | 91.9 % | 90.5 % |
+
+By eye (walking montage) the tee now reads as a T-shirt on average, tall, curvy, athletic and plus: shoulders covered,
+sleeves attached. Petite still shows small flaps at one sleeve. Left: the 7-8 cm cap gap (the cap could start on the
+armhole itself), the wide neckline (idea 4).
+
 ## Ideas, in the order I would try them
 
 1. **Give the shoulder rows a hull that includes the shoulder.** For `fit` rows from the armpit up to the neck use the union of the

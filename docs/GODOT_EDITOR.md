@@ -122,6 +122,24 @@ release is one undoable action, stored in the piece as `p.place = {t, q}` (appli
 x' = q (x - c) + c + t, c the panel's centre) and saved with the pattern. Reset panel drops it. The Piece tab has the same
 as Move across/up/forward (cm) and Tilt/Turn/Roll (degrees).
 
+## Arrangement points and "Will it sew?" (`godot/arrange.gd`, `godot/sew_check.gd`)
+
+As in CLO and Marvelous Designer: the 3D view's Arrange button (A over the 3D view) shows dots round the body the
+garment starts on: on the torso at the shoulder, bust, waist and hip heights (front, back, sides, and between them), on
+each arm (shoulder, upper arm, forearm) and each leg (thigh, knee, shin). Pick a piece (on the table or in the 3D view),
+hover a dot to see a wire ghost of the piece there, click to put it there (one undoable action; its free 3D move is
+dropped; the mirror twin follows). A torso dot sets the around-the-body placement and height; an arm or leg dot wraps the
+piece round that limb. A set-in sleeve on an arm dot gets a cap that climbs the arm to the shoulder (wrap.cap, ported
+from shared.js) and slides along the arm to where its seams start closest to the armholes (`Arrange.fit_sleeve`). A
+sleeve that was never arranged gets the same at build time (only the simulated copy).
+
+The Seams tab starts with "Will it sew?": for each pair of sewn pieces, on the start pose, green (the edges start close
+and line up), yellow (3-8 cm apart: it sews but may crumple), red (8 cm or more, twisted, or the seam line runs through
+the body). The 3D view draws the stitch lines in the same colours before the drape.
+
+The dressing pose (garments with sleeves start with the arms raised, `BodyGen.stand_at`) uses torso sections that enclose
+the shoulders (the arm triangles above the armpit are sliced with the torso), so a top's armholes reach the shoulder tip.
+
 ## Partial seams (`godot/seams.gd`)
 
 A seam can join a part of an edge to a part of another edge, so a hole stays open where the two are not sewn: an armhole,

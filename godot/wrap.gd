@@ -380,9 +380,18 @@ func _arm_pos(u: float, v: float) -> Array:
 	var side := String(_wrap.get("side", "L"))
 	var adv: Dictionary = _arms[side]
 	var rt := _row_t(u, v)
+	# wrap.cap (set-in sleeves, port of shared.js armPos): {v, x0, x1}, the underarm line and the cap's two corners. Rows
+	# above it use the corner row's angular scale (they climb the arm to the shoulder) instead of each closing into a full
+	# ring; the axis may run on above the shoulder joint (sTop < 0, down to -0.2).
+	var cp = _wrap.get("cap", null)
+	if cp is Dictionary and v > float(cp["v"]) + 1e-6:
+		var x0 := float(cp["x0"])
+		var x1 := float(cp["x1"])
+		rt = [(u - x0) / (x1 - x0), x1 - x0]
 	var t: float = rt[0]
 	var sTop: float = 0.06 if _wrap.get("sTop", null) == null else float(_wrap["sTop"])
-	var s: float = clampf(minf(float(adv["total"]), sTop + (_bb[3] - v)), 0.0, float(adv["total"]))
+	var s_lo := -0.2 if cp is Dictionary else 0.0
+	var s: float = clampf(minf(float(adv["total"]), sTop + (_bb[3] - v)), s_lo, float(adv["total"]))
 	var k := 0 if s < float(adv["len"][0]) else 1
 	var l: float = s - (float(adv["len"][0]) if k == 1 else 0.0)
 	var seg: Array = adv["seg"][k]
@@ -393,7 +402,7 @@ func _arm_pos(u: float, v: float) -> Array:
 	var up := [-float(seg[0]), -float(seg[1]), -float(seg[2])]
 	var e1 := _cross3(up, e0)
 	var rad: Array = adv["rad"]
-	var ra: float = rad[mini(rad.size() - 1, int(round(s / 0.01)))]
+	var ra: float = rad[clampi(int(round(s / 0.01)), 0, rad.size() - 1)]
 	var width: float = rt[1]
 	var loose: float = 0.0 if _wrap.get("loose", null) == null else float(_wrap["loose"])
 	var r: float = maxf(float(ra) + 0.004, minf(float(ra) + clear_dist() + loose, width / TAU))
