@@ -281,10 +281,27 @@ int ClothSolver::solveLinear(Real h2inv, const std::vector<Vec3>& b, std::vector
         return s;
     };
 
-    x.assign(N, Vec3(0, 0, 0));
-    for (int i = 0; i < N; ++i) cgR_[i] = filt_[i] * b[i];
+    // warm start (cgWarmStart): begin from the previous solve's dx (time-coherent motion makes consecutive corrections
+    // alike, e.g. the stretch that holds a hanging cloth up against gravity), restricted to this solve's filters
+    const bool warm = p_.cgWarmStart && !cholPrec && static_cast<int>(x.size()) == N;
+    if (warm) {
+        for (int i = 0; i < N; ++i) x[i] = filt_[i] * x[i];
+        matvec(x, cgAp_);
+        for (int i = 0; i < N; ++i) cgR_[i] = filt_[i] * b[i];
+    } else {
+        x.assign(N, Vec3(0, 0, 0));
+        for (int i = 0; i < N; ++i) cgR_[i] = filt_[i] * b[i];
+    }
     const Real bnorm = std::sqrt(dotv(cgR_, cgR_));
-    if (bnorm < 1e-30) return 0;
+    if (bnorm < 1e-30) { if (warm) x.assign(N, Vec3(0, 0, 0)); return 0; }
+    if (warm) {
+        for (int i = 0; i < N; ++i) cgR_[i] = cgR_[i] - cgAp_[i];
+        // keep the guess only if it reduces the residual (a stale guess after a jump would be worse than zero)
+        if (std::sqrt(dotv(cgR_, cgR_)) >= bnorm) {
+            x.assign(N, Vec3(0, 0, 0));
+            for (int i = 0; i < N; ++i) cgR_[i] = filt_[i] * b[i];
+        }
+    }
     applyPrec(cgR_, cgZ_);
     for (int i = 0; i < N; ++i) cgP_[i] = cgZ_[i];
     Real rz = dotv(cgR_, cgZ_);
@@ -677,6 +694,7 @@ void ClothSolver::stepImplicit() {
             cdiag_.keNewton += cdiag_.lastKeNewton;
         }
 
+        if (p_.strainLimit > 0) limitStrain();
         if (barrier) {
             // body friction / push-out after the solve, cut short where it would carry a primitive through another;
             // no vertex-triangle projection (the barrier replaces it)
@@ -721,6 +739,46 @@ void ClothSolver::stepImplicit() {
         }
     }
     ++frame_;
+}
+
+// Strain limiting (Provot 1995): after the solve, every mesh edge longer than (1 + strainLimit) times its rest length
+// is shortened back to that, the correction shared by inverse mass, over strainLimitPasses Gauss-Seidel passes. The
+// velocity update that follows turns the correction into velocity, so the limit also removes the stretching motion.
+// An inexact solve (capped CG) leaves stretch unresolved where loads concentrate (a pinned corner carries the cloth's
+// weight); this pass keeps those spots from running away. Off unless strainLimit > 0.
+void ClothSolver::limitStrain() {
+    if (slEdges_.empty()) {
+        std::vector<std::pair<int, int>> e;
+        for (const auto& t : tris_)
+            for (int k = 0; k < 3; ++k) {
+                int a = t[k], b = t[(k + 1) % 3];
+                if (a > b) std::swap(a, b);
+                e.push_back({a, b});
+            }
+        std::sort(e.begin(), e.end());
+        e.erase(std::unique(e.begin(), e.end()), e.end());
+        for (const auto& pr : e) {
+            const Real l0 = length(restUV_[pr.first] - restUV_[pr.second]);
+            if (l0 > 1e-9) slEdges_.push_back({pr.first, pr.second, l0});
+        }
+    }
+    const Real s = 1 + p_.strainLimit;
+    for (int pass = 0; pass < std::max(1, p_.strainLimitPasses); ++pass) {
+        bool any = false;
+        for (const SlEdge& e : slEdges_) {
+            const Real wa = w_[e.a], wb = w_[e.b];
+            if (wa + wb == 0) continue;
+            const Vec3 d = x_[e.b] - x_[e.a];
+            const Real l = length(d);
+            const Real lmax = s * e.l0;
+            if (l <= lmax) continue;
+            const Vec3 c = d * ((l - lmax) / (l * (wa + wb)));
+            x_[e.a] += c * wa;
+            x_[e.b] -= c * wb;
+            any = true;
+        }
+        if (!any) break;
+    }
 }
 
 }  // namespace fl

@@ -96,9 +96,58 @@ shows as rubberiness in fast motion.
 
 Self-collision is the post-solve vertex-triangle projection. At small h its position corrections become large velocities.
 
+## Inexact linearised solve + strain limiting (the Baraff-Witkin / commercial-tool policy)
+
+One Newton iteration per substep, conjugate gradient with block-Jacobi preconditioning capped at a fixed iteration
+budget (not run to tolerance), then a strain-limiting pass (Provot 1995) that shortens any edge longer than
+(1 + strainLimit) x rest.
+
+New options:
+- `SolverParams::strainLimit`, `strainLimitPasses`;
+- `cgWarmStart` (it did not help here).
+
+On the hanging 0.4 m patch, 5 substeps x 1 linearised solve x 50 CG iterations already matches Newton without a strain
+limit:
+
+| | lowest point | strain p95 / max at f119 | time |
+|---|---|---|---|
+| this policy | 0.599 m | 0.22% / 2.5% | 4.3 ms/frame |
+| exact | 0.600 m | 0.18% / 0.95% | 22 ms/frame |
+
+On larger hanging patches (900+ vertices) 50 iterations cannot carry the weight to the two pinned corners. Without a
+strain limit it blows up; with one it stays stable but hangs wrong. Hanging from two points is the worst case for an
+iteration budget, because every load has to travel across the whole mesh.
+
+`test_garment` (tube resting on a body, the real use case), 300 frames:
+
+| configuration | KE | seam gap | clearance | hem (predicted 161.2) | ms/frame |
+|---|---|---|---|---|---|
+| Newton + Cholesky (default) | 9.3e-7 | 0.56 mm | 1.65 mm | 156.4 mm | 494 |
+| 4 substeps, CG 50, no limit | blows up | | | | |
+| 5 substeps, CG 50, limit 3% | 9.4e-3 | 5.33 mm | 1.65 mm | 111.2 mm | 18 |
+| 5 substeps, CG 200, limit 3% | 3.1e-4 | 3.26 mm | 1.65 mm | 135.0 mm | 49 |
+| 10 substeps, CG 50, limit 3% | 2.9e-4 | 2.33 mm | 1.65 mm | 138.9 mm | 37 |
+| **10 substeps, CG 100, limit 3%** | 1.6e-4 | 1.49 mm | 1.65 mm | 146.6 mm | 57 |
+
+The last two pass every threshold of the test (KE < 5e-4, gap < 4 mm, clearance > -1 mm, hem within 40 mm). That is
+9-13x faster than the current solver on the CPU. Every operation in the loop is data-parallel:
+- assembling the 3x3 blocks;
+- the sparse block matrix-vector product;
+- the 3x3 block-Jacobi inverse;
+- dot products;
+- strain limiting (Jacobi or coloured on the GPU).
+
+On the CPU the CG cost is the matrix-vector product (callgrind: ~63% of instructions), about 30 ns per unknown per
+iteration on this machine (double precision, 2-ring 3x3 blocks, single thread).
+
 ## What this means for the GPU plan
 
-1. Small-step VBD is the GPU-shaped method that converges on stiff cotton. Its cost is substeps × colours dispatches.
+0. **Recommended:** the inexact linearised solve above (10 substeps, CG 100, strain limit 3%) as the GPU solver. It
+   uses the same energies, matrix and contact handling as the current Newton path, so the editor keeps its behaviour.
+   It passes the garment test today on the CPU. The GPU work is the matrix-vector product, the block-Jacobi
+   preconditioner, the dot-product reductions and the strain-limit pass. The cost per frame is
+   substeps x CG iterations x (a few kernels), so fusing each CG iteration into 2-3 dispatches matters.
+1. Small-step VBD is the other GPU-shaped method that converges on stiff cotton. Its cost is substeps × colours dispatches.
    - Per-dispatch overhead on the M3 Pro through Godot/MoltenVK is **unmeasured**.
    - That number decides whether it is fast.
 2. Before porting, VBD needs:

@@ -318,6 +318,7 @@ void ClothSolver::finalize() {
     if (patternValid_) bindBlockSlots();  // re-finalize after a topology-preserving edit: keep the symbolic factorisation
     else buildBlockPattern();
     vbdReady_ = false;  // VBD adjacency and colouring follow the elements
+    slEdges_.clear();   // strain-limiting edges follow the mesh
     finalized_ = true;
 }
 

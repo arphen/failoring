@@ -66,6 +66,10 @@ struct SolverParams {
     int cgMaxIterations = 2000; // implicit: conjugate-gradient cap per Newton step
     int cholMaxAge = 6;         // CholeskyPCG: refactor after this many solves with the same factor
     Real cgTolerance = 1e-5;    // implicit: relative residual target
+    // Strain limiting after each substep's solve: edges longer than (1 + strainLimit) x rest are shortened (0 = off).
+    Real strainLimit = 0.0;
+    int strainLimitPasses = 4;
+    bool cgWarmStart = false;   // implicit CG: start from the previous solve's dx instead of zero
     bool cgBlockJacobi = false; // implicit CG: 3x3 block-Jacobi preconditioner instead of SSOR (parallel; the GPU path)
     // Speed/accuracy trade-off: clamp in-plane stiffness (tension and shear, N/m) to this value in the
     // solver. 0 = off (exact material values). The condition number of the implicit system grows
@@ -340,7 +344,10 @@ private:
     std::vector<VbdRef> vbdAdj_;
     std::vector<std::vector<int>> vbdColors_;
     std::vector<Real> vbdLambda_;
-    std::vector<Vec3> vbdPrev_, vbdAccel_, vbdVPrev_;  // per vertex, the body penalty force at the start of the substep (friction normal force)
+    std::vector<Vec3> vbdPrev_, vbdAccel_, vbdVPrev_;
+    struct SlEdge { int a, b; Real l0; };
+    std::vector<SlEdge> slEdges_;  // strain limiting: unique mesh edges with rest length
+    void limitStrain();  // per vertex, the body penalty force at the start of the substep (friction normal force)
     void solveTriangles(Real invH2);
     void solveBends(Real invH2);
     void solveSeams(Real invH2, Real scale);
