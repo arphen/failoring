@@ -19,10 +19,17 @@ public:
     // Solve A x = b (original ordering).
     void solve(const std::vector<double>& b, std::vector<double>& x) const;
     long long nnzL() const { return static_cast<long long>(Li_.size()); }
+    // Floating-point operations of one numeric factorisation: sum over columns of c^2 for column count c (approx.)
+    double flops() const {
+        double f = 0;
+        for (int j = 0; j < n_; ++j) { const double c = Lp_[j + 1] - Lp_[j]; f += c * c; }
+        return f;
+    }
     int size() const { return n_; }
 
 private:
     int ereach(int k, std::vector<int>& s) const;
+    void updateBlock(const double* L, int ld, int wd, int m1, int m2, const int* R, double* B, int nr, int f);
     std::vector<int> rowPatStart_, rowPat_;  // cached nonzero pattern of every row of L (topological order)
     int n_ = 0;
     std::vector<int> perm_, iperm_;

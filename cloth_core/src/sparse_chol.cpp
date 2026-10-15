@@ -146,6 +146,50 @@ int SparseCholesky::ereach(int k, std::vector<int>& s) const {
     return top;
 }
 
+// B[:, R[jb]-f] -= L(ia,:) . L(jb,:) for jb < m1, ia >= jb (rows of the descendant panel L, leading dimension ld,
+// width wd): the supernodal update, in 4x4 register tiles accumulated over the panel width and scattered straight
+// into the target panel through relmap_ (no intermediate buffer).
+void SparseCholesky::updateBlock(const double* L, int ld, int wd, int m1, int m2, const int* R, double* B, int nr, int f) {
+    const int* rm = relmap_.data();
+    for (int jb = 0; jb < m1; jb += 4) {
+        const int nb = std::min(4, m1 - jb);
+        double* col[4];
+        for (int jj = 0; jj < 4; ++jj) col[jj] = B + static_cast<size_t>(R[jb + std::min(jj, nb - 1)] - f) * nr;
+        for (int ia = jb; ia < m2; ia += 4) {
+            const int na = std::min(4, m2 - ia);
+            double acc[4][4] = {{0}};
+            if (na == 4 && nb == 4) {
+                for (int k = 0; k < wd; ++k) {
+                    const double* a = L + static_cast<size_t>(k) * ld;
+                    const double a0 = a[ia], a1 = a[ia + 1], a2 = a[ia + 2], a3 = a[ia + 3];
+                    const double b0 = a[jb], b1 = a[jb + 1], b2 = a[jb + 2], b3 = a[jb + 3];
+                    acc[0][0] += a0 * b0; acc[0][1] += a1 * b0; acc[0][2] += a2 * b0; acc[0][3] += a3 * b0;
+                    acc[1][0] += a0 * b1; acc[1][1] += a1 * b1; acc[1][2] += a2 * b1; acc[1][3] += a3 * b1;
+                    acc[2][0] += a0 * b2; acc[2][1] += a1 * b2; acc[2][2] += a2 * b2; acc[2][3] += a3 * b2;
+                    acc[3][0] += a0 * b3; acc[3][1] += a1 * b3; acc[3][2] += a2 * b3; acc[3][3] += a3 * b3;
+                }
+            } else if (na == 4) {  // a short column block: the 4 rows still vectorise
+                for (int k = 0; k < wd; ++k) {
+                    const double* a = L + static_cast<size_t>(k) * ld + ia;
+                    for (int jj = 0; jj < nb; ++jj) {
+                        const double bj = L[static_cast<size_t>(k) * ld + jb + jj];
+                        acc[jj][0] += a[0] * bj; acc[jj][1] += a[1] * bj; acc[jj][2] += a[2] * bj; acc[jj][3] += a[3] * bj;
+                    }
+                }
+            } else {
+                for (int k = 0; k < wd; ++k) {
+                    const double* a = L + static_cast<size_t>(k) * ld;
+                    for (int jj = 0; jj < nb; ++jj)
+                        for (int ii = 0; ii < na; ++ii) acc[jj][ii] += a[ia + ii] * a[jb + jj];
+                }
+            }
+            for (int jj = 0; jj < nb; ++jj)
+                for (int ii = 0; ii < na; ++ii)
+                    if (ia + ii >= jb + jj) col[jj][rm[R[ia + ii]]] -= acc[jj][ii];
+        }
+    }
+}
+
 bool SparseCholesky::factor(const std::vector<double>& val) {
     for (size_t e = 0; e < slot_.size(); ++e)
         if (slot_[e] >= 0) Ax_[slot_[e]] = val[e];
@@ -171,21 +215,7 @@ bool SparseCholesky::factor(const std::vector<double>& val) {
             int p1 = p0;
             while (p1 < nrd && Rd[p1] < f + w) ++p1;
             const int m1 = p1 - p0, m2 = nrd - p0;
-            double* C = cbuf_.data();
-            std::fill(C, C + static_cast<size_t>(m1) * m2, 0.0);
-            for (int jb = 0; jb < m1; ++jb) {
-                double* Cj = C + static_cast<size_t>(jb) * m2;
-                for (int k = 0; k < wd; ++k) {
-                    const double b = Ld[(p0 + jb) + static_cast<size_t>(k) * nrd];
-                    const double* a = Ld + p0 + static_cast<size_t>(k) * nrd;
-                    for (int ia = jb; ia < m2; ++ia) Cj[ia] += a[ia] * b;
-                }
-            }
-            for (int jb = 0; jb < m1; ++jb) {
-                double* col = B + static_cast<size_t>(Rd[p0 + jb] - f) * nr;
-                const double* Cj = C + static_cast<size_t>(jb) * m2;
-                for (int ia = jb; ia < m2; ++ia) col[relmap_[Rd[p0 + ia]]] -= Cj[ia];
-            }
+            updateBlock(Ld + p0, nrd, wd, m1, m2, Rd + p0, B, nr, f);
             nextPos_[d] = p1;
             if (p1 < nrd) {
                 const int t = snodeOf_[Rd[p1]];

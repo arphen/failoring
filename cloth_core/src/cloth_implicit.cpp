@@ -255,6 +255,10 @@ int ClothSolver::solveLinear(Real h2inv, const std::vector<Vec3>& b, std::vector
             for (int i = 0; i < N; ++i) z[i] = filt_[i] * Vec3(sSol_[3 * i], sSol_[3 * i + 1], sSol_[3 * i + 2]);
             return;
         }
+        if (p_.cgBlockJacobi) {  // z_i = D_i^-1 r_i per vertex: the GPU-parallel preconditioner
+            for (int i = 0; i < N; ++i) z[i] = w_[i] == 0 ? Vec3(0, 0, 0) : filt_[i] * (precond_[i] * r[i]);
+            return;
+        }
         for (int i = 0; i < N; ++i) {
             if (w_[i] == 0) { ssorY_[i] = Vec3(0, 0, 0); continue; }
             Vec3 acc = r[i];

@@ -238,14 +238,28 @@ void ClothSolver::stepVBD() {
     const int N = vertexCount();
     const Real seamScale = p_.seamRampFrames > 0 ? std::min(Real(1), std::max(Real(0.02), (frame_ + 1.0) / p_.seamRampFrames)) : Real(1);
     const int threads = p_.vbdThreads > 0 ? p_.vbdThreads : std::max(1u, std::thread::hardware_concurrency());
+    if (vbdAccel_.size() != static_cast<size_t>(N)) vbdAccel_.assign(N, Vec3(0, 0, 0));
+    vbdVPrev_.resize(N);
     for (int s = 0; s < S; ++s) {
         for (int i = 0; i < N; ++i) {
             xPrev_[i] = x_[i];
             if (w_[i] == 0) { v_[i] = Vec3(0, 0, 0); xTilde_[i] = x_[i]; continue; }
-            v_[i] *= std::exp(-damp_[i] * h);
-            v_[i] += p_.gravity * h;
+            const Vec3 v0 = v_[i] * std::exp(-damp_[i] * h);
+            v_[i] = v0 + p_.gravity * h;
             xTilde_[i] = x_[i] + v_[i] * h;
-            x_[i] = xTilde_[i];
+            // initial guess (VBD paper sec. 3.5, "adaptive initialisation"): the inertial prediction y would start
+            // every vertex a full free-fall step down, which an unconverged sweep count cannot pull back up (the cloth
+            // stretches and gains energy); x + h v0 + h^2 a~ with a~ the part of the previous substep's acceleration
+            // along gravity, clamped to [0, |g|], falls only as fast as the vertex actually fell last time
+            Vec3 at(0, 0, 0);
+            const Real g2 = length2(p_.gravity);
+            if (g2 > 0 && vbdAccel_.size() == static_cast<size_t>(N)) {
+                const Vec3 gh = p_.gravity / std::sqrt(g2);
+                const Real ag = std::min(std::max(dot(vbdAccel_[i], gh), Real(0)), std::sqrt(g2));
+                at = gh * ag;
+            }
+            x_[i] = p_.vbdInit == 1 ? x_[i] + v0 * h + at * (h * h) : xTilde_[i];
+            vbdVPrev_[i] = v0;
         }
         // friction normal force: the penalty force at the start of the substep (at the previous positions)
         if (collider_ && p_.bodyFrictionMode == 2)
@@ -259,6 +273,8 @@ void ClothSolver::stepVBD() {
         else
             std::fill(vbdLambda_.begin(), vbdLambda_.end(), 0.0);
         static const bool dbg = std::getenv("FL_VBD_DEBUG") != nullptr;
+        static const int dbgFrom = dbg ? std::atoi(std::getenv("FL_VBD_DEBUG")) : 0;
+        if (dbg && frame_ >= dbgFrom && frame_ < dbgFrom + 2 && s == 0) std::fprintf(stderr, "vbd frame %d start energy %.9e\n", frame_, variationalEnergy(invH2, seamScale));
         // Chebyshev semi-iterative acceleration (VBD paper section 3.6): x_k+1 = w (xbar_k+1 - x_k-1) + x_k-1, with the
         // spectral radius estimate rho (vbdRho; 0 turns it off)
         const Real rho = p_.vbdRho;
@@ -276,7 +292,7 @@ void ClothSolver::stepVBD() {
                         if (w_[i] != 0) x_[i] = vbdPrev_[i] + (x_[i] - vbdPrev_[i]) * omega;
                 vbdPrev_ = cur;
             }
-            if (dbg && frame_ < 3 && s == 0) std::fprintf(stderr, "vbd frame %d sweep %d energy %.6e\n", frame_, it, variationalEnergy(invH2, seamScale));
+            if (dbg && frame_ >= dbgFrom && frame_ < dbgFrom + 2 && s == 0) std::fprintf(stderr, "vbd frame %d sweep %d energy %.9e\n", frame_, it, variationalEnergy(invH2, seamScale));
         }
         if (p_.selfCollision) solveSelfCollision();
         for (int i = 0; i < N; ++i) {
@@ -284,6 +300,7 @@ void ClothSolver::stepVBD() {
             v_[i] = (x_[i] - xPrev_[i]) / h;
             const Real sp = length(v_[i]);
             if (sp > 50.0) v_[i] *= 50.0 / sp;  // runaway guard
+            vbdAccel_[i] = (v_[i] - vbdVPrev_[i]) / h;
         }
     }
     ++frame_;

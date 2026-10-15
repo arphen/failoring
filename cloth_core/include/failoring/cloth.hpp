@@ -66,6 +66,7 @@ struct SolverParams {
     int cgMaxIterations = 2000; // implicit: conjugate-gradient cap per Newton step
     int cholMaxAge = 6;         // CholeskyPCG: refactor after this many solves with the same factor
     Real cgTolerance = 1e-5;    // implicit: relative residual target
+    bool cgBlockJacobi = false; // implicit CG: 3x3 block-Jacobi preconditioner instead of SSOR (parallel; the GPU path)
     // Speed/accuracy trade-off: clamp in-plane stiffness (tension and shear, N/m) to this value in the
     // solver. 0 = off (exact material values). The condition number of the implicit system grows
     // linearly with stiffness, so a cap of a few hundred N/m makes preview drapes several times faster
@@ -75,6 +76,7 @@ struct SolverParams {
     int iterations = 1;       // XPBD only: constraint passes per substep
     int vbdIterations = 20;   // VBD: Gauss-Seidel sweeps over all vertices per substep
     Real vbdContactStiffness = 1000.0;  // VBD: body penalty k = this * m / h^2 per vertex (as contactALStiffness)
+    int vbdInit = 1;          // VBD initial guess: 0 = inertial prediction y, 1 = adaptive (paper sec. 3.5)
     Real vbdRho = 0.0;        // VBD: Chebyshev acceleration spectral radius estimate (0 = off; the paper uses ~0.9)
     int vbdThreads = 0;       // VBD: worker threads (0 = hardware concurrency, 1 = serial)
     Vec3 gravity{0, -9.81, 0};
@@ -338,7 +340,7 @@ private:
     std::vector<VbdRef> vbdAdj_;
     std::vector<std::vector<int>> vbdColors_;
     std::vector<Real> vbdLambda_;
-    std::vector<Vec3> vbdPrev_;  // per vertex, the body penalty force at the start of the substep (friction normal force)
+    std::vector<Vec3> vbdPrev_, vbdAccel_, vbdVPrev_;  // per vertex, the body penalty force at the start of the substep (friction normal force)
     void solveTriangles(Real invH2);
     void solveBends(Real invH2);
     void solveSeams(Real invH2, Real scale);
@@ -480,6 +482,8 @@ private:
 public:
     int lastCgIterations() const { return lastCgIterations_; }
     long long factorNonZeros() const { return chol_.nnzL(); }
+    double factorFlops() const { return chol_.flops(); }
+    int factorSupernodes() const { return chol_.supernodeCount(); }
     // Newton steps rejected because no step length reduced the energy (should stay 0).
     int lineSearchFailures() const { return lineSearchFailures_; }
     // Newton iterations used so far, and substeps taken (their ratio is the mean iterations per substep).
