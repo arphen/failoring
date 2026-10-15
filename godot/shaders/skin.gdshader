@@ -247,12 +247,12 @@ void fragment() {
 	float depth = (0.1445 - 0.0125 * mu * mu) - rp.z;
 	float near_line = step(mu, 1.05) * (1.0 - smoothstep(0.004, 0.008, abs(rp.y - mouth.y))) * step(mouth.z - 0.03, rp.z);
 	alb = mix(alb, alb * vec3(0.55, 0.32, 0.32), near_line * smoothstep(0.002, 0.0045, depth));
-	alb = mix(alb, vec3(0.07, 0.025, 0.024), near_line * smoothstep(0.0045, 0.0065, depth));
+	alb = mix(alb, alb * vec3(0.62, 0.40, 0.38), near_line * smoothstep(0.0045, 0.0065, depth));
 	// nails: pale pink, glossy
 	float nail = use_regions > 0.5 ? smoothstep(0.2, 0.7, reg.g) : v_mask.a;
 	// eyelids: a little pinker and darker, as the skin there is thin
 	alb = mix(alb, alb * vec3(0.92, 0.78, 0.78), smoothstep(0.1, 0.8, reg.b) * 0.6);
-	alb = mix(alb, vec3(0.09, 0.035, 0.032), smoothstep(0.2, 0.8, reg.a) * 0.9);
+	alb = mix(alb, alb * vec3(0.62, 0.40, 0.38), smoothstep(0.2, 0.8, reg.a) * 0.85);   // the mouth behind the parted lips: shadowed, not a void
 	// a photographic skin replaces the drawn colour (it carries its own lips, mottling and redness); creases stay
 	alb = mix(alb, photo_c * (1.0 - 0.12 * crease), use_photo);
 	alb = mix(alb, mix(tone, vec3(0.92, 0.78, 0.76), 0.6), nail * 0.8);
