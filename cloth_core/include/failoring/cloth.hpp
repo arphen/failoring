@@ -46,7 +46,13 @@ enum class Integrator {
     Implicit,
     // Position-based dynamics (XPBD). Cheap and robust for interactive dragging, but on stiff,
     // finely meshed cloth the static shape is iteration-limited (too soft). Experimental here.
-    XPBD
+    XPBD,
+    // Vertex Block Descent (Chen et al., SIGGRAPH 2024; cloth_vbd.cpp): the same implicit-Euler energy as Implicit
+    // (same stretch, shear, bending and seam terms), minimised by Gauss-Seidel over vertices: each vertex solves its own
+    // 3x3 Newton step with its neighbours fixed, vertices of one colour (no shared element) in parallel. No global
+    // linear system, so it maps to threads and to the GPU. Body contact is a per-vertex quadratic penalty, friction the
+    // smoothed Coulomb term with the penalty force as normal force.
+    VBD
 };
 
 struct SolverParams {
@@ -67,6 +73,10 @@ struct SolverParams {
     // tight-fit/stretch analysis (knits on a body), where the true stiffness is the point.
     Real stretchStiffnessCap = 0.0;
     int iterations = 1;       // XPBD only: constraint passes per substep
+    int vbdIterations = 20;   // VBD: Gauss-Seidel sweeps over all vertices per substep
+    Real vbdContactStiffness = 1000.0;  // VBD: body penalty k = this * m / h^2 per vertex (as contactALStiffness)
+    Real vbdRho = 0.0;        // VBD: Chebyshev acceleration spectral radius estimate (0 = off; the paper uses ~0.9)
+    int vbdThreads = 0;       // VBD: worker threads (0 = hardware concurrency, 1 = serial)
     Vec3 gravity{0, -9.81, 0};
     Real seamStiffness = 20000.0;  // N/m of seam length (thread + construction)
     int seamRampFrames = 0;        // >0: seams fade in over this many frames (helps assembling far-apart panels)
@@ -317,6 +327,18 @@ private:
     };
 
     void finalize();
+    // VBD (cloth_vbd.cpp)
+    void stepVBD();
+    void vbdPrepare();
+    void vbdSolveVertex(int i, Real invH2, Real h, Real seamScale);
+    Real vbdLocalEnergy(int i, Real invH2, Real seamScale) const;
+    struct VbdRef { int type, elem, local; };  // type 0 triangle, 1 hinge, 2 seam
+    bool vbdReady_ = false;
+    std::vector<int> vbdAdjStart_;
+    std::vector<VbdRef> vbdAdj_;
+    std::vector<std::vector<int>> vbdColors_;
+    std::vector<Real> vbdLambda_;
+    std::vector<Vec3> vbdPrev_;  // per vertex, the body penalty force at the start of the substep (friction normal force)
     void solveTriangles(Real invH2);
     void solveBends(Real invH2);
     void solveSeams(Real invH2, Real scale);

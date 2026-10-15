@@ -46,6 +46,8 @@ int main() {
     if (const char* e = std::getenv("FL_TENSION")) { sp.hessianAuto = false; sp.tensionStiffness = std::atoi(e) != 0; }
     // K2 (docs/handoff/OPUS_SESSION_1.md): FL_AL=1 = contact multipliers instead of projection (with friction mode 2)
     if (std::getenv("FL_AL")) { sp.contactAL = true; sp.bodyFrictionMode = 2; }
+    // Vertex Block Descent (cloth_vbd.cpp): FL_VBD=<sweeps per substep>
+    if (const char* e = std::getenv("FL_VBD")) { sp.integrator = Integrator::VBD; sp.vbdIterations = std::atoi(e); sp.bodyFrictionMode = 2; }
     ClothSolver cs(sp);
     cs.setCollider(body);
 

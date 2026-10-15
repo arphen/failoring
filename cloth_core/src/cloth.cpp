@@ -317,6 +317,7 @@ void ClothSolver::finalize() {
 
     if (patternValid_) bindBlockSlots();  // re-finalize after a topology-preserving edit: keep the symbolic factorisation
     else buildBlockPattern();
+    vbdReady_ = false;  // VBD adjacency and colouring follow the elements
     finalized_ = true;
 }
 
@@ -512,7 +513,9 @@ void ClothSolver::solveSelfCollision() {
 
 void ClothSolver::step() {
     if (!finalized_) finalize();
-    if (p_.integrator == Integrator::Implicit) stepImplicit(); else stepXpbd();
+    if (p_.integrator == Integrator::Implicit) stepImplicit();
+    else if (p_.integrator == Integrator::VBD) stepVBD();
+    else stepXpbd();
 }
 
 void ClothSolver::stepXpbd() {
