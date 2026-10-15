@@ -14,11 +14,11 @@ add_subdirectory(${GODOT_CPP_DIR} ${CMAKE_BINARY_DIR}/godot-cpp)
 # cloth_core is a plain C++ static library (no Godot dependency)
 set(CORE ${CMAKE_CURRENT_SOURCE_DIR}/../cloth_core)
 add_library(cloth_core STATIC
-  ${CORE}/src/cloth.cpp ${CORE}/src/cloth_implicit.cpp ${CORE}/src/cloth_static.cpp ${CORE}/src/cloth_friction.cpp ${CORE}/src/cloth_vbd.cpp ${CORE}/src/cloth_contact_al.cpp ${CORE}/src/mesher.cpp ${CORE}/src/material.cpp
+  ${CORE}/src/cloth.cpp ${CORE}/src/cloth_implicit.cpp ${CORE}/src/cloth_static.cpp ${CORE}/src/cloth_friction.cpp ${CORE}/src/cloth_vbd.cpp ${CORE}/src/linear_ext.cpp ${CORE}/src/cloth_contact_al.cpp ${CORE}/src/mesher.cpp ${CORE}/src/material.cpp
   ${CORE}/src/mesh_sizing.cpp ${CORE}/src/sparse_chol.cpp ${CORE}/src/metrics.cpp ${CORE}/src/sdf_grid.cpp ${CORE}/src/skin.cpp ${CORE}/src/cloth_skin.cpp ${CORE}/src/barrier_contact.cpp ${CORE}/src/barrier_ccd.cpp ${CORE}/src/barrier_selfcontact.cpp ${CORE}/src/cloth_barrier.cpp)
 target_include_directories(cloth_core PUBLIC ${CORE}/include)
 
-add_library(failoring SHARED src/failoring_sim.cpp src/register_types.cpp)
+add_library(failoring SHARED src/failoring_sim.cpp src/gpu_cg.cpp src/register_types.cpp)
 target_link_libraries(failoring PRIVATE godot-cpp cloth_core)
 set_target_properties(failoring PROPERTIES
   LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/../godot/bin)

@@ -54,6 +54,7 @@ void ClothSolver::buildBlockPattern() {
 // (barrier mode) whenever an active contact pair couples vertices the pattern does not contain yet.
 void ClothSolver::rebuildPattern() {
     const int N = vertexCount();
+    ++patternVersion_;
     std::vector<std::set<int>> nb(N);
     for (int i = 0; i < N; ++i) nb[i].insert(i);
     auto couple = [&](const int* idx, int n) {
@@ -230,6 +231,18 @@ Real ClothSolver::variationalEnergy(Real invH2, Real seamScale) const {
 // is restricted by filt_[i] (identity = free, zero = pinned, I - n n^T = sliding on the body surface).
 int ClothSolver::solveLinear(Real h2inv, const std::vector<Vec3>& b, std::vector<Vec3>& x, bool cholPrec, int maxIt) {
     const int N = vertexCount();
+    if (extSolver_ && !cholPrec) {
+        extMass_.resize(N);
+        for (int i = 0; i < N; ++i) extMass_[i] = mass_[i] * h2inv;
+        LinearSystemView v;
+        v.n = N; v.rowStart = K_.rowStart.data(); v.col = K_.col.data(); v.val = K_.val.data(); v.diag = K_.diag.data();
+        v.massTerm = extMass_.data(); v.filt = filt_.data(); v.rhs = b.data();
+        v.maxIterations = maxIt > 0 ? std::min(maxIt, p_.cgMaxIterations) : p_.cgMaxIterations;
+        v.tolerance = p_.cgTolerance;
+        v.patternVersion = patternVersion_;
+        const int it = extSolver_(v, x);
+        if (it >= 0 && static_cast<int>(x.size()) == N) return it;
+    }
     if (!cholPrec)
         for (int i = 0; i < N; ++i) {
             Mat3 D = K_.val[K_.diag[i]];

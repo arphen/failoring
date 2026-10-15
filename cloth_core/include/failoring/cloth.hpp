@@ -10,6 +10,7 @@
 // Units: metres, kilograms, seconds, newtons.
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <unordered_set>
@@ -236,6 +237,31 @@ struct SeamSpec {
     bool reverse;  // false: start of A's chain meets start of B's chain
 };
 
+// The filtered implicit system  F (diag(massTerm) + K) F x = F b  (x restricted by the per-vertex filters F: I for a
+// free vertex, 0 pinned, I - n n^T resting on the body), as handed to an external linear solver (the GPU conjugate
+// gradient of the Godot extension). K is block-CSR with 3x3 blocks (row-major Mat3), columns sorted per row.
+struct LinearSystemView {
+    int n = 0;                       // vertices
+    const int* rowStart = nullptr;   // n + 1
+    const int* col = nullptr;        // rowStart[n] block columns
+    const Mat3* val = nullptr;       // rowStart[n] blocks
+    const int* diag = nullptr;       // index of the (i,i) block per row
+    const Real* massTerm = nullptr;  // m_i / h^2 per vertex (added to the diagonal)
+    const Mat3* filt = nullptr;      // per-vertex filter F
+    const Vec3* rhs = nullptr;       // b
+    int maxIterations = 0;
+    Real tolerance = 0;              // stop when |r| <= tolerance |F b|
+    int patternVersion = 0;          // changes whenever rowStart/col change (re-upload them)
+};
+// Returns the iterations used, or < 0 when it could not solve (the core then runs its own CG).
+using ExternalLinearSolver = std::function<int(const LinearSystemView&, std::vector<Vec3>& x)>;
+
+// The algorithm the GPU kernel runs, on the CPU in single precision with the same operation order: block-Jacobi
+// preconditioned CG from x = 0, at most maxIterations, stopping on the relative residual. The reference the GPU
+// results are checked against (and a fallback with the GPU's numerics).
+int cgBlockJacobiFloat(const LinearSystemView& sys, std::vector<Vec3>& x);
+int cgBlockJacobiDouble(const LinearSystemView& sys, std::vector<Vec3>& x);  // the same in double precision
+
 class ClothSolver {
 public:
     explicit ClothSolver(SolverParams p = {}) : p_(p) {}
@@ -345,6 +371,9 @@ private:
     std::vector<std::vector<int>> vbdColors_;
     std::vector<Real> vbdLambda_;
     std::vector<Vec3> vbdPrev_, vbdAccel_, vbdVPrev_;
+    ExternalLinearSolver extSolver_;
+    std::vector<Real> extMass_;
+    int patternVersion_ = 0;
     struct SlEdge { int a, b; Real l0; };
     std::vector<SlEdge> slEdges_;  // strain limiting: unique mesh edges with rest length
     void limitStrain();  // per vertex, the body penalty force at the start of the substep (friction normal force)
@@ -490,6 +519,9 @@ public:
     int lastCgIterations() const { return lastCgIterations_; }
     long long factorNonZeros() const { return chol_.nnzL(); }
     double factorFlops() const { return chol_.flops(); }
+    // Hand the CG solves (linearSolver ConjugateGradient) to an external solver, e.g. the GPU; empty = the CPU CG.
+    void setExternalLinearSolver(ExternalLinearSolver f) { extSolver_ = std::move(f); }
+    bool hasExternalLinearSolver() const { return static_cast<bool>(extSolver_); }
     int factorSupernodes() const { return chol_.supernodeCount(); }
     // Newton steps rejected because no step length reduced the energy (should stay 0).
     int lineSearchFailures() const { return lineSearchFailures_; }

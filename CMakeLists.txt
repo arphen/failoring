@@ -14,6 +14,7 @@ add_library(cloth_core STATIC
   cloth_core/src/cloth_static.cpp
   cloth_core/src/cloth_friction.cpp
   cloth_core/src/cloth_vbd.cpp
+  cloth_core/src/linear_ext.cpp
   cloth_core/src/cloth_contact_al.cpp
   cloth_core/src/mesher.cpp
   cloth_core/src/material.cpp

@@ -237,7 +237,10 @@ func _ready() -> void:
 	add_child(debounce)
 	# Headless runs and tests keep the synchronous path (no threads, identical results). FL_THREAD=1 forces the worker
 	# under headless (for tests); FL_SYNC=1 forces the synchronous path.
-	_use_worker = (DisplayServer.get_name() != "headless" or OS.has_environment("FL_THREAD")) and not OS.has_environment("FL_SYNC")
+	# FL_GPU=1 (GPU conjugate gradient, plan_loader.gd) steps on the main thread too: its device's submits from the worker
+	# while the main thread draws crashed Godot 4.3 (SwiftShader, gdb: SIGSEGV in the main loop); the GPU step is short.
+	_use_worker = (DisplayServer.get_name() != "headless" or OS.has_environment("FL_THREAD")) and not OS.has_environment("FL_SYNC") \
+		and OS.get_environment("FL_GPU") != "1"
 	if _use_worker:
 		_worker = Thread.new()
 		_worker.start(_worker_main)

@@ -26,6 +26,8 @@
 #include "failoring/material.hpp"
 #include "failoring/sdf_grid.hpp"
 
+class GpuCg;  // gpu_cg.h
+
 namespace godot {
 
 // The frame of a box prop: its centre and the world directions of its axes.
@@ -212,6 +214,8 @@ private:
 
     fl::SolverParams params_;
     std::unique_ptr<fl::ClothSolver> solver_;
+    std::shared_ptr<::GpuCg> gpu_;   // set_param("gpu", 1): the CG solves run on the GPU (gpu_cg.h)
+    void attachGpu();
     std::vector<fl::FabricMaterial> materials_;
     std::vector<std::shared_ptr<fl::Collider>> colliders_;     // analytic primitives
     std::shared_ptr<fl::Collider> active_;                     // what the solver collides with (primitives + body)

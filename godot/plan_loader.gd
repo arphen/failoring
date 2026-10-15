@@ -89,6 +89,9 @@ static func build(plan: Dictionary, sections: Dictionary, arms: Dictionary, stan
 		sim.set_param("cg_block_jacobi", 1)
 		sim.set_param("cg_max_iterations", float(OS.get_environment("FL_CG")) if OS.has_environment("FL_CG") else 100.0)
 		sim.set_param("strain_limit", 0.03)
+		# FL_GPU=1: those CG solves on the GPU (gdextension/src/gpu_cg.h); needs the Forward+ or Mobile renderer
+		if OS.get_environment("FL_GPU") == "1":
+			sim.set_param("gpu", 1)
 	if OS.has_environment("FL_SLIP"):
 		sim.set_param("friction_slip_velocity", float(OS.get_environment("FL_SLIP")))
 	sim.add_plane(Vector3.ZERO, Vector3.UP)  # feet stand on y = 0, like the browser floor

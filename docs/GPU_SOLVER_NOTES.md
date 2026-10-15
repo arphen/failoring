@@ -154,7 +154,7 @@ neckline. The sleeve-hem artifacts are present in both.
 
 ## What this means for the GPU plan
 
-0. **Recommended:** the inexact linearised solve above (10 substeps, CG 100, strain limit 3%) as the GPU solver. It
+0. **Recommended (now built, see "The GPU solver" below):** the inexact linearised solve above (10 substeps, CG 100, strain limit 3%) as the GPU solver. It
    uses the same energies, matrix and contact handling as the current Newton path, so the editor keeps its behaviour.
    It passes the garment test today on the CPU. The GPU work is the matrix-vector product, the block-Jacobi
    preconditioner, the dot-product reductions and the strain-limit pass. The cost per frame is
@@ -168,6 +168,78 @@ neckline. The sleeve-hem artifacts are present in both.
    - a stretch fix for fast motion (more sweeps, or a strain-limiting pass).
 3. Meanwhile the CPU path has cheap wins with no change in result: `newtonTolerance` 1e-5 (2× per frame), threads over
    independent subtrees of the nested-dissection tree, and Apple Accelerate's sparse Cholesky on macOS (unmeasured here).
+
+## The GPU solver (done 2026-10-15)
+
+`gdextension/src/gpu_cg.{h,cpp}`: the block-Jacobi conjugate gradient of the fast solve as one Godot compute shader
+(GLSL, compiled by Godot to SPIR-V; Vulkan on Linux and Windows, Metal through MoltenVK on macOS).
+
+**Design.** The whole CG solve is **one dispatch of one 256-thread workgroup**. It loops over the iterations with
+workgroup barriers between the steps (matrix-vector product, reductions, updates). There are no per-iteration dispatches
+or read-backs. Per substep the CPU still assembles the matrix (3x3 blocks) and the right-hand side, uploads them, runs
+the dispatch, waits, and reads back the step. A cloth system of a few thousand vertices fits one compute unit. Splitting
+each CG step into its own dispatch would mean ~4000-6000 launches per frame, so launch overhead would dominate.
+
+**Wiring.**
+- `ClothSolver::setExternalLinearSolver` (cloth_core) hands every CG solve to an outside solver through
+  `LinearSystemView`.
+- `FailoringSim.set_param("gpu", 1)` attaches the GPU solver; `FL_FAST=1 FL_GPU=1` in the editor.
+- When there is no GPU device (headless, Compatibility renderer), every solve falls back to the CPU CG and
+  `get_solver_stats()["gpu_error"]` says why.
+
+**Threading.** With the GPU on, the editor steps on the main thread. With the device used from the editor's worker
+thread while the main thread drew, Godot 4.3 crashed (SwiftShader, SIGSEGV in the main loop). Creating the device on
+the main thread was not enough on its own. A device shared with the renderer's queue is the likely reason (unverified).
+
+**Correctness.** `cgBlockJacobiFloat` / `cgBlockJacobiDouble` (cloth_core/src/linear_ext.cpp) are the same algorithm on
+the CPU in single and double precision. With `set_param("gpu_verify", 1)` every GPU solve is redone on the CPU for the
+same number of iterations in both precisions. In single precision this CG is sensitive to summation order on garment
+systems: float vs double, same iterations, differs by up to 3.4% of the solution (`test_garment` fast settings). So the
+check is that the GPU is as close to the double result as the CPU's own float run.
+`godot/tests/gpu_check.tscn`, on SwiftShader (software Vulkan, see below):
+
+| scene | worst solve vs double: GPU | CPU float | worst per-solve GPU / CPU-float error ratio | after 90 frames vs the double CPU run |
+|---|---|---|---|---|
+| hanging patch (479 vertices) | 1.96e-4 | 1.97e-4 | 1.47 | 0.27 cm average, 2.5 cm at most |
+| drape on a sphere (949 vertices) | 2.85e-3 | 2.42e-3 | 1.33 | 1.33 cm average, 6.7 cm at most (folds) |
+
+The same iteration counts in every solve. Solves whose largest step is below 1 nm are skipped by the check: a cloth at
+rest solves for 1e-17 m steps, where the GPU flushes tiny floats to zero (one such solve showed a ratio of 419 for an
+error of 1e-20 m).
+
+The fine tee in the editor on the GPU path (60 frames, 600 GPU solves) shows no skin through the cloth (poke.py:
+0.00%), and its front and back renders look like the CPU fast solve. Both have the fast solve's ragged sleeve hem.
+
+**Speed: not measured on a real GPU.** SwiftShader runs the shader on this machine's 2 CPU cores, about 60-150 ms per
+solve, so its timings say nothing. The number to measure on the M3 Pro is `gpu_last_ms` (upload, dispatch, wait,
+download per solve) for the fine tee: the CPU CG costs about 10 ms per solve there (138 ms/frame over 10 substeps,
+assembly included).
+
+### Running it on the Mac
+
+```
+tools/build_gdext.sh                                   # rebuilds godot/bin/libfailoring.dylib
+godot --path godot res://tests/gpu_check.tscn          # needs a window (Forward+ renderer); prints GPU lines, ms/frame
+FL_FAST=1 FL_GPU=1 godot --path godot                  # the editor with the GPU solve
+```
+
+`get_solver_stats()` reports `gpu_ready`, `gpu_device`, `gpu_last_ms`, `gpu_solves`, `gpu_error`. If `gpu_last_ms` is
+dominated by upload and wait rather than the shader, the next steps are:
+- assemble the matrix on the GPU too (no per-substep upload);
+- keep the whole substep on the GPU.
+
+### Software Vulkan for testing here (SwiftShader)
+
+No GPU in the cloud container. SwiftShader (github.com/google/swiftshader) built from source with its Vulkan driver
+only (`-DREACTOR_BACKEND=Subzero`, tests off). It has no Xlib surface, which Godot 4.3 needs on X11, so a local patch adds
+`vkCreateXlibSurfaceKHR` on top of its XCB surface (`XGetXCBConnection` from libX11-xcb, loaded at runtime). Then:
+
+```
+VK_ICD_FILENAMES=.../build-ss/Linux/vk_swiftshader_icd.json xvfb-run -a godot --rendering-driver vulkan --path godot res://tests/gpu_check.tscn
+```
+
+SwiftShader allows 4 descriptor sets, so Godot's 3D scene shaders fail to compile (the 3D view stays empty). The compute
+shader uses one set and runs.
 
 ## Tools (scratch, not in the repo)
 

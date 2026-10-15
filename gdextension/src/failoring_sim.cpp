@@ -1,4 +1,5 @@
 #include "failoring_sim.h"
+#include "gpu_cg.h"
 
 #include <algorithm>
 #include <cmath>
@@ -79,6 +80,7 @@ void FailoringSim::resetSolver() {
     if (solver_) params_ = solver_->params();
     solver_ = std::make_unique<fl::ClothSolver>(params_);
     solver_->setCollider(active_);
+    attachGpu();
     panelEdges_.clear();
     warnings_ = 0;
     panelUV_.clear();
@@ -88,6 +90,14 @@ void FailoringSim::resetSolver() {
 }
 
 void FailoringSim::begin() { resetSolver(); }
+
+// The GPU conjugate gradient (gpu_cg.h) as the solver's linear solver (its device is created by set_param("gpu")). When
+// it cannot run (no device, shader error) each solve returns -1 and the solver uses its CPU CG.
+void FailoringSim::attachGpu() {
+    if (!gpu_) { solver_->setExternalLinearSolver(nullptr); return; }
+    std::shared_ptr<GpuCg> g = gpu_;
+    solver_->setExternalLinearSolver([g](const fl::LinearSystemView& v, std::vector<fl::Vec3>& x) { return g->solve(v, x); });
+}
 
 bool FailoringSim::load_materials(const String& path) {
     Ref<FileAccess> f = FileAccess::open(path, FileAccess::READ);
@@ -796,6 +806,17 @@ void FailoringSim::set_param(const String& name, real_t v) {
     else if (name == "contact_band") p.contactBand = v;
     else if (name == "tension_stiffness") p.tensionStiffness = v != 0;
     else if (name == "gravity_y") p.gravity.y = v;
+    else if (name == "gpu") {  // 1: run the conjugate gradient on the GPU (with linear_solver 1)
+        // the device is created here, on the calling (main) thread: created on the editor's worker thread and freed on the
+        // main thread with the sim, Godot 4.3 crashed (measured with SwiftShader). The worker then only uses it.
+        if (v != 0 && !gpu_) {
+            gpu_ = std::make_shared<GpuCg>();
+            if (!gpu_->ready()) UtilityFunctions::push_warning("FailoringSim: no GPU solver (", String(gpu_->error().c_str()), "), the CPU solves");
+        }
+        if (v == 0) gpu_.reset();
+        attachGpu();
+    }
+    else if (name == "gpu_verify") { if (gpu_) gpu_->setVerify(v != 0); }  // after "gpu": check every solve on the CPU
     // fast solve (docs/GPU_SOLVER_NOTES.md): linear_solver 0 = Cholesky, 1 = conjugate gradient
     else if (name == "linear_solver") p.linearSolver = v >= 1 ? fl::LinearSolver::ConjugateGradient : fl::LinearSolver::Cholesky;
     else if (name == "cg_block_jacobi") p.cgBlockJacobi = v != 0;
@@ -849,6 +870,17 @@ Dictionary FailoringSim::get_solver_stats() const {
     d["newton_iterations"] = static_cast<int64_t>(solver_->newtonIterations());
     d["substeps"] = static_cast<int64_t>(solver_->substepsDone());
     d["cg_iterations"] = solver_->lastCgIterations();
+    if (gpu_) {
+        d["gpu_ready"] = gpu_->active();
+        d["gpu_device"] = String(gpu_->deviceName().c_str());
+        d["gpu_error"] = String(gpu_->error().c_str());
+        d["gpu_solves"] = static_cast<int64_t>(gpu_->solves());
+        d["gpu_last_ms"] = gpu_->lastMs();
+        d["gpu_verify_max_rel"] = gpu_->verifyMaxRel();
+        d["gpu_verify_ref_rel"] = gpu_->verifyRefRel();
+        d["gpu_verify_ratio"] = gpu_->verifyRatio();
+        d["gpu_verify_it_diff"] = gpu_->verifyItDiff();
+    }
     return d;
 }
 
