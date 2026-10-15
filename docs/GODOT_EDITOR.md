@@ -296,6 +296,11 @@ time. Bodies regenerate live (`godot/body_gen.gd`, ~0.5 s) and the sim rebuilds.
 Drafted plans re-draft on the live body; FreeSewing plans use the nearest preset's
 geometry on the live sections (outlines are per-preset, placement is exact).
 
+Look (2026-10-15): Skin (seven drawn tones, plus any photographic MakeHuman skin in `godot/assets/skin/photo/`, fetched
+with `tools/fetch_makehuman_skins.sh`), Hair (none, or a short crop in five colours) and Eyes (five iris colours). Look
+only: no rebuild, nothing reaches the solver. Kept in `user://settings.cfg` [look]. How the skin, eyes and studio are
+made: `docs/LOOK_NOTES.md`.
+
 ## Assets (`godot/assets/<preset>/`, `godot/assets/body_data.json`)
 
 Written by exporters; never hand-edit, re-run instead:

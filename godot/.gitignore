@@ -1,3 +1,6 @@
 # Godot editor import cache and generated import sidecars; the editor recreates both.
 .godot/
 *.import
+
+# photographic skins fetched by tools/fetch_makehuman_skins.sh (CC0, 4 MB each): local only
+assets/skin/photo/

@@ -21,14 +21,15 @@ func _init() -> void:
 	# quality levels apply without error to the scene pieces
 	var env := Environment.new()
 	Look.environment(env)
-	var sun := DirectionalLight3D.new()
-	Look.key_light(sun)
+	var key := SpotLight3D.new()
 	var vp := SubViewport.new()
 	var bm := Look.body_material()
 	for lvl in Look.QUALITY_LEVELS:
-		Look.apply_quality(lvl, env, sun, vp, bm)
+		Look.apply_quality(lvl, env, key, vp, bm)
 		var q := Look.quality(lvl)
 		_check(vp.msaa_3d == int(q["msaa"]), "%s: msaa %d" % [lvl, vp.msaa_3d])
+		_check(vp.positional_shadow_atlas_size == int(q["shadow_map"]) and key.shadow_enabled, "%s: key shadow %d" % [lvl, vp.positional_shadow_atlas_size])
+		_check(is_equal_approx(float(bm.get_shader_parameter("detail")), float(q["skin_detail"])), "%s: skin detail" % lvl)
 		_check(env.ssao_enabled == (bool(q["ssao"]) and RenderingServer.get_rendering_device() != null), "%s: ssao flag" % lvl)
 	_check(Look.quality("nonsense") == Look.QUALITY["medium"], "unknown level falls back to medium")
 

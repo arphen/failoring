@@ -26,6 +26,11 @@ var _last_frame: float = -1.0
 var _mesh: ArrayMesh = ArrayMesh.new()
 var _draw_idx: PackedInt32Array = PackedInt32Array()     # indices as drawn (winding flipped once, not per frame)
 var _shown: PackedVector3Array = PackedVector3Array()    # positions currently in the mesh, to skip repeat poses
+# skin attributes (skin.gd build: rest position, cavity and colour masks per vertex) and the eyeballs that follow the head;
+# both optional, set by set_skin_data for the generated mannequin
+var _skin: Dictionary = {}
+var _drawn_idx := PackedInt32Array()   # the drawn mesh's triangles (skin "drawn"), winding flipped like _draw_idx
+var eyes: Node3D = null
 
 
 func _ready() -> void:
@@ -55,6 +60,23 @@ func load_preset(name: String) -> bool:
 func show_standing() -> void:
 	walking = false
 	_build(standing)
+
+
+# Per-vertex skin attributes and eyes (skin.gd build output). Used while the vertex count matches.
+func set_skin_data(skin: Dictionary) -> void:
+	_skin = skin
+	if eyes == null:
+		eyes = preload("res://eyes.gd").new()
+		eyes.name = "Eyes"
+		add_child(eyes)
+	eyes.setup(skin.get("eyes", {}))
+	_drawn_idx = PackedInt32Array()
+	var cur := _shown
+	_shown = PackedVector3Array()
+	if not cur.is_empty():
+		_build(cur)
+	elif not standing.is_empty():
+		_build(standing)
 
 
 # Shows an explicit pose (the editor drives the walk clock itself so the rendered
@@ -176,12 +198,41 @@ func _build(verts: PackedVector3Array) -> void:
 				_draw_idx[t + 2] = tmp
 	var arrays: Array = []
 	arrays.resize(Mesh.ARRAY_MAX)
-	arrays[Mesh.ARRAY_VERTEX] = verts
-	arrays[Mesh.ARRAY_NORMAL] = n
-	arrays[Mesh.ARRAY_INDEX] = _draw_idx
+	var flags := 0
+	if not _skin.is_empty() and int(_skin["n"]) == verts.size():
+		# the mannequin with its skin data: drawn vertices gathered from the body (UV seams split some of them)
+		var d: Dictionary = _skin["drawn"]
+		var src: PackedInt32Array = d["src"]
+		var dv := PackedVector3Array()
+		var dn := PackedVector3Array()
+		dv.resize(src.size())
+		dn.resize(src.size())
+		for i in src.size():
+			dv[i] = verts[src[i]]
+			dn[i] = n[src[i]]
+		if _drawn_idx.is_empty():
+			_drawn_idx = (d["tris"] as PackedInt32Array).duplicate()
+			if flip_winding:
+				for t in range(0, _drawn_idx.size(), 3):
+					var tmp := _drawn_idx[t + 1]
+					_drawn_idx[t + 1] = _drawn_idx[t + 2]
+					_drawn_idx[t + 2] = tmp
+		arrays[Mesh.ARRAY_VERTEX] = dv
+		arrays[Mesh.ARRAY_NORMAL] = dn
+		arrays[Mesh.ARRAY_INDEX] = _drawn_idx
+		arrays[Mesh.ARRAY_TEX_UV] = d["uv"]
+		arrays[Mesh.ARRAY_COLOR] = d["color"]
+		arrays[Mesh.ARRAY_CUSTOM0] = d["custom0"]
+		flags = Mesh.ARRAY_CUSTOM_RGBA_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM0_SHIFT
+	else:
+		arrays[Mesh.ARRAY_VERTEX] = verts
+		arrays[Mesh.ARRAY_NORMAL] = n
+		arrays[Mesh.ARRAY_INDEX] = _draw_idx
 	_mesh.clear_surfaces()
-	_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays, [], {}, flags)
 	_shown = verts
+	if eyes != null:
+		eyes.follow(verts)
 
 
 # Triangle topology changed: the flipped draw order is rebuilt on the next _build.

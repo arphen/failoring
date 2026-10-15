@@ -91,7 +91,8 @@ void fragment() {
 }
 
 // Godot multiplies DIFFUSE_LIGHT by ALBEDO after this function, so the diffuse terms here are albedo-free.
-// SPECULAR_LIGHT is not albedo-scaled.
+// SPECULAR_LIGHT is not albedo-scaled. LIGHT_COLOR carries a factor pi (Godot's convention for physically based light
+// functions): the terms are divided by pi so the cloth sits in the same light as the skin and the studio.
 void light() {
 	float ndl = dot(NORMAL, LIGHT);
 	// wrapped diffuse: a soft terminator, as a woven surface scatters light
@@ -101,11 +102,12 @@ void light() {
 	// sheen: fibre fuzz brightens grazing views, scattered like diffuse light
 	float graze = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 3.0);
 	float fuzz = sheen * graze * 0.5;
-	DIFFUSE_LIGHT += LIGHT_COLOR * ATTENUATION * (wrap + through + fuzz);
+	DIFFUSE_LIGHT += LIGHT_COLOR * ATTENUATION * (wrap + through + fuzz) / PI;
 	// broad specular lobe, width from the roughness
 	vec3 HV = LIGHT + VIEW;
 	vec3 H = HV / max(length(HV), 1e-6);
 	float shine = mix(60.0, 6.0, rough);
 	float lobe = pow(max(dot(NORMAL, H), 0.0), shine);
-	SPECULAR_LIGHT += LIGHT_COLOR * ATTENUATION * spec * lobe * max(ndl, 0.0);
+	// normalised Blinn-Phong ((n + 8) / 8 pi): a narrow lobe is brighter at its peak, as on a satin
+	SPECULAR_LIGHT += LIGHT_COLOR * ATTENUATION * spec * lobe * max(ndl, 0.0) * (shine + 8.0) / (8.0 * PI);
 }

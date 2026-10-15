@@ -53,6 +53,24 @@ Development tools that are not shipped (Playwright, numpy, matplotlib, bezier-js
   matches the commit above and the 66 files. The blending and fitting in `app/src/body.js` are Failoring's own code.
   CC0 requires no attribution; the copyright lines are kept here anyway.
 * **Not verified:** whether any other MakeHuman asset (clothes, textures, proxies) is in use. None is used by the converter.
+* **Texture coordinates (2026-10-15):** `godot/assets/body_uv.json` holds the `vt` coordinates of the `body` group of
+  the same `data/3dobjs/base.obj` (same commit, same CC0 statement), written by `tools/export_body_uv.py`, so the
+  Godot mannequin can use textures painted for MakeHuman's UV layout. No other file is read.
+* **Photographic skins (not in the repo):** `tools/fetch_makehuman_skins.sh` downloads MakeHuman 1.1 skin textures
+  (`download.tuxfamily.org/makehuman/assets/1.1/base/skins/textures/*_diffuse.png`, part of the MakeHuman system
+  assets released as CC0 in 2020) into `godot/assets/skin/photo/`, which is git-ignored. Not downloaded or checked here
+  (the host was not reachable from the machine that wrote this); check the licence statement on the asset pages before
+  committing any of them.
+
+## 1a. MPFB2 region masks (CC0 1.0)
+
+* **Upstream:** https://github.com/makehumancommunity/mpfb2 at `3af0cd5a2ffba072e93a34e5f6f494fdc4813ddf` (HEAD on
+  2026-10-15). Its `LICENSE.md` section C: the assets ("textures", "the base mesh", "JSON data") are CC0 1.0; the
+  verbatim CC0 text is its `LICENSE.ASSETS.md`. The Python program code (GPLv3) is not used.
+* **Files read:** `src/mpfb/data/textures/mpfb_{lips,fingernails,toenails,eyelids,inside-mouth}.jpg` (2048 px greyscale
+  masks painted for MakeHuman's UV layout).
+* **Derived in this repo:** `godot/assets/skin/regions.png` (RGBA: lips, nails, eyelids, inside of the mouth), written by
+  `tools/pack_skin_masks.py`.
 
 ## 2. FreeSewing (MIT)
 

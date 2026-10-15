@@ -201,6 +201,17 @@ B-spline rounds curved skin. A 4 mm grid halves that, but the bake costs 3x as m
 and a 3% strain limit: `docs/GPU_SOLVER_NOTES.md`. The fine tee runs 1013 -> 138 ms/frame with the same drape. Its
 sleeve hems crumple more than Newton's. It is the GPU candidate and is opt-in.
 
+## A photo studio and a lifelike mannequin (2026-10-15, look only)
+
+The Godot 3D view is a photo studio: an infinity cove, a visible lighting rig (key octabox, V-flat fill, two strip
+rims, a top box on a boom) whose lamps light the scene and are painted into the sky for the ambient light and the
+reflections. The mannequin has skin (scattering, pores and bumps, two specular lobes, mottling and redness, creases,
+moles; lips, eyelids, nails and mouth from MPFB2's CC0 region masks over MakeHuman's UVs), brows, a short hair crop,
+and eyeballs that follow the head. Body tab > Look: skin tone (7, plus MakeHuman photo skins once fetched with
+`tools/fetch_makehuman_skins.sh`), hair, eye colour. Cloth lighting divided by pi to match. Details, numbers and what
+was not verified (Forward+ was never seen; renders here are OpenGL on llvmpipe): `docs/LOOK_NOTES.md`.
+New checks: `godot/tests/look_check.gd` (33), `render_check.gd` extended; renders: `godot/tests/look_shot.gd`.
+
 ## Maintenance
 
 A scheduled task ("Failoring browser build upkeep", daily 06:47 Europe/Berlin) rebuilds `failoring.html`, runs the smoke

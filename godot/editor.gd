@@ -29,6 +29,9 @@ const PlaceView = preload("res://place_view.gd")
 const SoftTissue = preload("res://soft_tissue.gd")
 const SewCheck = preload("res://sew_check.gd")
 const Arrange = preload("res://arrange.gd")
+const Studio = preload("res://studio.gd")
+const SkinMap = preload("res://skin.gd")
+const Eyes = preload("res://eyes.gd")
 
 # body_h: spacing (m) of the body's signed-distance grid, baked for every walking frame. 7 mm is the reference (the
 # numbers in docs/PERF_NOTES.md are measured with it). Draft and Preview use 10 mm: the bake takes about 1.8x less CPU,
@@ -49,7 +52,11 @@ var body_node: BodyView
 var cloth_node: MeshInstance3D
 var render_q := "medium"                 # Look.QUALITY_LEVELS: low, medium, high (settings.cfg [render] quality)
 var render_env: Environment
-var render_sun: DirectionalLight3D
+var render_key: Light3D                  # the studio's key light (studio.gd), the shadow caster
+var studio: Dictionary = {}              # Studio.build: lights, fixtures, sky
+var look_skin := Look.SKIN_DEFAULT       # mannequin look (Body tab, settings.cfg [look]): skin tone, hair, eye colour
+var look_hair := Look.HAIR_DEFAULT
+var look_eyes := Look.EYE_DEFAULT
 var _shade := ClothShade.new()           # cloth normals, UVs, strain, contact occlusion, fabric surfaces
 var cam_pivot: Node3D
 var cam: Camera3D
@@ -289,6 +296,12 @@ func _load_settings() -> void:
 		ui_scale_pref = clampf(float(cf.get_value("ui", "scale", 0.0)), 0.0, UI_SCALE_MAX)
 		var rq := String(cf.get_value("render", "quality", "medium"))
 		render_q = rq if Look.QUALITY_LEVELS.has(rq) else "medium"
+		var sk := String(cf.get_value("look", "skin", Look.SKIN_DEFAULT))
+		look_skin = sk if Look.skin_choices().has(sk) else Look.SKIN_DEFAULT
+		var hk := String(cf.get_value("look", "hair", Look.HAIR_DEFAULT))
+		look_hair = hk if Look.HAIR_COLORS.has(hk) else Look.HAIR_DEFAULT
+		var ek := String(cf.get_value("look", "eyes", Look.EYE_DEFAULT))
+		look_eyes = ek if Eyes.IRIS.has(ek) else Look.EYE_DEFAULT
 	# a missing or unreadable file keeps the defaults (auto scale, medium render quality)
 	if OS.has_environment("FL_RENDER") and Look.QUALITY_LEVELS.has(OS.get_environment("FL_RENDER")):
 		render_q = OS.get_environment("FL_RENDER")
@@ -307,8 +320,35 @@ func _save_settings() -> void:
 func _apply_render_quality() -> void:
 	if render_env == null:
 		return
-	Look.apply_quality(render_q, render_env, render_sun, sub_view, body_node.material_override as StandardMaterial3D)
+	Look.apply_quality(render_q, render_env, render_key, sub_view, body_node.material_override)
 	_shade.set_quality(render_q)
+
+
+# Skin tone, hair and eye colour of the mannequin: look only, no rebuild.
+func _apply_look() -> void:
+	var m := body_node.material_override as ShaderMaterial
+	if m == null:
+		return
+	Look.set_skin_tone(m, look_skin)
+	Look.set_hair(m, look_hair)
+	if body_node.eyes != null:
+		body_node.eyes.set_iris(look_eyes)
+
+
+func _set_look(key: String, value: String) -> void:
+	match key:
+		"skin":
+			look_skin = value
+		"hair":
+			look_hair = value
+		"eyes":
+			look_eyes = value
+	_apply_look()
+	var cf := ConfigFile.new()
+	cf.load(SETTINGS_PATH)
+	cf.set_value("look", key, value)
+	if cf.save(SETTINGS_PATH) != OK:
+		push_warning("could not save %s" % SETTINGS_PATH)
 
 
 func _cycle_render_quality() -> void:
@@ -421,28 +461,18 @@ func _sync_scale_opt() -> void:
 
 
 # ------------------------------------------------------------------ scene
+# The mannequin stands in a photo studio (studio.gd: an infinity cove, a visible lighting rig and its lights; the
+# rig is also painted into the sky that gives the ambient light and the reflections).
 func _build_scene() -> void:
 	var env := WorldEnvironment.new()
 	env.environment = Environment.new()
 	Look.environment(env.environment)
 	stage.add_child(env)
 	render_env = env.environment
-	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-50, 30, 0)
-	Look.key_light(sun)
-	stage.add_child(sun)
-	render_sun = sun
+	studio = Studio.build(stage)
+	render_env.sky = studio["sky"]
+	render_key = studio["key"]
 	stage.add_child(Look.contact_shadow())
-	Look.fill_light(stage)
-	var floor_node := MeshInstance3D.new()
-	var disc := CylinderMesh.new()
-	disc.top_radius = 9.0
-	disc.bottom_radius = 9.0
-	disc.height = 0.02
-	floor_node.mesh = disc
-	floor_node.material_override = Look.floor_material()
-	floor_node.position = Vector3(0, -0.011, 0)
-	stage.add_child(floor_node)
 	cam_pivot = Node3D.new()
 	cam_pivot.position = Vector3(0, 0.9, 0)
 	stage.add_child(cam_pivot)
@@ -453,6 +483,8 @@ func _build_scene() -> void:
 	body_node = BodyView.new()
 	body_node.material_override = Look.body_material()
 	stage.add_child(body_node)
+	body_node.set_skin_data(SkinMap.build(M))  # pores, face, colour masks and the eyes (skin.gd); look only
+	_apply_look()
 	cloth_node = MeshInstance3D.new()
 	cloth_node.extra_cull_margin = 0.5   # one material per fabric surface: see cloth_shade.gd
 	stage.add_child(cloth_node)
@@ -2249,6 +2281,13 @@ func _build_body_tab_content() -> void:
 			_schedule(),
 		func(v: float) -> String: return "off" if v <= 0.0 else "%d%%" % roundi(v * 100.0),
 		"How much the breasts, seat, belly, thighs and upper arms bounce while walking, and the breath (100% is the estimate in soft_tissue.gd; off is a rigid body). Applies from the next simulation.")
+	vb.add_child(_h4("Look"))
+	_look_row(vb, "Skin", "skin", Look.skin_choices(), look_skin, "Skin tone of the mannequin, or a photographic MakeHuman skin (tools/fetch_makehuman_skins.sh puts them in godot/assets/skin/photo). Look only: the simulation does not change.")
+	_look_row(vb, "Hair", "hair", Look.HAIR_COLORS, look_hair, "A short crop drawn on the scalp, or none.")
+	var eyes := {}
+	for k in Eyes.IRIS.keys():
+		eyes[k] = {"label": String(k).capitalize()}
+	_look_row(vb, "Eyes", "eyes", eyes, look_eyes, "Eye colour.")
 	vb.add_child(_h4("More measurements"))
 	for spec in [["arm", "Arm length", 44.0, 68.0], ["inseam", "Inseam", 62.0, 96.0], ["neck", "Neck", 28.0, 48.0], ["thigh", "Thigh", 40.0, 85.0], ["upperarm", "Upper arm", 20.0, 45.0], ["back", "Back length", 30.0, 48.0]]:
 		var row := HBoxContainer.new()
@@ -2286,6 +2325,27 @@ func _build_body_tab_content() -> void:
 	note.name = "BodyNote"
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vb.add_child(note)
+
+
+# An option row for a look setting: choices is {key: {label, ...}}.
+func _look_row(vb: VBoxContainer, label_text: String, key: String, choices: Dictionary, current: String, tip: String) -> void:
+	var row := HBoxContainer.new()
+	var l := Label.new()
+	l.custom_minimum_size = Vector2(92, 0)
+	l.text = label_text
+	row.add_child(l)
+	var o := OptionButton.new()
+	o.name = "Look_" + key
+	o.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	o.tooltip_text = tip
+	var keys: Array = choices.keys()
+	for i in keys.size():
+		o.add_item(String((choices[keys[i]] as Dictionary).get("label", keys[i])), i)
+		if keys[i] == current:
+			o.select(i)
+	o.item_selected.connect(func(i: int) -> void: _set_look(key, String(keys[i])))
+	row.add_child(o)
+	vb.add_child(row)
 
 
 func _h4(text: String) -> Label:
