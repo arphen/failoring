@@ -86,6 +86,10 @@ torn; walking, tall, curvy and plus are clean; petite and average still crumple 
 (the cap rows themselves). Also note: much of the "skin through the sleeve" seen in plain renders was cloth lying on the
 arm at ~1 mm (z-fighting); the editor now draws the body 2.5 mm inside its collision surface, which hides it.
 
+Tried 2026-10-15 and not kept: a finer mesh for arm pieces (0.55 of the quality's edge; a preview sleeve has only 37-38
+vertices, 5-6 round the arm). Sleeves became proper tubes on tall, athletic and plus, but the petite and average right
+sleeves slid off while walking; coverage standing 88.7 -> 86.6 %, walking 88.7 -> 84.2 %. Not the bottleneck on its own.
+
 ## Ideas, in the order I would try them
 
 1. **Give the shoulder rows a hull that includes the shoulder.** For `fit` rows from the armpit up to the neck use the union of the
