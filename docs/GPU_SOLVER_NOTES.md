@@ -140,6 +140,18 @@ The last two pass every threshold of the test (KE < 5e-4, gap < 4 mm, clearance 
 On the CPU the CG cost is the matrix-vector product (callgrind: ~63% of instructions), about 30 ns per unknown per
 iteration on this machine (double precision, 2-ring 3x3 blocks, single thread).
 
+### In the editor (`FL_FAST=1`, plan_loader.gd)
+
+Tee, average body, standing, 60 frames; wall time per frame including the editor:
+
+| quality | vertices | Newton (default) | fast | speed-up |
+|---|---|---|---|---|
+| preview | 475 | 187 ms | 67 ms | 2.8x |
+| fine | 1131 | 1013 ms | 138 ms | 7.3x |
+
+Front and back renders at frame 59 show the same drape, hem and sleeve shape. The fine fast run has one fold at the right
+neckline. The sleeve-hem artifacts are present in both.
+
 ## What this means for the GPU plan
 
 0. **Recommended:** the inexact linearised solve above (10 substeps, CG 100, strain limit 3%) as the GPU solver. It

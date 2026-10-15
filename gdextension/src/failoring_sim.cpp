@@ -796,6 +796,12 @@ void FailoringSim::set_param(const String& name, real_t v) {
     else if (name == "contact_band") p.contactBand = v;
     else if (name == "tension_stiffness") p.tensionStiffness = v != 0;
     else if (name == "gravity_y") p.gravity.y = v;
+    // fast solve (docs/GPU_SOLVER_NOTES.md): linear_solver 0 = Cholesky, 1 = conjugate gradient
+    else if (name == "linear_solver") p.linearSolver = v >= 1 ? fl::LinearSolver::ConjugateGradient : fl::LinearSolver::Cholesky;
+    else if (name == "cg_block_jacobi") p.cgBlockJacobi = v != 0;
+    else if (name == "cg_max_iterations") p.cgMaxIterations = static_cast<int>(v);
+    else if (name == "strain_limit") p.strainLimit = v;
+    else if (name == "newton_tolerance") p.newtonTolerance = v;
     else UtilityFunctions::push_warning("FailoringSim: unknown parameter ", name);
 }
 

@@ -80,6 +80,15 @@ static func build(plan: Dictionary, sections: Dictionary, arms: Dictionary, stan
 	# and 3.2 -> 1.6 (tee), the tee sagged 18 -> 9 mm over the walk, its standing motion 2.1 -> 0.3 mm/frame.
 	# FL_FRICTION=0 restores the old mode (comparisons).
 	sim.set_param("body_friction_mode", float(OS.get_environment("FL_FRICTION")) if OS.has_environment("FL_FRICTION") else 2.0)
+	# FL_FAST=1: the inexact solve of docs/GPU_SOLVER_NOTES.md (10 substeps, one linearised solve each, block-Jacobi CG
+	# capped at 100 iterations, 3% strain limit), the GPU-shaped policy, for comparison with the Newton default.
+	if OS.get_environment("FL_FAST") == "1":
+		sim.set_param("substeps", 10)
+		sim.set_param("newton_iterations", 1)
+		sim.set_param("linear_solver", 1)
+		sim.set_param("cg_block_jacobi", 1)
+		sim.set_param("cg_max_iterations", float(OS.get_environment("FL_CG")) if OS.has_environment("FL_CG") else 100.0)
+		sim.set_param("strain_limit", 0.03)
 	if OS.has_environment("FL_SLIP"):
 		sim.set_param("friction_slip_velocity", float(OS.get_environment("FL_SLIP")))
 	sim.add_plane(Vector3.ZERO, Vector3.UP)  # feet stand on y = 0, like the browser floor
