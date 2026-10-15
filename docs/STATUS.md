@@ -170,6 +170,37 @@ Body tab: Alive > Soft tissue (0 = the old rigid body). Frequencies and damping 
   (Arrange, A), a sewing check of the start pose per piece pair (Seams tab, coloured stitch lines), and the tee's
   shoulders and sleeve caps placed so its sleeves attach (upper-arm coverage standing 92 %, walking 90 %).
 
+## Buried skin and a faster solver (2026-10-15, opus/vbd)
+
+**Skin through the shoulders and under the sleeves.**
+
+*Cause.* The body's distance field measured the distance to every body triangle, including skin buried inside another
+part of the body. On the average body standing there are 236 such triangles: where the lowered arm folds into the
+deltoid at 1.2-1.3 m, plus the feet and the head. Cloth inside the shoulder next to the buried skin read as on the
+surface, so it rested there. At the shoulder tips it sat about 14 mm inside the visible skin while the field said
+-1 mm.
+
+*Fix.* `SdfGrid` now leaves buried triangles out of the distances (`SdfGridParams::dropBuried`, on). A triangle counts
+as buried when two or more of four points 1 mm outside it have a positive winding number. Buried triangles still count
+for the inside/outside sign. The bake goes from 233 to 247 ms (7 mm grid, 26756 triangles).
+
+*Result.* Fine tee, average body, standing, frames 50-59, measured against the exact body mesh:
+
+| | body vertices showing through the cloth | deeper than 2 mm | deeper than 5 mm |
+|---|---|---|---|
+| before | 2.37% | 1.17% | 0.125% |
+| after | 1.21% | 0.32% | 0.020% |
+
+Display points more than 2.5 mm inside the visible skin (the drawn body is shrunk by 2.5 mm) at frame 59: 4, at
+most 2.9 mm.
+
+*Also measured.* The 7 mm grid reads visible skin as +0.46 mm (median) and up to +3 mm (fingers) outside: the quadratic
+B-spline rounds curved skin. A 4 mm grid halves that, but the bake costs 3x as much (it is baked every walking frame).
+
+**Fast solver.** `FL_FAST=1` uses 10 substeps, one linearised solve each, block-Jacobi CG capped at 100 iterations,
+and a 3% strain limit: `docs/GPU_SOLVER_NOTES.md`. The fine tee runs 1013 -> 138 ms/frame with the same drape. Its
+sleeve hems crumple more than Newton's. It is the GPU candidate and is opt-in.
+
 ## Maintenance
 
 A scheduled task ("Failoring browser build upkeep", daily 06:47 Europe/Berlin) rebuilds `failoring.html`, runs the smoke

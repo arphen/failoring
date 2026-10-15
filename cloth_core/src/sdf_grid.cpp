@@ -170,7 +170,7 @@ constexpr int BSH = 1, BS = 1 << BSH, BV = BS * BS * BS, BVSH = 3 * BSH;
 // walks to closer edge-adjacent triangles, which makes it exact when the mesh is finer than the grid.
 // `Idx` maps (i,j,k) <-> sample number.
 template <class Idx>
-void bakeLevel(const Mesh& M, const Idx& G, Real seedR, Real refineDist, int rowsY, int rowsZ, std::vector<float>& out, long long& evals) {
+void bakeLevel(const Mesh& M, const Mesh& Msign, const Idx& G, Real seedR, Real refineDist, int rowsY, int rowsZ, std::vector<float>& out, long long& evals) {
     const int N = G.count();
     std::vector<float> D2(static_cast<size_t>(N), std::numeric_limits<float>::infinity());
     std::vector<int> C(static_cast<size_t>(N), -1);
@@ -255,7 +255,7 @@ void bakeLevel(const Mesh& M, const Idx& G, Real seedR, Real refineDist, int row
     }
     // sign from winding numbers along +x rows
     Rows rows;
-    rows.build(M, G.o, G.h, rowsY, rowsZ);
+    rows.build(Msign, G.o, G.h, rowsY, rowsZ);
     out.resize(static_cast<size_t>(N));
     for (int s = 0; s < N; ++s) {
         int x, y, z;
@@ -316,6 +316,78 @@ inline void bspline2(Real t, Real* w, Real* d) {
     d[0] = -a; d[1] = -2 * t; d[2] = b;
 }
 
+// Winding number at arbitrary points (signed ray crossings along +x), with the triangles bucketed by their (y,z)
+// extent. Used once per bake to find buried skin.
+struct PointWinding {
+    const Mesh& M;
+    Real c, inv;
+    Vec3 lo;
+    int ny = 0, nz = 0;
+    std::vector<int> start, items;
+    PointWinding(const Mesh& m, const Vec3& lo_, const Vec3& hi, Real cell) : M(m), c(cell), inv(1 / cell), lo(lo_) {
+        ny = static_cast<int>((hi.y - lo.y) * inv) + 1;
+        nz = static_cast<int>((hi.z - lo.z) * inv) + 1;
+        start.assign(static_cast<size_t>(ny) * nz + 1, 0);
+        auto cells = [&](const Tri& T, int& j0, int& j1, int& k0, int& k1) {
+            j0 = std::max(0, static_cast<int>((std::min({T.a.y, T.b.y, T.c.y}) - lo.y) * inv));
+            j1 = std::min(ny - 1, static_cast<int>((std::max({T.a.y, T.b.y, T.c.y}) - lo.y) * inv));
+            k0 = std::max(0, static_cast<int>((std::min({T.a.z, T.b.z, T.c.z}) - lo.z) * inv));
+            k1 = std::min(nz - 1, static_cast<int>((std::max({T.a.z, T.b.z, T.c.z}) - lo.z) * inv));
+        };
+        for (const Tri& T : M.t) {
+            int j0, j1, k0, k1;
+            cells(T, j0, j1, k0, k1);
+            for (int k = k0; k <= k1; ++k)
+                for (int j = j0; j <= j1; ++j) ++start[static_cast<size_t>(j + ny * k) + 1];
+        }
+        for (size_t r = 0; r + 1 < start.size(); ++r) start[r + 1] += start[r];
+        items.assign(static_cast<size_t>(start.back()), 0);
+        std::vector<int> fill(start.begin(), start.end() - 1);
+        for (int ti = 0; ti < static_cast<int>(M.t.size()); ++ti) {
+            int j0, j1, k0, k1;
+            cells(M.t[static_cast<size_t>(ti)], j0, j1, k0, k1);
+            for (int k = k0; k <= k1; ++k)
+                for (int j = j0; j <= j1; ++j) items[static_cast<size_t>(fill[static_cast<size_t>(j + ny * k)]++)] = ti;
+        }
+    }
+    int winding(const Vec3& p) const {
+        const double y = p.y + 0.000137 * c, z = p.z + 0.000263 * c;  // off exact edges
+        const int j = static_cast<int>((y - lo.y) * inv), k = static_cast<int>((z - lo.z) * inv);
+        if (j < 0 || k < 0 || j >= ny || k >= nz) return 0;
+        const size_t r = static_cast<size_t>(j + ny * k);
+        int w = 0;
+        for (int q = start[r]; q < start[r + 1]; ++q) {
+            const Tri& T = M.t[static_cast<size_t>(items[static_cast<size_t>(q)])];
+            if (T.n.x == 0) continue;
+            const double ay = T.a.y - y, az = T.a.z - z, by = T.b.y - y, bz = T.b.z - z, cy = T.c.y - y, cz = T.c.z - z;
+            const double wa = by * cz - bz * cy, wb = cy * az - cz * ay, wc = ay * bz - az * by;
+            if (!((wa >= 0 && wb >= 0 && wc >= 0) || (wa <= 0 && wb <= 0 && wc <= 0))) continue;
+            const double sum = wa + wb + wc;
+            if (std::fabs(sum) < 1e-300) continue;
+            if ((wa * T.a.x + wb * T.b.x + wc * T.c.x) / sum > p.x) w += T.n.x > 0 ? 1 : -1;
+        }
+        return w;
+    }
+};
+
+// The skin that is buried inside another part of the body (an arm overlapping the torso, a lowered arm folding into
+// the shoulder): triangles whose outside is inside the body at two or more of their centre and three inner points. They stay in
+// the inside/outside test (winding numbers) but are left out of the distances; otherwise a point inside the arm next
+// to the buried torso skin reads as "on the surface" and cloth comes to rest there, inside the arm.
+std::vector<char> buriedTriangles(const Mesh& M, const Vec3& lo, const Vec3& hi, Real eps) {
+    PointWinding W(M, lo, hi, 0.004);
+    std::vector<char> out(M.t.size(), 0);
+    for (size_t ti = 0; ti < M.t.size(); ++ti) {
+        const Tri& T = M.t[ti];
+        const Vec3 ctr = (T.a + T.b + T.c) / 3.0;
+        const Vec3 pts[4] = {ctr, (ctr + T.a) * 0.5, (ctr + T.b) * 0.5, (ctr + T.c) * 0.5};
+        int in = 0;
+        for (const Vec3& q : pts) in += W.winding(q + T.n * eps) > 0;
+        out[ti] = in >= 2 ? 1 : 0;   // mostly buried (a triangle crossing into the other part is half in, half out)
+    }
+    return out;
+}
+
 }  // namespace
 
 bool SdfGrid::bake(const std::vector<Vec3>& verts, const std::vector<std::array<int, 3>>& tris, const SdfGridParams& p) {
@@ -331,6 +403,21 @@ bool SdfGrid::bake(const std::vector<Vec3>& verts, const std::vector<std::array<
     for (const Vec3& v : verts) {
         lo = Vec3(std::min(lo.x, v.x), std::min(lo.y, v.y), std::min(lo.z, v.z));
         hi = Vec3(std::max(hi.x, v.x), std::max(hi.y, v.y), std::max(hi.z, v.z));
+    }
+    // distances to the visible skin only (buriedTriangles); the sign keeps every triangle
+    Mesh Md;
+    {
+        const std::vector<char> bur = p.dropBuried ? buriedTriangles(M, lo, hi, p.buriedOffset) : std::vector<char>(M.t.size(), 0);
+        std::vector<std::array<int, 3>> keep;
+        for (size_t i = 0, ti = 0; i < tris.size(); ++i) {
+            const auto& tr = tris[i];
+            const Vec3 cr = cross(verts[static_cast<size_t>(tr[1])] - verts[static_cast<size_t>(tr[0])], verts[static_cast<size_t>(tr[2])] - verts[static_cast<size_t>(tr[0])]);
+            if (length(cr) < 1e-16) continue;  // as buildMesh: degenerate triangles are not in M
+            if (!bur[ti++]) keep.push_back(tr);
+            else ++stats_.buried;
+        }
+        Md = keep.size() == M.t.size() ? M : buildMesh(verts, keep);
+        if (Md.t.empty()) Md = M;
     }
     stats_.msSetup = msSince(t0);
 
@@ -374,7 +461,7 @@ bool SdfGrid::bake(const std::vector<Vec3>& verts, const std::vector<std::array<
                 F.bk[static_cast<size_t>(brickOf_[q])] = qi / (bnx_ * bny_);
             }
     }
-    bakeLevel(M, F, p.seed * h, p.refine ? p.band + 1.5 * h : 0.0, BS * bny_, BS * bnz_, fine_, stats_.distanceEvals);
+    bakeLevel(Md, M, F, p.seed * h, p.refine ? p.band + 1.5 * h : 0.0, BS * bny_, BS * bnz_, fine_, stats_.distanceEvals);
     brickXYZ_.resize(static_cast<size_t>(3 * F.nb));
     for (int b = 0; b < F.nb; ++b) { brickXYZ_[3 * b] = F.bi[b]; brickXYZ_[3 * b + 1] = F.bj[b]; brickXYZ_[3 * b + 2] = F.bk[b]; }
     stats_.bricks = F.nb;
@@ -390,7 +477,7 @@ bool SdfGrid::bake(const std::vector<Vec3>& verts, const std::vector<std::array<
     cny_ = static_cast<int>(std::ceil((hi.y - lo.y + 2 * p.margin) * cinv_)) + 1;
     cnz_ = static_cast<int>(std::ceil((hi.z - lo.z + 2 * p.margin) * cinv_)) + 1;
     Cg.o = co_; Cg.h = ch_; Cg.inv = cinv_; Cg.nx = cnx_; Cg.ny = cny_; Cg.nz = cnz_;
-    bakeLevel(M, Cg, p.seed * ch_, 0.0, cny_, cnz_, coarse_, stats_.distanceEvals);
+    bakeLevel(Md, M, Cg, p.seed * ch_, 0.0, cny_, cnz_, coarse_, stats_.distanceEvals);
     stats_.coarseSamples = Cg.count();
     stats_.msCoarse = msSince(t2);
     stats_.bytes = 4.0 * (fine_.size() + coarse_.size() + brickOf_.size() + brickXYZ_.size());

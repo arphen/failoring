@@ -33,11 +33,16 @@ struct SdfGridParams {
     Real margin = 0.08;   // the coarse grid extends this far beyond the mesh bounding box (m)
     Real seed = 1.0;      // exact distances are seeded within seed * spacing of every triangle
     bool refine = true;   // near the surface, walk to closer edge-adjacent triangles (exact when the mesh is finer than the grid)
+    // Skin buried inside another body part (an arm overlapping the torso) is left out of the distances (it still
+    // counts for inside/outside): a triangle is buried when points buriedOffset outside it are inside the body.
+    bool dropBuried = true;
+    Real buriedOffset = 0.001;
 };
 
 struct SdfGridStats {
     int triangles = 0, bricks = 0, fineSamples = 0, coarseSamples = 0;
     long long distanceEvals = 0;
+    int buried = 0;  // triangles left out of the distances (dropBuried)
     double msSetup = 0, msFine = 0, msCoarse = 0, msTotal = 0;
     double bytes = 0;  // memory of the baked grid (values + brick table)
 };
