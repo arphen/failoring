@@ -30,7 +30,7 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
 |---|---|---|---|---|---|---|---|
 | T0.1 | Branch, baseline ctest, board, status, \`FL_DUMP\` regression dump | – | done | orchestrator | 1 | (this commit) | baseline has 3 pre-existing failures, see above |
 | T1.1 | Refactor finalize() to per-triangle triRest_/triMat_ (no new API) | T0.1 | done | default | 1 | 7dc34d2 (merged dddb4ea) | ★ test_garment bit-identical: PASS |
-| T1.2 | IntrinsicMesh, addIntrinsicPanel, extraMass, strain-limit edge rest lengths, barrier guard | T1.1 | todo | | 0 | | ★ §2.7 test 1 (< 1e-9 m) |
+| T1.2 | IntrinsicMesh, addIntrinsicPanel, extraMass, strain-limit edge rest lengths, barrier guard | T1.1 | in_progress | default | 1 | | ★ §2.7 test 1 (< 1e-9 m) |
 | T1.3 | HingeMod, signed hinge with rest angle | T1.2 | todo | | 0 | | ★ §2.7 tests 3, 4; old tests unchanged |
 | T1.4 | J-curve stretch (+ JSON keys) | T1.1 | todo | | 0 | | ★ §2.7 test 5 |
 | T1.5 | addPointSeam, SolverParams::dampingScale | T1.1 | todo | | 0 | | §2.7 test 6 |
@@ -68,3 +68,9 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
   `FabricMaterial.lockU/lockV/ratio` happens in T5.2, once T1.4 has added those fields.
 * 2026-10-16 — `StitchMech` gains `compressionRatio` (the §4.4 reference list has it; §4.1's struct
   listing omits it): starter value 0.2, no scaling formula, documented in the header.
+* 2026-10-16 — §2.1 step 8 (T1.2) is implemented as: a comment on `BendC::rest` stating that the implicit
+  solver reads it (from T1.3 on) while XPBD/VBD keep the unsigned positional angle and ignore it. No
+  `// TODO` marker (the review laziness scan rejects them and the behaviour is deliberate, not pending).
+* 2026-10-16 — T1.2 must keep panel hinge alphas *bit-identical*: the §2.1 step 4 harmonic mean is only
+  computed when the two triangles' Beffs differ (`Beff1 == Beff2` -> keep `Beff1`), because
+  `2/(1/B + 1/B)` can differ from `B` by 1 ulp. Verified by the test_garment dump.
