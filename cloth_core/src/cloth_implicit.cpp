@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <set>
+#include <unordered_map>
 #include <vector>
 
 #include "failoring/cloth.hpp"
@@ -761,17 +762,30 @@ void ClothSolver::stepImplicit() {
 // weight); this pass keeps those spots from running away. Off unless strainLimit > 0.
 void ClothSolver::limitStrain() {
     if (slEdges_.empty()) {
+        // Rest length per mesh edge from the triangles' own rest shapes (CROCHET_PLAN §2.1 step 6): restUV_ is only
+        // a layout parameterisation for an intrinsic panel, so the edge vector must come from triRest_. For panel
+        // triangles the map value equals length(restUV_[a] - restUV_[b]) bit for bit (the same two numbers, and a
+        // negated difference has an identical length), so panel behaviour is unchanged. restLen keys are packed
+        // (min << 32 | max) like cloth.cpp's pairKey; the first triangle visiting an edge wins.
+        std::unordered_map<std::uint64_t, Real> restLen;
         std::vector<std::pair<int, int>> e;
-        for (const auto& t : tris_)
+        for (size_t t = 0; t < tris_.size(); ++t)
             for (int k = 0; k < 3; ++k) {
-                int a = t[k], b = t[(k + 1) % 3];
+                int a = tris_[t][k], b = tris_[t][(k + 1) % 3];
+                const Real l = length(triRest_[t][k] - triRest_[t][(k + 1) % 3]);
                 if (a > b) std::swap(a, b);
                 e.push_back({a, b});
+                const std::uint64_t key = (static_cast<std::uint64_t>(static_cast<std::uint32_t>(a)) << 32) |
+                                          static_cast<std::uint32_t>(b);
+                restLen.emplace(key, l);
             }
         std::sort(e.begin(), e.end());
         e.erase(std::unique(e.begin(), e.end()), e.end());
         for (const auto& pr : e) {
-            const Real l0 = length(restUV_[pr.first] - restUV_[pr.second]);
+            const std::uint64_t key = (static_cast<std::uint64_t>(static_cast<std::uint32_t>(pr.first)) << 32) |
+                                      static_cast<std::uint32_t>(pr.second);
+            const auto it = restLen.find(key);
+            const Real l0 = it != restLen.end() ? it->second : length(restUV_[pr.first] - restUV_[pr.second]);
             if (l0 > 1e-9) slEdges_.push_back({pr.first, pr.second, l0});
         }
     }
