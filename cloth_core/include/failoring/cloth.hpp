@@ -13,11 +13,14 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "failoring/barrier_contact.hpp"
 #include "failoring/collider.hpp"
+#include "failoring/intrinsic_mesh.hpp"
 #include "failoring/material.hpp"
 #include "failoring/math.hpp"
 #include "failoring/mesher.hpp"
@@ -272,6 +275,12 @@ public:
     int addPanel(const PanelMesh& mesh, const FabricMaterial& mat, const PanelPlacement& place,
                  Real grain = 0, const std::string& name = {});
 
+    // Adds a crochet-style intrinsic panel (intrinsic_mesh.hpp): every triangle carries its own rest shape
+    // (m.triRest) and material (m.triMaterial indexes `mats`), with optional hinge modifiers, chains and lumped
+    // extra mass. Vertices start at m.x0, so no placement is applied. `mats` are appended to the solver's material
+    // table like addPanel's material. Returns the panel index. Throws std::runtime_error on inconsistent input.
+    int addIntrinsicPanel(const IntrinsicMesh& m, const std::vector<FabricMaterial>& mats, const std::string& name = {});
+
     // Sew outline edge `edgeA` of panel A to `edgeB` of panel B (see PanelMesh::edgeChains).
     void addSeam(int panelA, int edgeA, int panelB, int edgeB, bool reverse = false);
 
@@ -339,6 +348,8 @@ private:
         int material = 0;
         int firstVertex = 0, vertexCount = 0, firstTri = 0, triCount = 0;
         std::vector<std::vector<int>> chains;  // global vertex ids per outline edge
+        std::vector<Real> extraMass;           // kg per local vertex (intrinsic panels, see IntrinsicMesh::extraMass);
+                                               // empty for normal panels
     };
     struct TriC {
         int i0, i1, i2;
@@ -350,6 +361,9 @@ private:
     struct BendC {
         int i[4];  // shared edge (i0,i1), opposite vertices (i2,i3)
         Real alpha, lam;
+        // Signed hinge rest angle (rad). Used by the implicit solver from T1.3 on; XPBD (solveBends) and VBD
+        // (vbdLocalEnergy) keep the unsigned positional angle and ignore it - deliberate, not pending.
+        Real rest = 0;
         int slot[16];
     };
     struct SeamC {
@@ -408,6 +422,9 @@ private:
     std::vector<std::array<Vec2, 3>> triRest_;
     std::vector<int> triMat_;
     std::vector<char> triIntrinsic_;
+    // Hinge modifiers of intrinsic panels (addIntrinsicPanel): key = global shared-edge vertex pair, packed as
+    // (min << 32 | max) like noCollide_ below; value = {bendScale, restAngle}. Empty for plain panels.
+    std::unordered_map<std::uint64_t, std::pair<Real, Real>> hingeMods_;
     std::vector<TriC> triC_;
     std::vector<BendC> bendC_;
     std::vector<SeamC> seamC_;

@@ -145,6 +145,74 @@ int ClothSolver::addPanel(const PanelMesh& mesh, const FabricMaterial& mat, cons
     return pid;
 }
 
+int ClothSolver::addIntrinsicPanel(const IntrinsicMesh& m, const std::vector<FabricMaterial>& mats, const std::string& name) {
+    if (finalized_) FL_THROW(std::logic_error, "ClothSolver: cannot add panels after the simulation started");
+    // --- input validation (the rest of the solver assumes consistent, in-range indices)
+    if (m.tris.size() != m.triRest.size() || m.tris.size() != m.triMaterial.size())
+        FL_THROW(std::runtime_error, "addIntrinsicPanel: tris, triRest and triMaterial must have the same size");
+    const int nv = static_cast<int>(m.x0.size());
+    for (size_t t = 0; t < m.tris.size(); ++t) {
+        if (m.triMaterial[t] < 0 || m.triMaterial[t] >= static_cast<int>(mats.size()))
+            FL_THROW(std::runtime_error, "addIntrinsicPanel: triMaterial index out of range of the materials vector");
+        for (int k = 0; k < 3; ++k)
+            if (m.tris[t][k] < 0 || m.tris[t][k] >= nv)
+                FL_THROW(std::runtime_error, "addIntrinsicPanel: triangle vertex index out of range of x0");
+    }
+    for (const HingeMod& h : m.hingeMods)
+        if (h.a < 0 || h.a >= nv || h.b < 0 || h.b >= nv || h.a == h.b)
+            FL_THROW(std::runtime_error, "addIntrinsicPanel: hingeMods local vertex id out of range of x0 (or a == b)");
+    for (const std::vector<int>& ch : m.chains)
+        for (int v : ch)
+            if (v < 0 || v >= nv) FL_THROW(std::runtime_error, "addIntrinsicPanel: chains local vertex id out of range of x0");
+    if (!m.extraMass.empty() && static_cast<int>(m.extraMass.size()) != nv)
+        FL_THROW(std::runtime_error, "addIntrinsicPanel: extraMass must be empty or have one entry per vertex");
+
+    Panel pn;
+    pn.name = name;
+    // Material block offset: triMat_ holds mats_ indices (offset + m.triMaterial[t]), so triangle material lookups
+    // never go through Panel::material any more; the field is kept for panel-level bookkeeping (setPanelMaterial).
+    pn.material = static_cast<int>(mats_.size());
+    const int matsOffset = pn.material;
+    for (const FabricMaterial& mat : mats) mats_.push_back(mat);
+    pn.firstVertex = static_cast<int>(x_.size());
+    pn.vertexCount = nv;
+    pn.firstTri = static_cast<int>(tris_.size());
+    pn.triCount = static_cast<int>(m.tris.size());
+    pn.extraMass = m.extraMass;
+    const int pid = static_cast<int>(panels_.size());
+
+    for (int v = 0; v < nv; ++v) {
+        x_.push_back(m.x0[v]);
+        // layoutUV is only the seam/display parameterisation (its planar geometry is arbitrary); an empty vector
+        // gives {0, 0}. Nothing derives an intrinsic triangle's rest shape from restUV_.
+        restUV_.push_back(v < static_cast<int>(m.layoutUV.size()) ? m.layoutUV[v] : Vec2(0, 0));
+        vertexPanel_.push_back(pid);
+        pinned_.push_back(0);
+    }
+    // triRest_ bookkeeping: addPanel does not push triRest_ entries (finalize() fills those from restUV_). Grow the
+    // vector to cover this panel's triangles first - zero-filling any gap left by earlier addPanel calls - then store
+    // the panel's own rest shapes at firstTri; finalize() only refreshes non-intrinsic triangles, so they survive.
+    triRest_.resize(tris_.size() + m.tris.size());
+    for (size_t t = 0; t < m.tris.size(); ++t) triRest_[pn.firstTri + static_cast<int>(t)] = m.triRest[t];
+    for (size_t t = 0; t < m.tris.size(); ++t) {
+        tris_.push_back({m.tris[t][0] + pn.firstVertex, m.tris[t][1] + pn.firstVertex, m.tris[t][2] + pn.firstVertex});
+        triPanel_.push_back(pid);
+        triMat_.push_back(matsOffset + m.triMaterial[t]);
+        triIntrinsic_.push_back(1);
+    }
+    for (const HingeMod& h : m.hingeMods) {
+        const int a = h.a + pn.firstVertex, b = h.b + pn.firstVertex;
+        hingeMods_[pairKey(std::min(a, b), std::max(a, b))] = {h.bendScale, h.restAngle};
+    }
+    for (const std::vector<int>& ch : m.chains) {
+        std::vector<int> g;
+        for (int v : ch) g.push_back(v + pn.firstVertex);
+        pn.chains.push_back(std::move(g));
+    }
+    panels_.push_back(std::move(pn));
+    return pid;
+}
+
 void ClothSolver::addSeam(int pa, int ea, int pb, int eb, bool reverse) {
     if (finalized_) FL_THROW(std::logic_error, "ClothSolver: cannot add seams after the simulation started");
     if (pa < 0 || pb < 0 || pa >= panelCount() || pb >= panelCount()) FL_THROW(std::out_of_range, "addSeam: bad panel");
@@ -167,6 +235,11 @@ void ClothSolver::setVertexPosition(int v, const Vec3& p) {
 }
 
 void ClothSolver::finalize() {
+    // Barrier contact derives its rest configuration from restUV_, which is only a layout parameterisation for
+    // intrinsic panels; reject the combination (CROCHET_PLAN §2.1 step 7). finalize() is the gate: params can be
+    // set after the panels are added, so checking at addIntrinsicPanel time would miss them.
+    if (p_.barrierContact && std::find(triIntrinsic_.begin(), triIntrinsic_.end(), char(1)) != triIntrinsic_.end())
+        FL_THROW(std::runtime_error, "ClothSolver: barrierContact does not support intrinsic panels (crochet plan 2.1 step 7)");
     const int N = vertexCount();
     xPrev_ = x_;
     v_.assign(N, Vec3(0, 0, 0));
@@ -182,7 +255,10 @@ void ClothSolver::finalize() {
     Real edgeSum = 0;
     int edgeCnt = 0;
     std::vector<Real> triArea(tris_.size(), 0);
-    triRest_.assign(tris_.size(), std::array<Vec2, 3>());  // recomputed on every finalize call (setRestUV + re-finalize)
+    // Rest shapes: the resize keeps the entries addIntrinsicPanel stored at add time (a re-finalize from setRestUV
+    // or setPanelMaterial must not clobber them) and zero-fills any gap left by addPanel, whose triangles are
+    // (re)filled from restUV_ in the loop below.
+    if (triRest_.size() != tris_.size()) triRest_.resize(tris_.size());
     for (size_t t = 0; t < tris_.size(); ++t) {
         const auto& tr = tris_[t];
         const FabricMaterial& m = mats_[triMat_[t]];
@@ -213,6 +289,13 @@ void ClothSolver::finalize() {
             edgeSum += length(restUV_[tr[k]] - restUV_[tr[(k + 1) % 3]]);
             ++edgeCnt;
         }
+    }
+    // Extra lumped vertex mass of an intrinsic panel (IntrinsicMesh::extraMass; CROCHET_PLAN §2.1 follow-up note,
+    // §6.1): yarn mass of nodes that were dropped from the mesh. Added before the per-vertex loop so w_ = 1/mass_
+    // sees it. Empty for normal panels.
+    for (const Panel& pn : panels_) {
+        if (pn.extraMass.empty()) continue;
+        for (size_t k = 0; k < pn.extraMass.size(); ++k) mass_[pn.firstVertex + static_cast<int>(k)] += pn.extraMass[k];
     }
     std::vector<std::vector<int>> vertTris(N);  // vertex -> adjacent triangles (per-vertex material and seam no-collide)
     for (size_t t = 0; t < tris_.size(); ++t)
@@ -265,9 +348,16 @@ void ClothSolver::finalize() {
         if (kv.second.size() != 2) continue;
         const int p1 = kv.first.first, p2 = kv.first.second;
         const Side &s1 = kv.second[0], &s2 = kv.second[1];
-        const FabricMaterial& m = mats_[triMat_[s1.tri]];
         const Real A1 = triArea[s1.tri], A2 = triArea[s2.tri];
-        const Vec2 e = restUV_[p2] - restUV_[p1];
+        // Hinge direction in the rest frame of triangle s1 (CROCHET_PLAN §2.1 step 4). restUV_ is arbitrary for an
+        // intrinsic panel, so take the edge vector from that triangle's own rest shape; for panel triangles
+        // triRest_ holds the very same restUV_ values, so e is the previous vector bit for bit.
+        int c1 = 0, c2 = 0;
+        for (int k = 0; k < 3; ++k) {
+            if (tris_[s1.tri][k] == p1) c1 = k;
+            if (tris_[s1.tri][k] == p2) c2 = k;
+        }
+        const Vec2 e = triRest_[s1.tri][c2] - triRest_[s1.tri][c1];
         const Real l = length(e);
         if (l < 1e-9 || A1 < 1e-14 || A2 < 1e-14) continue;
         const Real phi = std::atan2(e.y, e.x);  // hinge direction in grain coordinates
@@ -276,7 +366,19 @@ void ClothSolver::finalize() {
         // obtained by compliance mixing:  1/B(psi) = cos^4/Bu + sin^4/Bv + 2 sin^2 cos^2 / sqrt(Bu Bv).
         // (Hinge along the warp -> curvature across the weft -> Bv, and vice versa.)
         const Real cp2 = std::sin(phi) * std::sin(phi), sp2 = std::cos(phi) * std::cos(phi);  // cos^2(psi), sin^2(psi)
-        const Real Beff = 1.0 / (cp2 * cp2 / m.bendWarp + sp2 * sp2 / m.bendWeft + 2 * cp2 * sp2 / std::sqrt(m.bendWarp * m.bendWeft));
+        auto beffOf = [&](const FabricMaterial& m) {
+            return 1.0 / (cp2 * cp2 / m.bendWarp + sp2 * sp2 / m.bendWeft + 2 * cp2 * sp2 / std::sqrt(m.bendWarp * m.bendWeft));
+        };
+        const Real Beff1 = beffOf(mats_[triMat_[s1.tri]]);
+        const Real Beff2 = beffOf(mats_[triMat_[s2.tri]]);
+        // Hinge stiffness of two compliant hinges in series -> harmonic mean. The equality fast path is required for
+        // bit-identity of panel hinges: 2/(1/B + 1/B) can differ from B by 1 ulp (test_garment dump).
+        Real Beff = (Beff1 == Beff2) ? Beff1 : 2.0 / (1.0 / Beff1 + 1.0 / Beff2);
+        Real restAngle = 0;
+        if (const auto it = hingeMods_.find(pairKey(p1, p2)); it != hingeMods_.end()) {
+            Beff *= it->second.first;
+            restAngle = it->second.second;
+        }
         const Real Ae = (A1 + A2) / 3.0;
         BendC b;
         b.i[0] = p1; b.i[1] = p2; b.i[2] = s1.opp; b.i[3] = s2.opp;
@@ -287,6 +389,7 @@ void ClothSolver::finalize() {
         // Bh = B * 8/3 reproduces the strip-bending rigidity B that textile tests report.
         b.alpha = 4.0 * Ae / (kBendMeshFactor * Beff * l * l);
         b.lam = 0;
+        b.rest = restAngle;
         bendC_.push_back(b);
     }
 
