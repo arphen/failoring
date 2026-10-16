@@ -132,6 +132,9 @@ int ClothSolver::addPanel(const PanelMesh& mesh, const FabricMaterial& mat, cons
     for (const auto& t : mesh.tris) {
         tris_.push_back({t[0] + pn.firstVertex, t[1] + pn.firstVertex, t[2] + pn.firstVertex});
         triPanel_.push_back(pid);
+        triIntrinsic_.push_back(0);  // addIntrinsicPanel pushes 1 for the triangles of an intrinsic mesh (T1.2)
+        triMat_.push_back(pn.material);
+        // triRest_ stays empty until finalize(): it is (re)computed there, not at addPanel time
     }
     for (const auto& ch : mesh.edgeChains) {
         std::vector<int> g;
@@ -179,10 +182,13 @@ void ClothSolver::finalize() {
     Real edgeSum = 0;
     int edgeCnt = 0;
     std::vector<Real> triArea(tris_.size(), 0);
+    triRest_.assign(tris_.size(), std::array<Vec2, 3>());  // recomputed on every finalize call (setRestUV + re-finalize)
     for (size_t t = 0; t < tris_.size(); ++t) {
         const auto& tr = tris_[t];
-        const FabricMaterial& m = mats_[panels_[triPanel_[t]].material];
-        const Vec2 &u0 = restUV_[tr[0]], &u1 = restUV_[tr[1]], &u2 = restUV_[tr[2]];
+        const FabricMaterial& m = mats_[triMat_[t]];
+        if (triIntrinsic_[t] == 0)  // panel triangle: rest shape from the grain-aligned pattern coordinates
+            triRest_[t] = {restUV_[tr[0]], restUV_[tr[1]], restUV_[tr[2]]};
+        const Vec2 &u0 = triRest_[t][0], &u1 = triRest_[t][1], &u2 = triRest_[t][2];
         const Real du1 = u1.x - u0.x, dv1 = u1.y - u0.y, du2 = u2.x - u0.x, dv2 = u2.y - u0.y;
         const Real det = du1 * dv2 - du2 * dv1;
         const Real area = 0.5 * std::fabs(det);
@@ -208,7 +214,32 @@ void ClothSolver::finalize() {
             ++edgeCnt;
         }
     }
+    std::vector<std::vector<int>> vertTris(N);  // vertex -> adjacent triangles (per-vertex material and seam no-collide)
+    for (size_t t = 0; t < tris_.size(); ++t)
+        for (int k = 0; k < 3; ++k) vertTris[tris_[t][k]].push_back(static_cast<int>(t));
     for (int i = 0; i < N; ++i) {
+        // A vertex adjacent to an intrinsic triangle (none exist until T1.2) takes its properties from those
+        // triangles: friction and contact radius from the thickest adjacent triangle, damping as the mean over
+        // them (CROCHET_PLAN §2.1 step 3). Panel vertices keep the old per-panel material path.
+        const FabricMaterial* thickest = nullptr;
+        Real maxThickness = -1, dampingSum = 0;
+        int intrinsicCount = 0;
+        for (int t : vertTris[i]) {
+            if (triIntrinsic_[t] == 0) continue;
+            const FabricMaterial& tm = mats_[triMat_[t]];
+            dampingSum += tm.damping;
+            ++intrinsicCount;
+            if (tm.thickness > maxThickness) { maxThickness = tm.thickness; thickest = &tm; }
+        }
+        if (intrinsicCount > 0) {
+            if (mass_[i] <= 0) mass_[i] = 1e-6;  // isolated vertex guard
+            w_[i] = pinned_[i] ? 0 : 1.0 / mass_[i];
+            damp_[i] = dampingSum / intrinsicCount;
+            muS_[i] = thickest->frictionStatic;
+            muK_[i] = thickest->frictionKinetic;
+            radius_[i] = p_.contactOffset + 0.5 * thickest->thickness;
+            continue;
+        }
         const FabricMaterial& m = mats_[panels_[vertexPanel_[i]].material];
         if (mass_[i] <= 0) mass_[i] = 1e-6;  // isolated vertex guard
         w_[i] = pinned_[i] ? 0 : 1.0 / mass_[i];
@@ -234,7 +265,7 @@ void ClothSolver::finalize() {
         if (kv.second.size() != 2) continue;
         const int p1 = kv.first.first, p2 = kv.first.second;
         const Side &s1 = kv.second[0], &s2 = kv.second[1];
-        const FabricMaterial& m = mats_[panels_[triPanel_[s1.tri]].material];
+        const FabricMaterial& m = mats_[triMat_[s1.tri]];
         const Real A1 = triArea[s1.tri], A2 = triArea[s2.tri];
         const Vec2 e = restUV_[p2] - restUV_[p1];
         const Real l = length(e);
@@ -260,10 +291,6 @@ void ClothSolver::finalize() {
     }
 
     // --- seams
-    std::vector<std::vector<int>> vertTris(N);
-    for (size_t t = 0; t < tris_.size(); ++t)
-        for (int k = 0; k < 3; ++k) vertTris[tris_[t][k]].push_back(static_cast<int>(t));
-
     auto arcParams = [&](const std::vector<int>& ch, Real& total) {
         std::vector<Real> s(ch.size(), 0);
         for (size_t k = 1; k < ch.size(); ++k) s[k] = s[k - 1] + length(restUV_[ch[k]] - restUV_[ch[k - 1]]);
