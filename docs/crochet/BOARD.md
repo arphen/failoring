@@ -38,7 +38,7 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
 | T2.1 | materials/yarns.json + loader (crochet_core target created here) | T0.1 | done | default | 1 | 225d0ab (merged 9b3a0d0) | loads; ids unique; fibres exist |
 | T3.1 | Stitch model | T2.1 | done | default | 1 | ac0e14a (merged 66ef507) | §4.5 tests: PASS |
 | T4.0 | CrochetPARADE spike + decision A/B/C | T0.1 | done | default | 2 | 3c45316 (merged b736625) | decision B (see Decisions); r2 fixed cp_export pipe flush |
-| T4.1 | Bridge: exporter + C++ importer into StitchGraph + `#!` extension-line reader (B) | T4.0 | todo | | 0 | | decision B; docs/CROCHET_DSL.md pins the `#!` syntax |
+| T4.1 | Bridge: exporter + C++ importer into StitchGraph + `#!` extension-line reader (B) | T4.0 | in_progress | default | 1 | | decision B; docs/CROCHET_DSL.md pins the `#!` syntax |
 | T4.2 | Facing/RS, point seams, count checks (B) | T4.1 | todo | | 0 | | ★ §5.4 tests |
 | T5.1 | Faces (BFS base path, zipper), rest shapes, orientation | T4.2, T1.2 | todo | | 0 | | ★ §6.10 test 4 hygiene, all fixtures |
 | T5.2 | Materials, hinge mods, seams → IntrinsicMesh | T5.1, T3.1, T1.3, T1.5 | todo | | 0 | | §6.10 test 6 (mass) |
@@ -71,6 +71,12 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
 * 2026-10-16 — §2.1 step 8 (T1.2) is implemented as: a comment on `BendC::rest` stating that the implicit
   solver reads it (from T1.3 on) while XPBD/VBD keep the unsigned positional angle and ignore it. No
   `// TODO` marker (the review laziness scan rejects them and the behaviour is deliberate, not pending).
+* 2026-10-16 — T4.1 test data: the ten `cp_export.mjs` outputs are committed under
+  `patterns/cp/exported/*.json` (~6.6 MB deterministic JSON) so `ctest` is hermetic (no node, no
+  clone needed at test time); regenerate them with
+  `CP_DIR=<repo>/third_party/crochetparade node tools/crochet/cp_export.mjs --out patterns/cp/exported/<name>.json patterns/cp/<name>.txt`
+  whenever a fixture changes. Extension lines are appended at the end of each fixture file so the
+  exports' `line` fields stay stable.
 * 2026-10-16 — **§5.0 decision: B.** CrochetPARADE is the pattern front end: vendored clone
   `third_party/crochetparade` @ `06e987b13ccfc94cfdfcebc1fe4664d37d2c6687` (GitHub; newer than the
   Codeberg head `be11c8b0`; gitignored, fetch steps in `docs/crochet/T4.0_crochetparade.md` §8 and in
