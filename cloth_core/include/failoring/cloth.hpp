@@ -400,6 +400,14 @@ private:
     // topology + constraints
     std::vector<std::array<int, 3>> tris_;
     std::vector<int> triPanel_;
+    // Per-triangle rest shape and material (CROCHET_PLAN §2.1 step 1). triRest_[t] holds the triangle's rest corner
+    // positions in grain coordinates (u = wale, v = course, metres). finalize() refills it from restUV_ for every
+    // non-intrinsic triangle on every call, so setRestUV() + re-finalize keeps it current; triangles of an intrinsic
+    // panel (addIntrinsicPanel, T1.2) supply their own rest shapes. triMat_ indexes mats_ (one material per triangle
+    // instead of a per-panel lookup); triIntrinsic_ is 1 for triangles of an intrinsic panel, 0 for panel triangles.
+    std::vector<std::array<Vec2, 3>> triRest_;
+    std::vector<int> triMat_;
+    std::vector<char> triIntrinsic_;
     std::vector<TriC> triC_;
     std::vector<BendC> bendC_;
     std::vector<SeamC> seamC_;
