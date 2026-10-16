@@ -103,6 +103,12 @@ var _preview_meta = null
 func _positions() -> PackedVector3Array:
 	if _preview_meta != null and is_same(_preview_meta, ed.meta) and not preview.is_empty():
 		return preview
+	# before the panels are fitted they hover far from the body (stage 0): the panel on screen is the one to pick and to move. A
+	# rigid move or a turn about the panel's own centre is the same on the far pose as on the fitted one, so the placement it stores
+	# is the same too.
+	var n: int = int(ed.meta.get("n", 0))
+	if ed.tl_t < 2.0 and ed.cur_cloth.size() >= n and n > 0:
+		return ed.cur_cloth
 	return ed.meta.get("p2", PackedVector3Array())
 
 

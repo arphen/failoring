@@ -25,6 +25,12 @@ const TIPS := {
 const DEFAULTS := {"main": 60, "rest": -60, "work": 0, "stacked": false, "swapped": false,
 	"left": true, "table": true, "view": true, "right": true}
 
+# First run on this layout version (and after "Atelier" in the bar): the 3D view fills the window, the other panes are one click
+# (or Ctrl+1..4) away. "Reset layout" brings back the classic arrangement above.
+const ATELIER := {"main": 60, "rest": -60, "work": 0, "stacked": false, "swapped": false,
+	"left": false, "table": false, "view": true, "right": false}
+const VERSION := 2
+
 var main: SplitContainer
 var rest: SplitContainer
 var work: SplitContainer
@@ -73,6 +79,13 @@ func _build_bar(bar: HBoxContainer) -> void:
 	swap_btn.name = "SwapBtn"
 	swap_btn.toggled.connect(func(on: bool) -> void: state["swapped"] = on; apply(); _save())
 	bar.add_child(swap_btn)
+	var atelier := _small_button("Atelier", "The 3D view fills the window; the other panes stay one click away", false)
+	atelier.name = "AtelierBtn"
+	atelier.pressed.connect(func() -> void:
+		state = ATELIER.duplicate()
+		apply()
+		_save())
+	bar.add_child(atelier)
 	var focus := _small_button("Focus 3D", "Only the 3D view (press again for the full layout)", false)
 	focus.name = "Focus3DBtn"
 	focus.pressed.connect(focus_view)
@@ -125,6 +138,28 @@ func focus_view() -> void:
 		state[k] = only_view or k == "view"
 	apply()
 	_save()
+
+
+# Render mode (render_mode.gd): only the 3D view, for as long as the mode lasts. The saved layout is not touched, so leaving brings
+# the panes back exactly as they were.
+var _before_max := {}
+
+
+func maximize() -> void:
+	if not _before_max.is_empty():
+		return
+	_before_max = state.duplicate()
+	for k in PANES:
+		state[k] = k == "view"
+	apply()
+
+
+func restore() -> void:
+	if _before_max.is_empty():
+		return
+	state = _before_max
+	_before_max = {}
+	apply()
 
 
 func reset_layout() -> void:
@@ -185,7 +220,8 @@ func _load() -> void:
 	if OS.has_environment("FL_LAYOUT_DEFAULT"):
 		return  # tests and screenshots start from the default layout
 	var cf := ConfigFile.new()
-	if cf.load(SETTINGS_PATH) != OK:
+	if cf.load(SETTINGS_PATH) != OK or int(cf.get_value("layout", "version", 1)) < VERSION:
+		state = ATELIER.duplicate()   # a first run, or a layout saved before the atelier: start 3D first
 		return
 	for k in DEFAULTS.keys():
 		var v = cf.get_value("layout", k, DEFAULTS[k])
@@ -196,11 +232,12 @@ func _load() -> void:
 
 
 func _save() -> void:
-	if OS.has_environment("FL_LAYOUT_DEFAULT"):
+	if OS.has_environment("FL_LAYOUT_DEFAULT") or not _before_max.is_empty():
 		return
 	var cf := ConfigFile.new()
 	cf.load(SETTINGS_PATH)  # keep the other sections
 	for k in state.keys():
 		cf.set_value("layout", k, state[k])
+	cf.set_value("layout", "version", VERSION)
 	if cf.save(SETTINGS_PATH) != OK:
 		push_warning("could not save %s" % SETTINGS_PATH)

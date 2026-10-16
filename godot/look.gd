@@ -5,15 +5,17 @@ extends RefCounted
 
 const CLOTH_SHADER := preload("res://shaders/cloth.gdshader")
 const CONTACT_SHADER := preload("res://shaders/contact.gdshader")
+const POST_SHADER := preload("res://shaders/post.gdshader")
+const Studio = preload("res://studio.gd")
 
-# ---- 3D scene: a photo studio (studio.gd builds the cove and the lighting rig; the lamps are listed there)
-const BG := Color("#0c0d0f")            # behind the cove (above its wall): the studio's dark ceiling
-const EXPOSURE := 1.15                  # filmic tone mapping (ACES pushed bright skin to orange where lamps overlap)
-const AMBIENT := 0.55                   # diffuse light from the studio sky (walls, floor bounce, softboxes)
-const FOG := Color("#151617")           # a faint haze so the far wall of the cove recedes
-const FOG_DENSITY := 0.008
-const GLOW := 0.32                      # bloom round the glowing diffusers (a lens sees them as very bright)
-const CAM_FOV := 36.0                   # vertical fov, PerspectiveCamera(36) in view3d.js
+# ---- 3D scene: a tailor's studio (studio.gd builds the room, the props and the lighting rig; the lamps are listed there)
+const BG := Color("#0c0d0f")            # behind the room (never seen: the room is closed), and the pane's backdrop
+const EXPOSURE := 0.8                   # filmic tone mapping (ACES pushed bright skin to orange where lamps overlap)
+const AMBIENT := 0.2                    # diffuse light from the studio sky when the global illumination does the bounce
+const AMBIENT_NOGI := 0.5               # ... and when it is off (low quality): a flat fill instead of the bounce
+const GLOW := 0.16                      # bloom round the glowing diffusers (a lens sees them as very bright)
+const CAM_FOV := 27.0                   # vertical fov: a 50 mm lens on a 24 mm tall sensor (2 atan(12 / 50))
+const CAM_DIST_K := 1.353               # the framing distances were set for 36 degrees: 36 / 27 degrees in tangent terms
 const CAM_NEAR := 0.05
 const CAM_FAR := 40.0
 const TABLE_SLAB := Color("#2a4640")    # cutting mat (view3d.js buildMat)
@@ -49,20 +51,28 @@ const EYE_DEFAULT := "brown"
 #   shadow_filter  RenderingServer.ShadowQuality for the soft filter (0 hard .. 5 ultra)
 #   glow           bloom round the diffusers
 #   skin_detail    pores and fine bumps on the skin (0 smooth)
-#   msaa / taa / fxaa   Viewport.MSAA (0 off, 2 = 4x): 4x at medium and high, none with FXAA at low; TAA on top at high
+#   msaa / taa / fxaa   Viewport.MSAA (0 off, 1 = 2x, 2 = 4x): 2x at medium, 4x at high, none with FXAA at low; TAA is off
+#                  everywhere: on top of 4x MSAA it cost 11 ms a frame on an M3 for little extra
 #   ssao / ssao_q / ssao_half  SSAO on Forward+ only (ignored elsewhere); ssao_q is RenderingServer.EnvironmentSSAOQuality
 #   weave          procedural weave normals on cloth
 #   ao             per-vertex contact and fold occlusion on the cloth (CPU, computed from body distance)
 #   heavy_every    the strain, curvature and AO terms are recomputed every n-th cloth update (0 = never)
 #   sss            screen-space subsurface scattering on the body (Forward+ only, extra pass; high only)
+#   gi / gi_cascades / gi_cell   SDFGI (real-time global illumination of the room; Forward+ only): cascades, finest cell (m)
+#   ssil / ssr     screen-space indirect light and reflections (floor, mirror, glossy cloth); Forward+ only
+#   dof            depth of field behind the subject (camera attributes)
+#   probe          a reflection probe in the room (the diffusers, windows and props in glossy surfaces and in the eyes)
 const QUALITY_LEVELS := ["low", "medium", "high"]
 const QUALITY := {
 	"low": {"shadow_map": 2048, "shadow_filter": 1, "msaa": 0, "taa": false, "fxaa": true, "glow": false,
-		"ssao": false, "ssao_q": 1, "ssao_half": true, "weave": false, "ao": false, "heavy_every": 0, "sss": false, "skin_detail": 0.6},
-	"medium": {"shadow_map": 4096, "shadow_filter": 3, "msaa": 2, "taa": false, "fxaa": false, "glow": true,
-		"ssao": true, "ssao_q": 1, "ssao_half": true, "weave": true, "ao": true, "heavy_every": 3, "sss": false, "skin_detail": 1.0},
-	"high": {"shadow_map": 4096, "shadow_filter": 4, "msaa": 2, "taa": true, "fxaa": false, "glow": true,
-		"ssao": true, "ssao_q": 3, "ssao_half": false, "weave": true, "ao": true, "heavy_every": 2, "sss": true, "skin_detail": 1.0},
+		"ssao": false, "ssao_q": 1, "ssao_half": true, "weave": false, "ao": false, "heavy_every": 0, "sss": false, "skin_detail": 0.6,
+		"gi": false, "gi_cascades": 2, "gi_cell": 0.2, "ssil": false, "ssr": false, "dof": false, "probe": false},
+	"medium": {"shadow_map": 4096, "shadow_filter": 3, "msaa": 1, "taa": false, "fxaa": false, "glow": true,
+		"ssao": true, "ssao_q": 1, "ssao_half": true, "weave": true, "ao": true, "heavy_every": 3, "sss": false, "skin_detail": 1.0,
+		"gi": true, "gi_cascades": 2, "gi_cell": 0.15, "ssil": false, "ssr": true, "dof": true, "probe": true},
+	"high": {"shadow_map": 4096, "shadow_filter": 4, "msaa": 2, "taa": false, "fxaa": false, "glow": true,
+		"ssao": true, "ssao_q": 3, "ssao_half": false, "weave": true, "ao": true, "heavy_every": 2, "sss": true, "skin_detail": 1.0,
+		"gi": true, "gi_cascades": 3, "gi_cell": 0.1, "ssil": true, "ssr": true, "dof": true, "probe": true},
 }
 
 # Per-fabric look (ids from materials/fabrics.json). pattern: 0 plain, 1 twill, 2 satin, 3 knit, 4 nap, 5 smooth.
@@ -103,39 +113,75 @@ static func quality(level: String) -> Dictionary:
 
 # ---------------------------------------------------------------- 3D
 static func environment(e: Environment) -> void:
-	# The 3D viewport is transparent and the BG colour is drawn behind it (see apply_ui): it only shows above the cove's
-	# wall. The light comes from studio.gd: its lamps, and its sky (the studio seen from the mannequin) for the ambient
-	# light and the reflections.
+	# The room is closed, so there is no background to show: the light comes from the studio's lamps (studio.gd), from
+	# the global illumination of the room (SDFGI, per quality level), and from the studio sky (the lamps seen from the
+	# mannequin) for a little ambient light and the reflections.
 	e.background_mode = Environment.BG_CLEAR_COLOR
 	e.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
 	e.ambient_light_sky_contribution = 1.0
-	e.ambient_light_energy = AMBIENT
+	e.ambient_light_energy = AMBIENT_NOGI
 	e.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
 	e.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	e.tonemap_exposure = EXPOSURE
 	e.tonemap_white = 6.0
-	e.fog_enabled = true
-	e.fog_light_color = FOG
-	e.fog_density = FOG_DENSITY
-	e.fog_sky_affect = 0.0
+	e.fog_enabled = false
+	# bloom: tight levels only (a wide haze over the whole room drowned the subject), thresholded so only the diffusers,
+	# the windows and the bulbs bloom
 	e.glow_enabled = false          # set per quality level by apply_quality
 	e.glow_intensity = GLOW
 	e.glow_strength = 1.0
 	e.glow_bloom = 0.0
-	e.glow_hdr_threshold = 1.2
-	e.glow_blend_mode = Environment.GLOW_BLEND_MODE_SCREEN
+	e.glow_hdr_threshold = 2.2
+	e.glow_hdr_scale = 2.0
+	e.glow_blend_mode = Environment.GLOW_BLEND_MODE_SOFTLIGHT
+	for lv in 7:
+		e.set_glow_level(lv, 1.0 if lv in [0, 1, 2] else 0.0)
 	e.ssao_enabled = false          # set per quality level by apply_quality
 	e.ssao_radius = AO_RADIUS
 	e.ssao_intensity = 1.4
 	e.ssao_power = 1.5
 	e.ssao_light_affect = 0.15      # a little contact darkening in direct light too (armpits, under the bust)
-	e.ssil_enabled = false          # no screen-space indirect light: too costly on integrated GPUs
+	e.ssil_enabled = false          # set per quality level
+	e.ssil_radius = 1.2
+	e.ssil_intensity = 0.8
+	e.ssr_enabled = false           # set per quality level
+	e.ssr_max_steps = 64
+	e.ssr_fade_in = 0.15
+	e.ssr_fade_out = 2.0
+	e.ssr_depth_tolerance = 0.2
+	e.sdfgi_enabled = false         # set per quality level
+	e.sdfgi_use_occlusion = false     # occlusion plus coarse cells blotched the walls
+	e.sdfgi_read_sky_light = false  # a closed room: the sky is the lamps, painted for the reflections only
+	e.sdfgi_bounce_feedback = 0.5
+	e.sdfgi_energy = 1.0
+	e.sdfgi_normal_bias = 1.1
+	e.sdfgi_probe_bias = 1.1
+	e.sdfgi_y_scale = Environment.SDFGI_Y_SCALE_75_PERCENT
+	# a light colour grade: a hint of cool in the shadows and of warm in the highlights (per channel curves), a little
+	# contrast and saturation
+	e.adjustment_enabled = true
+	e.adjustment_brightness = 1.0
+	e.adjustment_contrast = 1.07
+	e.adjustment_saturation = 1.04
+	e.adjustment_color_correction = grade_curve()
+
+
+# The grade as a per-channel curve (a 1D look-up table): blue lifted a touch in the shadows, red up and blue down in the
+# highlights.
+static func grade_curve() -> GradientTexture1D:
+	var g := Gradient.new()
+	g.offsets = PackedFloat32Array([0.0, 0.25, 0.5, 0.75, 1.0])
+	g.colors = PackedColorArray([Color(0.0, 0.004, 0.014), Color(0.245, 0.25, 0.262), Color(0.5, 0.5, 0.5), Color(0.762, 0.748, 0.728), Color(1.0, 0.985, 0.955)])
+	var t := GradientTexture1D.new()
+	t.gradient = g
+	t.width = 256
+	return t
 
 
 # Applies one quality level to the shared scene pieces. key: the studio's key light, the only lamp that casts shadows
 # (the rims, lit from behind, drew dark lines across the front of the body with shadows on in the OpenGL renderer).
 # SSAO, TAA and SSS need a RenderingDevice (Forward+ or Mobile) and are left off otherwise.
-static func apply_quality(level: String, env: Environment, key: Light3D, vp: SubViewport, body_mat: Material) -> void:
+static func apply_quality(level: String, env: Environment, key: Light3D, vp: Viewport, body_mat: Material) -> void:
 	var q := quality(level)
 	vp.positional_shadow_atlas_size = int(q["shadow_map"])
 	vp.positional_shadow_atlas_16_bits = false   # 32-bit depth: the key sits 3.4 m away
@@ -152,20 +198,133 @@ static func apply_quality(level: String, env: Environment, key: Light3D, vp: Sub
 	if ssao_on:
 		RenderingServer.environment_set_ssao_quality(int(q["ssao_q"]), bool(q["ssao_half"]), 0.5, 2, 50.0, 300.0)
 	env.glow_enabled = bool(q["glow"])
+	# global illumination and screen-space effects (Forward+ only)
+	var gi_on: bool = bool(q["gi"]) and has_rd
+	env.sdfgi_enabled = gi_on
+	if gi_on:
+		env.sdfgi_cascades = int(q["gi_cascades"])
+		env.sdfgi_min_cell_size = float(q["gi_cell"])
+	env.ambient_light_energy = AMBIENT if gi_on else AMBIENT_NOGI
+	env.ssil_enabled = bool(q["ssil"]) and has_rd
+	env.ssr_enabled = bool(q["ssr"]) and has_rd
+	if _attr != null:
+		_attr.dof_blur_far_enabled = bool(q["dof"]) and has_rd
+	if _probe != null:
+		_probe.visible = bool(q["probe"])
+	_mirror_on = bool(q["probe"])
+	if _mirror != null:
+		_mirror.enabled = _mirror_on
 	vp.msaa_3d = int(q["msaa"])
 	vp.use_taa = bool(q["taa"]) and has_rd  # TAA is a RenderingDevice (Forward+ or Mobile) feature
 	vp.screen_space_aa = Viewport.SCREEN_SPACE_AA_FXAA if bool(q["fxaa"]) else Viewport.SCREEN_SPACE_AA_DISABLED
 	if body_mat is ShaderMaterial:
-		(body_mat as ShaderMaterial).set_shader_parameter("sss", 0.35 if (bool(q["sss"]) and has_rd) else 0.0)
+		(body_mat as ShaderMaterial).set_shader_parameter("sss", 0.1 if (bool(q["sss"]) and has_rd) else 0.0)
 		(body_mat as ShaderMaterial).set_shader_parameter("detail", float(q["skin_detail"]))
 	if key != null:
 		key.shadow_enabled = true
 
 
+static var _attr: CameraAttributesPractical
+static var _probe: ReflectionProbe
+
+
+# A 50 mm lens (CAM_FOV), with a little depth of field behind the subject (focus() keeps it on the subject).
 static func camera(cam: Camera3D) -> void:
 	cam.fov = CAM_FOV
 	cam.near = CAM_NEAR
 	cam.far = CAM_FAR
+	_attr = CameraAttributesPractical.new()
+	_attr.dof_blur_far_enabled = false      # per quality level
+	_attr.dof_blur_far_distance = 5.0
+	_attr.dof_blur_far_transition = 4.0
+	_attr.dof_blur_amount = 0.07
+	_attr.dof_blur_near_enabled = false
+	cam.attributes = _attr
+	RenderingServer.camera_attributes_set_dof_blur_quality(RenderingServer.DOF_BLUR_QUALITY_MEDIUM, true)
+
+
+# Keeps the focus on the subject: `dist` is the distance from the camera to the mannequin. The far blur starts just
+# behind it and builds up over four metres.
+static func focus(dist: float) -> void:
+	if _attr != null:
+		_attr.dof_blur_far_distance = dist + 0.8
+		_attr.dof_blur_far_transition = 4.5
+
+
+# A reflection probe round the mannequin, captured from its chest: the diffusers, windows and props of the room show up
+# in the eyes, the lips, the silk and the platform's edge. It is local on purpose: spread over the whole room it put a
+# bright wavy reflection on the ceiling and a wet sheen on the floor. No box projection (the room is far compared with
+# the subject: a plain cubemap puts each softbox in the right direction). Captured again for a moment after the first
+# frames, once the room's lighting has settled, then frozen.
+const PROBE_CENTER := Vector3(0.0, 1.2, 0.0)
+const PROBE_SIZE := Vector3(2.6, 2.5, 2.6)
+
+static func reflection_probe(parent: Node3D) -> ReflectionProbe:
+	var p := ReflectionProbe.new()
+	p.name = "SubjectProbe"
+	p.size = PROBE_SIZE
+	p.position = PROBE_CENTER
+	p.box_projection = false
+	p.interior = true
+	p.max_distance = 20.0
+	p.intensity = 1.0
+	p.ambient_mode = ReflectionProbe.AMBIENT_DISABLED
+	p.update_mode = ReflectionProbe.UPDATE_ALWAYS
+	p.cull_mask = 1                                  # layer 1: the room and its props, not the mannequin on layer 2
+	parent.add_child(p)
+	_probe = p
+	var t := Timer.new()
+	t.one_shot = true
+	t.wait_time = 1.2
+	t.autostart = true
+	t.timeout.connect(func() -> void:
+		p.update_mode = ReflectionProbe.UPDATE_ONCE
+		t.queue_free())
+	p.add_child(t)
+	return p
+
+
+const MirrorLib = preload("res://mirror.gd")
+static var _mirror_on := true
+static var _mirror: Node
+
+
+# The fitting mirror's planar reflection (mirror.gd). `world` is the 3D world the main camera renders. Switched off on low quality.
+static func mirror_setup(parent: Node3D, cam: Camera3D, world: World3D, env: Environment) -> void:
+	var glass: Array = []
+	for n in parent.find_children("Glass*", "MeshInstance3D", true, false):
+		glass.append(n)
+	if glass.is_empty():
+		return
+	_mirror = MirrorLib.new()
+	_mirror.name = "MirrorReflection"
+	parent.add_child(_mirror)
+	_mirror.setup(glass, cam, world, env)
+	_mirror.enabled = _mirror_on
+
+
+static func mirror_update() -> void:
+	if _mirror != null:
+		_mirror.update()
+
+
+# Vignette and a trace of film grain, laid over the 3D view as two translucent rectangles on a canvas layer inside the
+# viewport (Godot 4.3 has no built-in vignette).
+static func post(vp: Node) -> void:
+	if vp.get_node_or_null("Post") != null:
+		return
+	var layer := CanvasLayer.new()
+	layer.name = "Post"
+	vp.add_child(layer)
+	for mode in [0, 1]:
+		var r := ColorRect.new()
+		r.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		r.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		var m := ShaderMaterial.new()
+		m.shader = POST_SHADER
+		m.set_shader_parameter("mode", mode)
+		r.material = m
+		layer.add_child(r)
 
 
 # Soft dark ellipse under the feet: the key's shadow is soft and lands behind the body, so the feet would float
@@ -342,7 +501,10 @@ static func apply_ui(root: Control, vp: SubViewport) -> void:
 	# 3D backdrop: the SubViewport is transparent, and a flat BG rect behind its container shows
 	# through. The rect is plain 2D colour, so it matches the browser's scene.background exactly
 	# (no tone mapping, no fog).
-	vp.transparent_bg = true
+	# The studio is a closed room, so nothing of the pane's backdrop shows through. (A transparent viewport made the spot
+	# lamps light nothing on Forward+ once the GI and the colour grade were on: the mannequin came out black.)
+	vp.transparent_bg = false
+	post(vp)
 	var pane := vp.get_parent() as Control
 	if pane != null and pane.get_node_or_null("Backdrop") == null:
 		var bd := ColorRect.new()

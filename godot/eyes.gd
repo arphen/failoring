@@ -18,6 +18,8 @@ const DROP := 0.06               # rad: a slightly lowered gaze, as a relaxed pe
 var anchors: Dictionary = {}
 var _eyes := {}
 var _mat: ShaderMaterial
+var gaze := Vector2.ZERO          # radians added to the resting gaze: x to the body's left, y up (idle.gd)
+var _frame := {}                  # per eye: centre and head orientation of the last follow(), so the gaze can move without it
 
 
 func setup(a: Dictionary) -> void:
@@ -67,10 +69,33 @@ func follow(verts: PackedVector3Array) -> void:
 		var lc: Vector3 = SkinMap.centroid(verts, ring)
 		var off: Vector3 = anchors[s]["off"]
 		var c := lc + b * off * float(fr["scale"])
-		var yaw := -CONVERGE if s == "l" else CONVERGE
-		# the head's rotation since the rest pose, applied to the rest gaze (straight ahead, +z)
-		var eb := b * rb_inv * Basis.from_euler(Vector3(DROP, yaw, 0.0))
-		(_eyes[s] as MeshInstance3D).transform = Transform3D(eb.scaled(Vector3(r, r, r)), c)
+		# the head's rotation since the rest pose; the gaze (straight ahead, +z, plus the resting convergence) goes on top
+		_frame[s] = {"c": c, "hb": b * rb_inv, "r": r}
+	# the skin shader swings the lids about the eyes: it needs the rest-to-drawn map of the head (rotation and scale)
+	var bm := (get_parent() as MeshInstance3D).material_override as ShaderMaterial if get_parent() is MeshInstance3D else null
+	if bm != null:
+		bm.set_shader_parameter("lid_basis", (b * rb_inv).scaled(Vector3(sc, sc, sc)))
+	_place()
+
+
+# Puts the eyeballs where the last follow() found the sockets, looking where `gaze` says.
+func _place() -> void:
+	for s in ["l", "r"]:
+		if not _frame.has(s):
+			continue
+		var f: Dictionary = _frame[s]
+		var yaw := (-CONVERGE if s == "l" else CONVERGE) + gaze.x
+		var eb: Basis = (f["hb"] as Basis) * Basis.from_euler(Vector3(DROP - gaze.y, yaw, 0.0))
+		var r: float = f["r"]
+		(_eyes[s] as MeshInstance3D).transform = Transform3D(eb.scaled(Vector3(r, r, r)), f["c"])
+
+
+# The idle layer's eyes (idle.gd): a new gaze, and the head's motion on top of the pose (the eyes follow the skinned head).
+func idle(g: Vector2, head: Transform3D) -> void:
+	transform = head
+	if g != gaze:
+		gaze = g
+		_place()
 
 
 var _maxi := -1

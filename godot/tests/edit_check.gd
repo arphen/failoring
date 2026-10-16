@@ -29,7 +29,8 @@ func _field(node_name: String) -> LineEdit:
 
 func _btn(text: String) -> Button:
 	for b in ed.find_children("*", "Button", true, false):
-		if b is Button and (b as Button).text == text:
+		# the 3D pane's own buttons (camera views, render bar: a "Mirror" view chip) are not the panels' buttons
+		if b is Button and (b as Button).text == text and not ed.view_pane.is_ancestor_of(b):
 			return b as Button
 	return null
 

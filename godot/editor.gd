@@ -27,6 +27,10 @@ const Guides = preload("res://guides.gd")
 const Place3D = preload("res://place3d.gd")
 const PlaceView = preload("res://place_view.gd")
 const SoftTissue = preload("res://soft_tissue.gd")
+const Idle = preload("res://idle.gd")
+const CamViews = preload("res://cam_views.gd")
+const RenderModeLib = preload("res://render_mode.gd")
+const Stitching = preload("res://stitching.gd")
 const SewCheck = preload("res://sew_check.gd")
 const Arrange = preload("res://arrange.gd")
 const Studio = preload("res://studio.gd")
@@ -102,6 +106,14 @@ var health:FailoringGarmentHealth = null  # per-garment checks of the current bu
 var health_text := ""                       # the warning above the stats line (empty when every garment is fine)
 var health_hot: Array = []                  # piece ids the cutting table tints red
 var sew_a = null
+# Staging (docs/LOOK_NOTES.md): each panel hovers either FAR from the body (an exploded view, room to see and work out the seams) or
+# CLOSE to it (its fitted start pose on the body). _stage_of: panel id -> "far" | "near" (default far); the blend glides between.
+const FAR_DIST := 0.95        # m: how far a panel hovers from its fitted place, radially (plus a little per panel)
+const BLEND_RATE := 2.2       # per second: how fast a panel glides between far and close
+var _stage_of := {}           # simulated panel id -> "far" | "near" (a view state of this session)
+var _blend := {}              # piece id -> 0 (far) .. 1 (close)
+var _far_off := {}            # piece id -> Vector3: the offset of its far pose from its close pose
+var _blend_rev := 0           # changes whenever a blend moves (the display key)
 var pieces: Array = []
 var seams: Array = []
 var tool := "select"      # select, sew or hole (the Hole tool draws a hole inside a piece; see table.gd)
@@ -123,6 +135,7 @@ var _planned := {}   # the job of the step after the one in flight, made early s
 var _jobs_made := 0  # jobs made since the sim was built: the index of the next job's frame is _jobs_made + 1
 var body_h_override := 0.0  # > 0: the body grid spacing for every quality (debug and benchmark; see rebuild)
 var playing := false
+var render_mode = null               # RenderMode (render_mode.gd): the Render control and render mode
 var _showcase: ShowcasePanel = null  # the Showcase tab (scenario_panel.gd)
 var bake_ms := 0.0
 var step_ms := 0.0
@@ -150,6 +163,14 @@ var frames: Array = []       # each {pos, cloth, body, ke, gap, clear, ms, bake}
 var meta := {}
 var wraps := {}
 var mesh_edges := PackedInt32Array()
+var stitch_mode := false     # the 3D stitch tool: click an edge, then the edge to sew it to
+var stitch_style := "straight"   # the stitch type of the next seam the tool makes
+var _stitch_a: Variant = null    # [simulated panel id, edge] of the first edge picked
+var _stitch_hover: Variant = null
+var _needles := []           # one needle node per join: panel pair and stitch type (the Sew stage)
+var _needle_groups := []     # {pairs: the join's seams as one path, type, needle}
+var _trail_mesh: MeshInstance3D
+var _hl_mesh: MeshInstance3D     # the stitch tool's hover and picked edges
 var stitch_nodes := []       # {node, pairs, si}
 var seam_nodes := []         # {node, seg, si}
 var mat_node: MeshInstance3D
@@ -175,6 +196,12 @@ const CAM_PAN_MAX := 3.0      # metres the target may wander from its framed pos
 const CAM_IDLE_MS := 3000     # auto-orbit resumes this long after the last camera input
 var pan_off := Vector3.ZERO
 var view_dist := 2.9          # distance used by the last _update_camera (scales pan)
+var cam_focus := "auto"       # what the camera orbits (cam_views.gd): the whole mannequin, a part of it, the room, the mirror, the table
+var _foc_pivot := Vector3(0.0, 0.9, 0.0)
+var _foc_dist := 4.0
+var _foc_ready := false
+var _fov_goal := 27.0         # the lens the current view wants: 50 mm for the mannequin, wider across the room
+var _cam_goal := {}           # an animated move to a view: yaw, pitch, zoom, pan (any user input cancels it)
 var user_cam_until := 0       # ms timestamp: auto-orbit is paused until then
 var pointer_over_view := false
 
@@ -191,6 +218,7 @@ var place_btn: Button
 var arrange_btn: Button
 var soft = SoftTissue.new()   # breasts, seat, belly, thighs, upper arms that bounce while walking; breath (soft_tissue.gd)
 var soft_gain := 1.0
+var idle = Idle.new()          # breathing, weight shifts, micro motion, blinks and gaze (idle.gd); Body tab > Alive
 var sew_check = SewCheck.new()   # "will it sew?" on the start pose of the current build (sew_check.gd)
 # Dressing pose (an A-pose, as CLO and Marvelous Designer users dress an avatar): a garment with sleeves is put on and
 # sewn with the arms raised sideways (DRESS_ABDUCT), then the arms come down to the standing pose before the walk. With
@@ -480,13 +508,46 @@ func _build_scene() -> void:
 	Look.camera(cam)
 	cam.position = Vector3(0, 0, dist)
 	cam_pivot.add_child(cam)
+	Look.reflection_probe(stage)
 	body_node = BodyView.new()
 	body_node.material_override = Look.body_material()
+	body_node.layers = 2                                      # the room's reflection probe does not capture the mannequin
+	body_node.gi_mode = GeometryInstance3D.GI_MODE_DYNAMIC    # it moves: it receives the room's light, it is not part of it
 	stage.add_child(body_node)
 	body_node.set_skin_data(SkinMap.build(M))  # pores, face, colour masks and the eyes (skin.gd); look only
+	body_node.set_idle(idle)                   # alive: its bones come with the standing body (see _rebuild)
 	_apply_look()
+	Look.mirror_setup(stage, cam, sub_view.world_3d, render_env)
+	if OS.has_environment("FL_FX"):           # look work: FL_FX=nogi,nossr,nossil,nossao,noglow,nodof,notaa,nopost,noprobe,opaque switches effects off
+		var fx := OS.get_environment("FL_FX").split(",")
+		if fx.has("nogi"): render_env.sdfgi_enabled = false
+		if fx.has("nossr"): render_env.ssr_enabled = false
+		if fx.has("nossil"): render_env.ssil_enabled = false
+		if fx.has("nossao"): render_env.ssao_enabled = false
+		if fx.has("noglow"): render_env.glow_enabled = false
+		if fx.has("nodof"): cam.attributes = null
+		if fx.has("notaa"): sub_view.use_taa = false
+		if fx.has("nopost") and sub_view.get_node_or_null("Post") != null: sub_view.get_node("Post").queue_free()
+		if fx.has("noprobe"): Look._probe.visible = false
+		if fx.has("nomirror"): Look._mirror_on = false
+		if fx.has("nossr"): render_env.ssr_enabled = false
+		if fx.has("opaque"): sub_view.transparent_bg = false
+	if OS.has_environment("FL_VIEW"):         # look work: start in a camera view (cam_views.gd id), no glide
+		var vv := CamViews.by_id(OS.get_environment("FL_VIEW"))
+		cam_focus = String(vv["focus"])
+		yaw = float(vv["yaw"])
+		pitch = float(vv["pitch"])
+		_fov_goal = CamViews.fov_of(vv, Look.CAM_FOV)
+		cam.fov = _fov_goal
+		if OS.has_environment("FL_ZOOM"):
+			zoom = float(OS.get_environment("FL_ZOOM"))
+	if OS.has_environment("FL_NOSHADOW"):     # look work: all lamps without shadows
+		for lid in (studio["lights"] as Dictionary).keys():
+			(studio["lights"][lid] as Light3D).shadow_enabled = false
 	cloth_node = MeshInstance3D.new()
 	cloth_node.extra_cull_margin = 0.5   # one material per fabric surface: see cloth_shade.gd
+	cloth_node.layers = 2
+	cloth_node.gi_mode = GeometryInstance3D.GI_MODE_DYNAMIC
 	stage.add_child(cloth_node)
 
 
@@ -743,6 +804,16 @@ func _seam_row(k: int, s: Dictionary, a: Dictionary, b: Dictionary) -> VBoxConta
 	if chk["warn"]:
 		t.text += "\nWarning: %.1f cm apart (%.1f%%), the drape eases the difference" % [chk["diff"], chk["pct"]]
 	row.add_child(t)
+	var sty := OptionButton.new()
+	for ty in Stitching.TYPES:
+		sty.add_item(String(Stitching.STYLE[ty]["label"]))
+	sty.select(maxi(Stitching.TYPES.find(Stitching.type_of(s)), 0))
+	sty.tooltip_text = "The stitch: the needle's motion and the thread's colour in the Sew stage"
+	sty.item_selected.connect(func(i: int) -> void:
+		push_undo("Stitch type")
+		s["stitch"] = String(Stitching.TYPES[i])
+		changed("structure"))
+	row.add_child(sty)
 	var flip := Button.new()
 	flip.text = "⇄"
 	flip.tooltip_text = "Flip direction"
@@ -1092,9 +1163,13 @@ func take_shots() -> void:
 		var tt: Array = s["tgt"]
 		cam_pivot.position = Vector3.ZERO
 		cam_pivot.rotation = Vector3(0, float(s["yaw"]), 0)
-		cam.position = Vector3(float(cc[0]), float(cc[1]) * h, float(cc[2]))
-		cam.fov = float(s["fov"])
-		cam.look_at(Vector3(float(tt[0]), float(tt[1]) * h, float(tt[2])))
+		var shot_tgt := Vector3(float(tt[0]), float(tt[1]) * h, float(tt[2]))
+		# the long-lens positions lie outside the studio: pull each camera in until it is inside, widening the lens to keep the framing
+		var fit := Studio.fit_camera(cam_pivot.transform * Vector3(float(cc[0]), float(cc[1]) * h, float(cc[2])), shot_tgt, float(s["fov"]))
+		cam.position = cam_pivot.transform.affine_inverse() * (fit["pos"] as Vector3)
+		cam.fov = float(fit["fov"])
+		cam.look_at(shot_tgt)
+		Look.focus((fit["pos"] as Vector3).distance_to(shot_tgt))
 		await RenderingServer.frame_post_draw
 		await RenderingServer.frame_post_draw
 		var img := sub_view.get_texture().get_image()
@@ -2281,6 +2356,13 @@ func _build_body_tab_content() -> void:
 			_schedule(),
 		func(v: float) -> String: return "off" if v <= 0.0 else "%d%%" % roundi(v * 100.0),
 		"How much the breasts, seat, belly, thighs and upper arms bounce while walking, and the breath (100% is the estimate in soft_tissue.gd; off is a rigid body). Applies from the next simulation.")
+	for d in Idle.defs():
+		var member: String = d[0]
+		_slider_row(vb, String(d[1]), float(d[2]), float(d[3]), 0.05,
+			func() -> float: return float(idle.get(member)),
+			func(v: float) -> void: idle.set(member, v),
+			func(v: float) -> String: return ("off" if v <= 0.0 else "%d%%" % roundi(v * 100.0)) if member != "breath_rate" else "%.0f / min" % v,
+			String(d[4]) + " Idle life (idle.gd). With garments on the body keeps still: the cloth is simulated against a still body.")
 	vb.add_child(_h4("Look"))
 	_look_row(vb, "Skin", "skin", Look.skin_choices(), look_skin, "Skin tone of the mannequin, or a photographic MakeHuman skin (tools/fetch_makehuman_skins.sh puts them in godot/assets/skin/photo). Look only: the simulation does not change.")
 	_look_row(vb, "Hair", "hair", Look.HAIR_COLORS, look_hair, "A short crop drawn on the scalp, or none.")
@@ -2944,12 +3026,46 @@ func _outfit_row(i: int) -> Control:
 	return card
 
 
+var _view2_done := false
+
+
+var _fps_n := 0
+var _fps_t0 := 0
+
+
 func _process(_delta: float) -> void:
+	if OS.has_environment("FL_FPS"):          # look work: average frame rate over frames 120..420, printed once
+		_fps_n += 1
+		if _fps_n == 120:
+			_fps_t0 = Time.get_ticks_usec()
+		elif _fps_n == 420:
+			var dt := float(Time.get_ticks_usec() - _fps_t0) / 1.0e6
+			print("FPS %.1f (%.1f ms/frame) view=%s window=%s pane=%s" % [300.0 / dt, dt * 1000.0 / 300.0, OS.get_environment("FL_VIEW"), get_window().size, sub_view.size])
+	if OS.has_environment("FL_VIEW2") and not _view2_done and Time.get_ticks_msec() > 6000:   # look work: glide to a second view after 6 s
+		_view2_done = true
+		_cam_goto(OS.get_environment("FL_VIEW2"))
+	_idle_gains(_delta)
 	_watch_window()
 	if table_dirty and table != null:
 		table_dirty = false
 		table.queue_redraw()
 	_demo_tick()
+
+
+# The idle layer moves the body only where nothing else is moving it: while the standing body is on screen. A walk is baked
+# frame by frame, and cloth is simulated against a still body, so with garments on the body keeps (nearly) still: the head,
+# the eyes and a breath that stays inside the 2.5 mm the skin is drawn under the cloth go on.
+func _idle_gains(delta: float) -> void:
+	if body_node == null or idle == null:
+		return
+	body_node.idle_pose_on = _body_key == "stand" or sim == null
+	var dressed := false
+	for e in outfit:
+		if bool(e["visible"]):
+			dressed = true
+			break
+	idle.body_gain = move_toward(idle.body_gain, 0.0 if dressed else 1.0, delta * 1.5)
+	body_node.breath_gain = move_toward(body_node.breath_gain, 0.3 if dressed else 1.0, delta * 1.5)
 
 
 func _on_debounce() -> void:
@@ -3453,6 +3569,8 @@ func rebuild() -> void:
 	_solver_stats = sim.get_solver_stats()
 	_vcount = sim.get_vertex_count()
 	meta = built
+	_far_off.clear()
+	_blend_rev += 1
 	var garment_names := {}
 	for e in outfit:
 		garment_names[int(e["uid"])] = String(e["name"])
@@ -3470,6 +3588,7 @@ func rebuild() -> void:
 	_build_stitches()
 	_build_mat()
 	body_node.use_custom(_stand_v3, _tris())
+	body_node.set_idle(idle, body_stand["joints"], M["bones"])
 	body_node.show_pose(_stand_v3)
 	_body_key = ""
 	_last_shown = ""
@@ -3501,6 +3620,9 @@ func _physics_process(_delta: float) -> void:
 	if place_view.active:
 		place_view.refresh(null if place_view.drag.is_empty() else place_view.drag["c"] + place_view.drag["dt"])  # the gizmo keeps its size on screen as the camera moves
 	# the Showcase's playback owns the 3D view while it is on (cached frames, no solver); the orbit camera still works
+	_step_blends(_delta)
+	if render_mode != null:
+		render_mode.tick(_delta)
 	if _showcase != null and _showcase.drive(_delta):
 		return
 	if sim == null:
@@ -3740,7 +3862,9 @@ func _show_current() -> void:
 		phase = 1
 	var key := ""
 	if phase == 0:
-		key = "0|%d|%s" % [int(tl_t * 1000.0), sel]
+		key = "0|%d|%s|%d" % [int(tl_t * 1000.0), sel, _blend_rev]
+	elif phase == 1:
+		key = "1|%d|%s" % [int(tl_t * 1000.0), sel]      # the needles move with the clock
 	else:
 		key = "%d|%d|%s" % [phase, _frame_idx(), sel]
 	if key == _last_shown:
@@ -3906,66 +4030,100 @@ func _build_mat() -> void:
 	mat_node.position = Vector3(0, 0.01, 1.75)
 
 
-# assembly timeline stages 0-2 (browser V.pose T<2): pieces fly from the table mat
-# to the body, then ease into the wrapped start pose.
+# assembly timeline stages 0-2: the panels hover far from the body or close to it (each by its own state, gliding between), and when
+# the timeline plays from the start, every panel that is still far glides in to its fitted place (stage 2 "Fit"). From there the
+# seams are sewn (stage 3) and the cloth drapes (stage 4).
 func _stage_pose() -> void:
 	var n: int = meta["n"]
 	var pos := PackedFloat32Array()
 	pos.resize(n * 3)
-	var l := _table_layout()
-	var t := tl_t
 	var order: Array = meta["order"]
+	var p2: PackedVector3Array = meta["p2"]
+	_refresh_far_offsets()
 	for i in order.size():
 		var pid := String(order[i])
 		var r: Dictionary = meta["ranges"][pid]
-		var w = wraps[pid]
-		var uv: PackedVector2Array = meta["uv"][pid]
-		var p = Table.piece_by_id(_sim_pieces, pid)
-		var pt: Dictionary = p.get("table", {"x": 0.0, "y": 0.0})
-		var bb := Table.bbox_of(p["outline"])
-		var vm: float = (bb[1] + bb[3]) * 0.5
-		var uc: float = w._uc
-		var c0 := [uc + float(pt.get("x", 0.0)) - l["cx"], 0.032, 1.75 - (vm + float(pt.get("y", 0.0)) - l["cy"])]
-		var c1: Vector3 = w.flat_point(uc, vm, 0.30)
-		var ph: Vector3 = w.flat_point(uc, vm, 0.0)
-		var tx: Vector3 = w.flat_point(uc + 0.1, vm, 0.0)
-		var nx0: Vector3 = w.flat_point(uc, vm, 1.0)
-		var ex1: Vector3 = (tx - ph).normalized() if (tx - ph).length() > 1e-9 else Vector3.RIGHT
-		var ey1 := Vector3.UP
-		var nn: Vector3 = (nx0 - ph).normalized() if (nx0 - ph).length() > 1e-9 else Vector3.BACK
-		var q0 := Quaternion(Basis(Vector3.RIGHT, Vector3(0, 0, -1), Vector3.UP))
-		var q1 := Quaternion(Basis(ex1, ey1, nn))
-		var delay: float = 0.3 * float(i) / float(maxi(1, order.size() - 1)) if order.size() > 1 else 0.0
-		var pr: float = clampf((t - 1.0 - delay) / 0.7, 0.0, 1.0)
-		var sa: float = _smooth(pr / 0.6)
-		var sb: float = _smooth((pr - 0.6) / 0.4)
-		var lift: float = 0.35 * sin(PI * clampf(pr / 0.6, 0.0, 1.0))
-		var q := q0.slerp(q1, sa)
-		var e := Basis(q)
-		var cx: float = c0[0] + (c1.x - c0[0]) * sa
-		var cy: float = c0[1] + (c1.y - c0[1]) * sa + lift
-		var cz: float = c0[2] + (c1.z - c0[2]) * sa
-		var p2: PackedVector3Array = meta["p2"]
-		for k in int(r["count"]):
-			var vi: int = int(r["first"]) + k
-			var a: float = uv[k].x - uc
-			var b: float = uv[k].y - vm
-			var x: float = cx + e.x.x * a + e.y.x * b
-			var y: float = cy + e.x.y * a + e.y.y * b
-			var z: float = cz + e.x.z * a + e.y.z * b
-			if sb > 0.0:
-				x += (p2[vi].x - x) * sb
-				y += (p2[vi].y - y) * sb
-				z += (p2[vi].z - z) * sb
-			pos[3 * vi] = x
-			pos[3 * vi + 1] = y
-			pos[3 * vi + 2] = z
+		var k: float = 1.0 - float(_blend.get(pid, _blend_target(pid)))      # 1 far .. 0 close
+		if tl_t > 1.0:
+			var delay: float = 0.3 * float(i) / float(maxi(1, order.size() - 1)) if order.size() > 1 else 0.0
+			k *= 1.0 - _smooth((tl_t - 1.0 - delay) / 0.7)
+		var off: Vector3 = (_far_off.get(pid, Vector3.ZERO) as Vector3) * k + Vector3(0.0, 0.22 * sin(PI * clampf(k, 0.0, 1.0)), 0.0)
+		for j in int(r["count"]):
+			var vi: int = int(r["first"]) + j
+			var v: Vector3 = p2[vi] + off
+			pos[3 * vi] = v.x
+			pos[3 * vi + 1] = v.y
+			pos[3 * vi + 2] = v.z
 	cur_cloth = PackedVector3Array()
 	cur_cloth.resize(n)
 	for vi in n:
 		cur_cloth[vi] = Vector3(pos[3 * vi], pos[3 * vi + 1], pos[3 * vi + 2])
 	_set_cloth_mesh(_with_midpoints(cur_cloth))
-	_update_stitches(cur_cloth, t)
+	_update_stitches(cur_cloth, tl_t)
+
+
+func _blend_target(pid: String) -> float:
+	return 1.0 if String(_stage_of.get(pid, "far")) == "near" else 0.0
+
+
+# The simulated panel (merged outfit id, "g<uid>_<piece>") for a piece of the active garment as the table knows it.
+func _sim_id_of(table_pid: Variant) -> String:
+	if table_pid == null or not meta.has("order"):
+		return ""
+	var order: Array = meta["order"]
+	if order.has(String(table_pid)):
+		return String(table_pid)
+	if active >= 0 and active < outfit.size():
+		var cand: String = Outfit.prefix(int(outfit[active]["uid"])) + String(table_pid)
+		if order.has(cand):
+			return cand
+	return ""
+
+
+# The far pose is the close pose pushed outward from the body's axis, level with the panel: an exploded view. Panels that sit on the
+# axis (a back or front panel) go forward or back; each panel gets a slightly different distance so that neighbours do not overlap.
+func _refresh_far_offsets() -> void:
+	if not _far_off.is_empty() and _far_off.size() == (meta["order"] as Array).size():
+		return
+	_far_off.clear()
+	var p2: PackedVector3Array = meta["p2"]
+	var order: Array = meta["order"]
+	for i in order.size():
+		var pid := String(order[i])
+		var r: Dictionary = meta["ranges"][pid]
+		var c := Vector3.ZERO
+		for j in int(r["count"]):
+			c += p2[int(r["first"]) + j]
+		c /= maxf(1.0, float(r["count"]))
+		var d := Vector3(c.x, 0.0, c.z)
+		if d.length() < 0.03:
+			d = Vector3(0.0, 0.0, 1.0 if i % 2 == 0 else -1.0)
+		_far_off[pid] = d.normalized() * (FAR_DIST + 0.14 * float(i % 3))
+
+
+# Moves the blends towards each panel's state (every physics frame); the display redraws while one is moving.
+func _step_blends(delta: float) -> void:
+	if meta.is_empty() or not meta.has("order"):
+		return
+	for pid in meta["order"]:
+		var cur: float = float(_blend.get(pid, -1.0))
+		var tgt := _blend_target(String(pid))
+		if cur < 0.0:
+			_blend[pid] = tgt           # a panel seen for the first time starts where it belongs
+			continue
+		if not is_equal_approx(cur, tgt):
+			_blend[pid] = move_toward(cur, tgt, BLEND_RATE * delta)
+			_blend_rev += 1
+
+
+# Puts a panel (pid: the simulated panel's id) or, with pid "", every panel far or close. A view state, not an edit of the pattern.
+func set_stage(pid: String, close: bool) -> void:
+	if not meta.has("order"):
+		return
+	for q in meta["order"]:
+		if pid == "" or String(q) == pid:
+			_stage_of[String(q)] = "near" if close else "far"
+	_last_shown = ""
 
 
 var _stitch_mesh: MeshInstance3D
@@ -3975,6 +4133,16 @@ var _seam_mesh: MeshInstance3D
 func _build_stitches() -> void:
 	stitch_nodes.clear()
 	seam_nodes.clear()
+	for nd in _needles:
+		if is_instance_valid(nd):
+			nd.queue_free()
+	_needles = []
+	if _trail_mesh == null:
+		_trail_mesh = _line_node(Color(1, 1, 1), 1.0)
+		(_trail_mesh.material_override as StandardMaterial3D).no_depth_test = true      # the trace shows through the cloth it runs along
+		_hl_mesh = _line_node(Color(1, 1, 1), 1.0)
+		(_hl_mesh.material_override as StandardMaterial3D).no_depth_test = true
+		(_hl_mesh.material_override as StandardMaterial3D).render_priority = 5
 	if _stitch_mesh == null:
 		_stitch_mesh = _line_node(Color(1, 1, 1), 0.6)
 		_seam_mesh = _line_node(Color(1, 1, 1), 0.85)
@@ -4008,35 +4176,154 @@ func _build_stitches() -> void:
 		for k in m:
 			var tt: float = float(k) / float(maxi(1, m - 1))
 			pairs.append([ca[mini(ca.size() - 1, int(round(tt * float(ca.size() - 1))))], cb[mini(cb.size() - 1, int(round((1.0 - tt if bool(s.get("reverse", false)) else tt) * float(cb.size() - 1))))]])
-		stitch_nodes.append({"pairs": pairs, "si": si, "col": stitch_col})
+		var ty := Stitching.type_of(s)
+		if OS.has_environment("FL_STITCH_DEMO"):          # look work: the five stitch types spread over the seams
+			ty = String(Stitching.TYPES[(si / 3) % Stitching.TYPES.size()])
+		stitch_nodes.append({"pairs": pairs, "si": si, "col": stitch_col, "type": ty, "pa": String(s["a"][0]), "pb": String(s["b"][0]),
+			"group": -1, "off": 0, "rev": false})
 		var seg := []
 		for ch in [ca, cb]:
 			for k in ch.size() - 1:
 				seg.append(ch[k])
 				seg.append(ch[k + 1])
 		seam_nodes.append({"seg": seg, "si": si, "col": col})
+	_build_needle_groups()
+
+
+# One needle per panel pair and stitch type (the tee's 68 short seams are five or six joins): it sews that join's seams one after the
+# other, in an order that keeps it moving (nearest next, a seam sewn from whichever end is closer). `stitch_nodes` keep their own lines;
+# each knows its group, where it starts in the group's path (`off`) and whether the path runs along it backwards (`rev`).
+func _build_needle_groups() -> void:
+	_needle_groups = []
+	var by_key := {}
+	for i in stitch_nodes.size():
+		var sn: Dictionary = stitch_nodes[i]
+		var key := "%s|%s|%s" % [sn["pa"], sn["pb"], sn["type"]]
+		if not by_key.has(key):
+			by_key[key] = []
+		(by_key[key] as Array).append(i)
+	var p2: PackedVector3Array = meta["p2"]
+	var needle_mesh := Stitching.needle_mesh()
+	for key in by_key.keys():
+		var members: Array = by_key[key]
+		var ends := {}
+		for i in members:
+			var pr: Array = stitch_nodes[i]["pairs"]
+			var f: Array = pr[0]
+			var l: Array = pr[pr.size() - 1]
+			ends[i] = [(p2[int(f[0])] + p2[int(f[1])]) * 0.5, (p2[int(l[0])] + p2[int(l[1])]) * 0.5]
+		# start with the member whose start is lowest and furthest back, then always the nearest next end
+		var left: Array = members.duplicate()
+		var seq := []
+		var cur := Vector3.ZERO
+		var first := true
+		while not left.is_empty():
+			var best := -1
+			var best_d := 1.0e9
+			var best_rev := false
+			for i in left:
+				var e: Array = ends[i]
+				if first:
+					var d0: float = (e[0] as Vector3).y
+					if d0 < best_d:
+						best_d = d0
+						best = i
+						best_rev = false
+				else:
+					var d1: float = cur.distance_to(e[0])
+					var d2: float = cur.distance_to(e[1])
+					if d1 < best_d:
+						best_d = d1
+						best = i
+						best_rev = false
+					if d2 < best_d:
+						best_d = d2
+						best = i
+						best_rev = true
+			first = false
+			left.erase(best)
+			seq.append([best, best_rev])
+			cur = (ends[best] as Array)[0 if best_rev else 1]
+		var path := []
+		for it in seq:
+			var sn: Dictionary = stitch_nodes[int(it[0])]
+			sn["group"] = _needle_groups.size()
+			sn["off"] = path.size()
+			sn["rev"] = bool(it[1])
+			var prs: Array = (sn["pairs"] as Array).duplicate()
+			if bool(it[1]):
+				prs.reverse()
+			path.append_array(prs)
+		var ty := String(stitch_nodes[int(seq[0][0])]["type"])
+		var nd := MeshInstance3D.new()
+		nd.mesh = needle_mesh
+		nd.visible = false
+		nd.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		var nm := StandardMaterial3D.new()
+		nm.albedo_color = Color("#d9dde3")
+		nm.metallic = 1.0
+		nm.roughness = 0.25
+		nm.emission_enabled = true
+		nm.emission = Stitching.colour(ty)
+		nm.emission_energy_multiplier = 3.0
+		nd.material_override = nm
+		stage.add_child(nd)
+		_needles.append(nd)
+		_needle_groups.append({"pairs": path, "type": ty, "needle": nd})
 
 
 func _update_stitches(cloth: PackedVector3Array, t: float) -> void:
-	var reveal: float = 1.0 if t < 2.0 else clampf(t - 2.0, 0.0, 1.0)
-	var show_st: bool = t >= 1.2 - 1e-6
+	var sewing := t >= 2.0 and t < 3.0
+	var prog: float = clampf((t - 2.0) / 0.85, 0.0, 1.0) if t >= 2.0 else 0.0
+	var show_st: bool = true       # the connections show from the start: between hovering panels they are the seams to work out
 	var sarr := PackedVector3Array()
 	var scol := PackedColorArray()
+	var tverts := PackedVector3Array()
+	var tcols := PackedColorArray()
+	# where each group's needle is on its path (pairs from the start); the join's seams are sewn up to there
+	var gk: Array = []
+	for gi in _needle_groups.size():
+		var g: Dictionary = _needle_groups[gi]
+		var path: Array = g["pairs"]
+		var delay: float = 0.1 * float(gi) / float(maxi(1, _needle_groups.size() - 1)) if _needle_groups.size() > 1 else 0.0
+		var u: float = clampf((prog - delay) / 0.9, 0.0, 1.0) if t >= 2.0 else 0.0
+		gk.append(u * float(maxi(path.size() - 1, 0)))
+		var nd := g["needle"] as MeshInstance3D
+		var flying: bool = sewing and u > 0.0 and u < 1.0 and path.size() > 1
+		nd.visible = flying
+		if flying:
+			var ty: String = g["type"]
+			var kpos: float = gk[gi]
+			var pose := Stitching.needle_pose(cloth, path, ty, kpos)
+			if not pose.is_empty():
+				var ax: Vector3 = pose["axis"]
+				var up := Vector3.UP if absf(ax.dot(Vector3.UP)) < 0.95 else Vector3.RIGHT
+				nd.global_transform = Transform3D(Basis.looking_at(-ax, up).scaled(Vector3.ONE * Stitching.NEEDLE_SCALE), pose["tip"])
+				Stitching.trail(cloth, path, ty, kpos, 14.0, 28, Stitching.colour(ty), tverts, tcols, cam.global_transform.basis.x)
 	for s in stitch_nodes:
 		var pairs: Array = s["pairs"]
-		var sc: Color = s["col"]
 		var m: int = pairs.size()
-		var count: int = 0 if not show_st else (m if t >= 2.0 else maxi(1, int(ceil(float(m) * reveal))))
-		for k in count:
-			sarr.append(cloth[int(pairs[k][0])])
-			sarr.append(cloth[int(pairs[k][1])])
-			scol.append(sc)
-			scol.append(sc)
+		var gi: int = int(s["group"])
+		var tc: Color = Stitching.colour(String(s["type"]))
+		var count: int = m
+		if t >= 2.0 and t < 3.0 and gi >= 0:
+			count = clampi(int(ceil(float(gk[gi]) + 1.0 - float(s["off"]))) if float(gk[gi]) > 0.0 else 0, 0, m)
+		# while the panels are still being arranged only a few connections per seam show: enough to see what joins what
+		var step: int = 1 if t >= 2.0 else maxi(1, m / 7)
+		var col: Color = tc if t >= 2.0 else (s["col"] as Color)
+		var rev: bool = bool(s["rev"])
+		for k in range(0, count, step):
+			var pr: Array = pairs[m - 1 - k] if rev else pairs[k]
+			sarr.append(cloth[int(pr[0])])
+			sarr.append(cloth[int(pr[1])])
+			scol.append(col)
+			scol.append(col)
 	_set_lines(_stitch_mesh, sarr, scol, show_st and not sarr.is_empty())
+	_set_lines(_trail_mesh, tverts, tcols, not tverts.is_empty())
 	var garr := PackedVector3Array()
 	var gcol := PackedColorArray()
 	var any_seg := false
-	if t >= 0.05:
+	if true:
 		for s in seam_nodes:
 			var seg: Array = s["seg"]
 			var gc: Color = s["col"]
@@ -4094,7 +4381,7 @@ func _build_timeline_bar() -> void:
 	for s in [0, 1, 2, 3]:
 		var b := Button.new()
 		b.text = "%d" % (s + 1)
-		b.tooltip_text = ["Cut pieces", "Move to body", "Sew seams", "Drape"][s]
+		b.tooltip_text = ["Arrange the panels: each hovers far from the body or close to it", "Bring every panel to its fitted place on the body", "Sew the seams", "Drape on the body"][s]
 		b.pressed.connect(func() -> void: _drain(); tl_t = float(s); playing = false; _sync_tl_ui(); _show_current())
 		bar.add_child(b)
 	tl_range = HSlider.new()
@@ -4139,7 +4426,7 @@ func _on_reset_to_start() -> void:
 func _sync_tl_ui() -> void:
 	if tl_play_btn != null:
 		_set_text_if_changed(tl_play_btn, "||" if playing else ">")
-	var names := ["1 Cut", "2 Move", "3 Sew", "4 Drape"]
+	var names := ["1 Arrange", "2 Fit", "3 Sew", "4 Drape"]
 	if tl_stage_label != null:
 		var extra := ""
 		if tl_t >= 3.0 and (frames.size() < target or target == 0):
@@ -4201,18 +4488,66 @@ func _shot(tag: String) -> void:
 	get_tree().quit()
 
 
-# Auto framing: cutting mat early, body later (browser V.focus/V.updateCamera).
-# The orbit target is the auto-framed point plus pan_off; yaw/pitch/zoom are the user's orbit.
+# The orbit camera. The focus (cam_views.gd) says what it looks at and how far back it must stand to fit that in the pane
+# (the pane's shape counts); yaw/pitch/zoom are the user's orbit on top of it and pan_off moves the target. Moving to a view
+# preset is animated: the focus and the orbit glide there.
 func _update_camera() -> void:
 	var h: float = float(meas.get("height", 1.68))
 	var s: float = _smooth(tl_t - 0.9)
-	cam_pivot.position = Vector3(0.0, lerpf(0.02, h * 0.52, s), lerpf(1.75, 0.0, s)) + pan_off
-	# negative pitch looks down (the camera sits above the pivot); the table view (s = 0) looks
-	# further down onto the cutting mat. The sign was flipped, which put the camera under the floor.
-	cam_pivot.rotation = Vector3(pitch - 0.45 * (1.0 - s), yaw, 0.0)
-	view_dist = lerpf(2.9, 3.3 * h / 1.68, s) * zoom
+	var asp := float(sub_view.size.x) / maxf(1.0, float(sub_view.size.y))
+	var foc := CamViews.focus(cam_focus, h, asp, _fov_goal, s)
+	var dt := 1.0 / maxf(1.0, float(Engine.physics_ticks_per_second))
+	if not _foc_ready:
+		_foc_ready = true
+		_foc_pivot = foc["p"]
+		_foc_dist = foc["d"]
+	else:
+		var kf := 1.0 - exp(-7.0 * dt)
+		_foc_pivot = _foc_pivot.lerp(foc["p"], kf)
+		_foc_dist = lerpf(_foc_dist, float(foc["d"]), kf)
+		if not shoot_busy:
+			cam.fov = lerpf(cam.fov, _fov_goal, kf)
+	if not _cam_goal.is_empty():
+		var kg := 1.0 - exp(-8.0 * dt)
+		yaw += (float(_cam_goal["yaw"]) - yaw) * kg
+		pitch += (float(_cam_goal["pitch"]) - pitch) * kg
+		zoom += (float(_cam_goal["zoom"]) - zoom) * kg
+		pan_off = pan_off.lerp(Vector3.ZERO, kg)
+		if absf(float(_cam_goal["yaw"]) - yaw) < 0.002 and absf(float(_cam_goal["pitch"]) - pitch) < 0.002 \
+				and absf(float(_cam_goal["zoom"]) - zoom) < 0.002 and pan_off.length() < 0.002:
+			yaw = float(_cam_goal["yaw"])
+			pitch = float(_cam_goal["pitch"])
+			zoom = float(_cam_goal["zoom"])
+			pan_off = Vector3.ZERO
+			_cam_goal = {}
+	cam_pivot.position = _foc_pivot + pan_off
+	# negative pitch looks down (the camera sits above the pivot); while the pieces are still laid out the auto view looks
+	# down a little more
+	cam_pivot.rotation = Vector3(pitch - (0.2 * (1.0 - s) if cam_focus == "auto" else 0.0), yaw, 0.0)
+	view_dist = _foc_dist * zoom
+	# the studio is a room: a wall stops the orbit camera. The focus follows the subject.
+	view_dist = minf(view_dist, Studio.max_orbit_dist(cam_pivot.position, cam_pivot.transform.basis.z))
+	Look.focus(view_dist)
 	cam.position = Vector3(0.0, 0.0, view_dist)
 	cam.look_at(cam_pivot.global_position)
+	Look.mirror_update()
+
+
+# Glides to a view preset (cam_views.gd VIEWS). The yaw takes the short way round.
+func _cam_goto(id: String) -> void:
+	var v := CamViews.by_id(id)
+	cam_focus = String(v["focus"])
+	_fov_goal = CamViews.fov_of(v, Look.CAM_FOV)
+	var target := float(v["yaw"])
+	_cam_goal = {"yaw": yaw + wrapf(target - yaw, -PI, PI), "pitch": float(v["pitch"]), "zoom": 1.0}
+	user_cam_until = Time.get_ticks_msec() + CAM_IDLE_MS * 4      # no auto-orbit straight after choosing a view
+
+
+# Orbit by a step (arrow keys): radians of yaw (positive: the camera goes round to the mannequin's left) and pitch.
+func _cam_step(dyaw: float, dpitch: float) -> void:
+	_touch_user_cam()
+	yaw += dyaw
+	pitch = clampf(pitch + dpitch, CAM_PITCH_MIN, CAM_PITCH_MAX)
 
 
 # ------------------------------------------------------------------ 3D view camera input
@@ -4258,6 +4593,23 @@ func _show_view_texture() -> void:
 	arrange_btn.toggled.connect(func(on: bool) -> void: _set_arrange_mode(on))
 	bar.add_child(arrange_btn)
 	bar.add_child(place_btn)
+	_stitch_btn = Button.new()
+	_stitch_btn.name = "StitchBtn"
+	_stitch_btn.text = "Stitch"
+	_stitch_btn.toggle_mode = true
+	_stitch_btn.focus_mode = Control.FOCUS_NONE
+	_stitch_btn.tooltip_text = "Sew in 3D (S): click an edge of a panel, then the edge to sew it to. Right-click an edge to unpick its seam."
+	_stitch_btn.toggled.connect(func(on: bool) -> void: _set_stitch_mode(on))
+	bar.add_child(_stitch_btn)
+	_stitch_style_opt = OptionButton.new()
+	_stitch_style_opt.name = "StitchStyle"
+	for ty in Stitching.TYPES:
+		_stitch_style_opt.add_item(String(Stitching.STYLE[ty]["label"]))
+	_stitch_style_opt.tooltip_text = "The stitch of the next seam: it sets the needle's motion and its thread's colour in the Sew stage"
+	_stitch_style_opt.focus_mode = Control.FOCUS_NONE
+	_stitch_style_opt.visible = false
+	_stitch_style_opt.item_selected.connect(func(i: int) -> void: stitch_style = String(Stitching.TYPES[i]))
+	bar.add_child(_stitch_style_opt)
 	var reset := Button.new()
 	reset.name = "ResetPlacementBtn"
 	reset.text = "Reset panel"
@@ -4271,9 +4623,297 @@ func _show_view_texture() -> void:
 	ph.modulate = Color(1, 1, 1, 0.7)
 	bar.add_child(ph)
 	view_pane.add_child(bar)
+	view_pane.add_child(_build_view_chips())
+	render_mode = RenderModeLib.new(self, _showcase, view_pane)
+
+
+# The camera views along the bottom of the 3D pane (cam_views.gd): the whole mannequin from every side, close to a part of
+# it, and across the room (the mirror, the cutting table). Choosing one glides the camera there.
+func _build_view_chips() -> Control:
+	var panel := PanelContainer.new()
+	panel.name = "ViewChips"
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.06, 0.07, 0.09, 0.72)
+	sb.set_corner_radius_all(8)
+	sb.content_margin_left = 8
+	sb.content_margin_right = 8
+	sb.content_margin_top = 4
+	sb.content_margin_bottom = 4
+	panel.add_theme_stylebox_override("panel", sb)
+	panel.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE, Control.PRESET_MODE_MINSIZE, 10)
+	panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	var flow := HFlowContainer.new()
+	flow.alignment = FlowContainer.ALIGNMENT_CENTER
+	flow.add_theme_constant_override("h_separation", 4)
+	flow.add_theme_constant_override("v_separation", 3)
+	panel.add_child(flow)
+	var groups := [["fit"], ["front", "q_l", "q_r", "left", "right", "back"], ["face", "torso", "legs"], ["atelier", "mirror", "table"]]
+	for gi in groups.size():
+		if gi > 0:
+			var sep := VSeparator.new()
+			sep.modulate = Color(1, 1, 1, 0.35)
+			flow.add_child(sep)
+		for id in groups[gi]:
+			var v := CamViews.by_id(String(id))
+			var b := Button.new()
+			b.name = "View_" + String(id)
+			b.text = String(v["label"])
+			b.tooltip_text = String(v["tip"])
+			b.focus_mode = Control.FOCUS_NONE
+			b.add_theme_font_size_override("font_size", 12)
+			var vid: String = id
+			b.pressed.connect(func() -> void: _cam_goto(vid))
+			flow.add_child(b)
+	flow.add_child(VSeparator.new())
+	var pl := Label.new()
+	pl.text = "Panels"
+	pl.add_theme_font_size_override("font_size", 12)
+	pl.modulate = Color(1, 1, 1, 0.6)
+	flow.add_child(pl)
+	for spec in [["All far", "Every panel hovers far from the body: room to see and work out the seams", 0], ["All close", "Every panel at its fitted place on the body: how the garment sits together", 1],
+			["Far / close", "Send the selected panel (click one in the 3D view or on the table) far, or bring it close", 2]]:
+		var stb := Button.new()
+		stb.name = "Stage_" + str(spec[2])
+		stb.text = String(spec[0])
+		stb.tooltip_text = String(spec[1])
+		stb.focus_mode = Control.FOCUS_NONE
+		stb.add_theme_font_size_override("font_size", 12)
+		var mode: int = spec[2]
+		stb.pressed.connect(func() -> void: _stage_button(mode))
+		flow.add_child(stb)
+	flow.add_child(VSeparator.new())
+	var gear := Button.new()
+	gear.name = "GearBtn"
+	gear.text = "Lamps"
+	gear.toggle_mode = true
+	gear.button_pressed = false
+	gear.focus_mode = Control.FOCUS_NONE
+	gear.add_theme_font_size_override("font_size", 12)
+	gear.tooltip_text = "Show the photographer's lamps and stands (key softbox, fill, rims). The light stays; only the fixtures are hidden."
+	gear.toggled.connect(func(on: bool) -> void: _show_gear(on))
+	flow.add_child(gear)
+	_show_gear(false)
+	return panel
+
+
+# 0: all far, 1: all close, 2: flip the selected panel (all panels when none is selected).
+func _stage_button(mode: int) -> void:
+	if mode == 2:
+		var sid := _sim_id_of(sel)
+		if sid == "":
+			var any_far := false
+			for q in meta.get("order", []):
+				if _blend_target(String(q)) < 0.5:
+					any_far = true
+			set_stage("", any_far)
+		else:
+			set_stage(sid, _blend_target(sid) < 0.5)
+	else:
+		set_stage("", mode == 1)
+
+
+# The softboxes, strips and the V-flat are lamps of a photo studio: hidden by default, the atelier is lit by the same lights.
+func _show_gear(on: bool) -> void:
+	if studio.is_empty():
+		return
+	for fx in studio["fixtures"]:
+		(fx as Node3D).visible = on
+
+
+# ---------------------------------------------------------------- the 3D stitch tool
+# Stitch mode (S over the 3D view): hover an edge of a panel (it lights up), click it, then click the edge to sew it to: that makes the
+# seam, exactly as the table's Sew tool does (the same undo, the same checks), with the stitch type chosen in the bar. A right click on
+# an edge unpicks the seam that ends there. Esc leaves.
+func _set_stitch_mode(on: bool) -> void:
+	stitch_mode = on
+	_stitch_a = null
+	_stitch_hover = null
+	if on:
+		if place_view.active or place_view.arrange:
+			place_view.set_active(false)
+		if place_btn != null:
+			place_btn.set_pressed_no_signal(false)
+		if arrange_btn != null:
+			arrange_btn.set_pressed_no_signal(false)
+	if _stitch_btn != null:
+		_stitch_btn.set_pressed_no_signal(on)
+	if _stitch_style_opt != null:
+		_stitch_style_opt.visible = on
+	var ph = view_pane.get_node_or_null("ViewBar/PlaceHint")
+	if ph != null and (on or not place_view.active):
+		(ph as Label).text = "Click an edge, then the edge to sew it to. Right-click an edge to unpick its seam. Esc leaves." if on else ""
+	_draw_stitch_highlight()
+
+
+var _stitch_btn: Button
+var _stitch_style_opt: OptionButton
+
+
+# The nearest panel edge to a pane point, within `max_px`: {pid (simulated panel), e (edge in its outline), d (px)} or {}. The edges are
+# the cloth vertex chains along each outline (meta chains), at their displayed positions.
+func _pick_edge(local: Vector2, max_px: float = 16.0) -> Dictionary:
+	if meta.is_empty() or not meta.has("chains") or cur_cloth.is_empty():
+		return {}
+	var k := place_view._k()
+	var best := {}
+	var best_d := max_px
+	for pid in (meta["chains"] as Dictionary).keys():
+		var chains: Array = meta["chains"][pid]
+		for e in chains.size():
+			var ch: Array = chains[e]
+			if ch.size() < 2:
+				continue
+			var prev := Vector2.ZERO
+			var have := false
+			for vi in ch:
+				var w: Vector3 = cur_cloth[int(vi)]
+				if cam.is_position_behind(w):
+					have = false
+					continue
+				var sp := cam.unproject_position(w) / k
+				if have:
+					var d := _seg_dist(local, prev, sp)
+					if d < best_d:
+						best_d = d
+						best = {"pid": String(pid), "e": e, "d": d}
+				prev = sp
+				have = true
+	return best
+
+
+static func _seg_dist(p: Vector2, a: Vector2, b: Vector2) -> float:
+	var ab := b - a
+	var l2 := ab.length_squared()
+	var t := 0.0 if l2 < 1.0e-9 else clampf((p - a).dot(ab) / l2, 0.0, 1.0)
+	return p.distance_to(a + ab * t)
+
+
+# A click in stitch mode. Returns true when it was used (the click then does not select a panel).
+func _stitch_click(local: Vector2) -> bool:
+	var h := _pick_edge(local)
+	if h.is_empty():
+		_stitch_a = null
+		_draw_stitch_highlight()
+		return true
+	if _stitch_a == null:
+		_stitch_a = [String(h["pid"]), int(h["e"])]
+		notify("Now click the edge to sew it to.")
+		_draw_stitch_highlight()
+		return true
+	var a: Array = _stitch_a
+	if String(a[0]) == String(h["pid"]) and int(a[1]) == int(h["e"]):
+		_stitch_a = null
+		_draw_stitch_highlight()
+		return true
+	_stitch_a = null
+	_make_seam(a, [String(h["pid"]), int(h["e"])])
+	_draw_stitch_highlight()
+	return true
+
+
+# Sews panel edge a to panel edge b (simulated ids). Seams join panels of one garment, and a panel with partial seams (its outline is
+# split in the simulation) must be sewn on the table, where its edges are numbered as drawn.
+func _make_seam(a: Array, b: Array) -> void:
+	var ua := Outfit.uid_of(String(a[0]))
+	var ub := Outfit.uid_of(String(b[0]))
+	if ua != ub:
+		notify("A seam joins panels of one garment: these belong to different garments.")
+		return
+	var gi := _index_of_uid(ua)
+	if gi < 0:
+		return
+	if gi != active:
+		_outfit_select(gi)
+	if active_locked():
+		notify("This garment is locked: unlock it in the Outfit tab to sew it.")
+		return
+	var pre := Outfit.prefix(ua)
+	var ta := String(a[0]).substr(pre.length())
+	var tb := String(b[0]).substr(pre.length())
+	for side in [[ta, a], [tb, b]]:
+		var tp = Table.piece_by_id(pieces, String(side[0]))
+		var sp = Table.piece_by_id(_sim_pieces, String((side[1] as Array)[0]))
+		if tp == null or sp == null or (tp["outline"] as Array).size() != (sp["outline"] as Array).size():
+			notify("Panel '%s' has partial seams: sew its edges on the table." % String(side[0]))
+			return
+	push_undo("Sew edges (3D)")
+	var replaced := Table.sew_edges(self, [ta, int(a[1])], [tb, int(b[1])])
+	var seam: Dictionary = (seams as Array)[(seams as Array).size() - 1]
+	seam["stitch"] = stitch_style
+	var ea = table._edge_info(ta, int(a[1]))
+	var eb = table._edge_info(tb, int(b[1]))
+	var msg: String = table.sew_text(ea["name"], int(a[1]), ea["len"], eb["name"], int(b[1]), eb["len"])
+	if replaced > 0:
+		msg += "  |  Sewing replaced %d seam(s) on those edges. Ctrl+Z restores them." % replaced
+	notify(msg)
+	changed("structure")
+
+
+# Right click in stitch mode: unpick the seam that ends at the edge under the pointer.
+func _stitch_unpick(local: Vector2) -> bool:
+	var h := _pick_edge(local)
+	if h.is_empty():
+		return false
+	var uid := Outfit.uid_of(String(h["pid"]))
+	var gi := _index_of_uid(uid)
+	if gi < 0 or active_locked() and gi == active:
+		return false
+	if gi != active:
+		_outfit_select(gi)
+	var tp := String(h["pid"]).substr(Outfit.prefix(uid).length())
+	var before: int = (seams as Array).size()
+	var keep := []
+	for sm in seams:
+		if (String(sm["a"][0]) == tp and int(sm["a"][1]) == int(h["e"])) or (String(sm["b"][0]) == tp and int(sm["b"][1]) == int(h["e"])):
+			continue
+		keep.append(sm)
+	if keep.size() == before:
+		notify("No seam ends at that edge.")
+		return true
+	push_undo("Unpick seam (3D)")
+	seams = keep
+	notify("Seam unpicked. Ctrl+Z restores it.")
+	changed("structure")
+	return true
+
+
+# Hover and picked edges of the stitch tool, drawn over everything.
+func _draw_stitch_highlight() -> void:
+	if _hl_mesh == null:
+		return
+	var arr := PackedVector3Array()
+	var col := PackedColorArray()
+	if stitch_mode and not cur_cloth.is_empty():
+		for spec in [[_stitch_hover, Color(1.0, 1.0, 0.55, 1.0)], [_stitch_a, Color(1.0, 0.62, 0.3, 1.0)]]:
+			if spec[0] == null:
+				continue
+			var pid: String
+			var e: int
+			if spec[0] is Dictionary:
+				pid = String(spec[0]["pid"])
+				e = int(spec[0]["e"])
+			else:
+				pid = String(spec[0][0])
+				e = int(spec[0][1])
+			if not (meta["chains"] as Dictionary).has(pid):
+				continue
+			var ch: Array = meta["chains"][pid][e]
+			var right := cam.global_transform.basis.x * 0.0018
+			for k in ch.size() - 1:
+				var p0: Vector3 = cur_cloth[int(ch[k])]
+				var p1: Vector3 = cur_cloth[int(ch[k + 1])]
+				for off in [-1.0, 0.0, 1.0]:
+					arr.append(p0 + right * off)
+					arr.append(p1 + right * off)
+					col.append(spec[1])
+					col.append(spec[1])
+	_set_lines(_hl_mesh, arr, col, not arr.is_empty())
 
 
 func _set_place_mode(on: bool) -> void:
+	if on and stitch_mode:
+		_set_stitch_mode(false)
 	if place_btn != null:
 		place_btn.set_pressed_no_signal(on)
 	if arrange_btn != null:
@@ -4285,6 +4925,8 @@ func _set_place_mode(on: bool) -> void:
 
 
 func _set_arrange_mode(on: bool) -> void:
+	if on and stitch_mode:
+		_set_stitch_mode(false)
 	if arrange_btn != null:
 		arrange_btn.set_pressed_no_signal(on)
 	if place_btn != null:
@@ -4310,7 +4952,39 @@ func _reset_place() -> void:
 	changed("structure")
 
 
+var _click_at := Vector2(-1000.0, -1000.0)
+
+
+# A click (a press and release without dragging) on a panel in the 3D view selects it: its garment becomes the active one, the piece
+# the table's selection. The far / close button then works on it, and so does the stitch tool.
+func _click_select(local: Vector2) -> void:
+	if place_view.active or meta.is_empty():
+		return
+	var hit := place_view.pick(local)
+	if hit.is_empty():
+		sel = null
+		changed("ui")
+		return
+	place_view._select(String(hit[0]))
+
+
 func _on_view_gui_input(e: InputEvent) -> void:
+	if e is InputEventMouseButton and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT and not (e as InputEventMouseButton).double_click:
+		var mb := e as InputEventMouseButton
+		if mb.pressed:
+			_click_at = mb.position
+		elif _click_at.x > -999.0 and _click_at.distance_to(mb.position) < 4.0 and not mb.shift_pressed and not (stitch_mode and _stitch_click(mb.position)):
+			_click_select(mb.position)
+	if stitch_mode:
+		if e is InputEventMouseMotion and (e as InputEventMouseMotion).button_mask == 0:
+			var hv := _pick_edge((e as InputEventMouseMotion).position)
+			if hv != (_stitch_hover if _stitch_hover != null else {}):
+				_stitch_hover = hv if not hv.is_empty() else null
+				_draw_stitch_highlight()
+		elif e is InputEventMouseButton and (e as InputEventMouseButton).pressed and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_RIGHT:
+			if _stitch_unpick((e as InputEventMouseButton).position):
+				view_pane.accept_event()
+				return
 	if place_view.input(e):
 		view_pane.accept_event()
 		return
@@ -4325,6 +4999,10 @@ func _input(e: InputEvent) -> void:
 
 
 func _unhandled_key_input(e: InputEvent) -> void:
+	if e is InputEventKey and e.pressed and e.keycode == KEY_ESCAPE and render_mode != null and render_mode.active():
+		render_mode.leave()
+		get_viewport().set_input_as_handled()
+		return
 	if e is InputEventKey and e.pressed and not e.echo and (e.ctrl_pressed or e.meta_pressed):
 		match e.keycode:
 			KEY_EQUAL, KEY_PLUS, KEY_KP_ADD:
@@ -4344,11 +5022,29 @@ func _unhandled_key_input(e: InputEvent) -> void:
 		_touch_user_cam()
 		_reset_view()
 		get_viewport().set_input_as_handled()
+	elif e.keycode == KEY_LEFT or e.keycode == KEY_RIGHT or e.keycode == KEY_UP or e.keycode == KEY_DOWN:
+		_cam_step((0.2 if e.keycode == KEY_LEFT else -0.2 if e.keycode == KEY_RIGHT else 0.0),
+			(-0.12 if e.keycode == KEY_UP else 0.12 if e.keycode == KEY_DOWN else 0.0))
+		get_viewport().set_input_as_handled()
+	elif e.keycode == KEY_PAGEUP or e.keycode == KEY_EQUAL or e.keycode == KEY_KP_ADD:
+		_touch_user_cam()
+		_zoom_by(0.85)
+		get_viewport().set_input_as_handled()
+	elif e.keycode == KEY_PAGEDOWN or e.keycode == KEY_MINUS or e.keycode == KEY_KP_SUBTRACT:
+		_touch_user_cam()
+		_zoom_by(1.18)
+		get_viewport().set_input_as_handled()
 	elif e.keycode == KEY_M:
 		_set_place_mode(not place_view.active)
 		get_viewport().set_input_as_handled()
 	elif e.keycode == KEY_A:
 		_set_arrange_mode(not place_view.arrange)
+		get_viewport().set_input_as_handled()
+	elif e.keycode == KEY_S:
+		_set_stitch_mode(not stitch_mode)
+		get_viewport().set_input_as_handled()
+	elif e.keycode == KEY_ESCAPE and stitch_mode:
+		_set_stitch_mode(false)
 		get_viewport().set_input_as_handled()
 	elif e.keycode == KEY_ESCAPE and place_view.active:
 		if place_view.arrange:
@@ -4404,6 +5100,7 @@ func _camera_input(e: InputEvent) -> bool:
 
 func _touch_user_cam() -> void:
 	user_cam_until = Time.get_ticks_msec() + CAM_IDLE_MS
+	_cam_goal = {}
 
 
 # Auto-orbit (demo): one step per frame, paused while the user is working the camera.
@@ -4426,6 +5123,9 @@ func _pan_by(rel: Vector2) -> void:
 
 
 func _reset_view() -> void:
+	cam_focus = "auto"
+	_fov_goal = Look.CAM_FOV
+	_cam_goal = {}
 	yaw = CAM_YAW0
 	pitch = CAM_PITCH0
 	zoom = 1.0

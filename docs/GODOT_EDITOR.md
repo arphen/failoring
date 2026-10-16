@@ -21,7 +21,9 @@ untracked, see `godot/.gitignore`).
   line says so and Ctrl+Z restores it), wheel zooms, V/S/F/Esc work. Space plays and pauses the timeline; the
   table pans with the middle or right mouse button only. Splitting a seamed edge or re-sewing an edge drops the
   seam it replaces: the status line warns and Ctrl+Z restores it.
-* 3D: orbit drag, wheel zoom; timeline scrub through cut, move, sew, drape.
+* 3D: orbit drag, wheel zoom, arrow keys orbit, Page Up/Down zoom, F / Home / double-click fit; the view chips along the bottom of the pane
+  glide to Front, 3/4, sides, Back, Face, Torso, Legs, the Atelier, the fitting Mirror and the cutting Table (docs/LOOK_NOTES.md). The window
+  starts 3D-first (the Atelier layout); Library, Table and Inspector are one click or Ctrl+1..4 away. Timeline scrub through cut, move, sew, drape.
 * Right tabs: Outfit, Piece, Seams, Body, Fabric, Pattern, Shoot.
 
 ## Garment library and outfit (`godot/library.gd`, `library_panel.gd`, `outfit.gd`)

@@ -11,6 +11,7 @@ const SkinMap = preload("res://skin.gd")
 const BodyGen = preload("res://body_gen.gd")
 const BodyView = preload("res://scripts/body_loader.gd")
 const PlanLoader = preload("res://plan_loader.gd")
+const Idle = preload("res://idle.gd")
 
 const SHOTS := [
 	# name, camera position, target, vertical fov
@@ -23,6 +24,22 @@ const SHOTS := [
 	["studio", Vector3(0.6, 2.6, 7.5), Vector3(0.0, 1.0, 0.0), 50.0],
 	["eye", Vector3(-0.03, 1.565, 0.32), Vector3(0.028, 1.555, 0.1), 9.0],
 	["forearm", Vector3(-0.55, 0.95, 0.55), Vector3(-0.25, 0.9, 0.05), 18.0],
+	# acceptance views: a 50 mm lens (27 degrees vertical on a 24 mm sensor) from the front and a three-quarter angle, and a wide
+	# shot of the room
+	["front", Vector3(0.0, 1.25, 4.2), Vector3(0.0, 0.9, 0.0), 27.0],
+	["q34", Vector3(-2.5, 1.3, 3.3), Vector3(0.0, 0.9, 0.0), 27.0],
+	["wide", Vector3(1.8, 1.9, 4.6), Vector3(0.0, 1.1, -1.0), 55.0],
+	["room_l", Vector3(2.5, 1.7, 1.0), Vector3(-3.0, 1.0, 0.0), 55.0],
+	["room_r", Vector3(-2.5, 1.7, 1.0), Vector3(3.5, 1.0, -0.5), 55.0],
+	["room_b", Vector3(0.5, 1.7, -4.4), Vector3(0.0, 1.0, 1.0), 55.0],
+	["plan", Vector3(0.0, 3.3, 1.2), Vector3(0.0, 0.0, -0.4), 100.0],
+	["eyes", Vector3(0.0, 1.56, 0.55), Vector3(0.0, 1.56, 0.0), 11.0],
+	["desk", Vector3(2.4, 1.5, 3.3), Vector3(4.2, 0.85, 2.7), 40.0],
+	["forms", Vector3(1.7, 1.5, -0.3), Vector3(4.05, 1.1, -1.6), 40.0],
+	["tea", Vector3(-1.9, 1.4, -2.2), Vector3(-3.9, 0.7, -4.0), 38.0],
+	["mirror", Vector3(-0.6, 1.4, 0.6), Vector3(-3.35, 1.0, -1.55), 38.0],
+	["mouth", Vector3(0.0, 1.512, 0.42), Vector3(0.0, 1.512, 0.0), 14.0],
+	["mouth34", Vector3(-0.2, 1.512, 0.36), Vector3(0.0, 1.512, 0.0), 14.0],
 ]
 
 var _out := "."
@@ -59,7 +76,10 @@ func _init() -> void:
 	_cam = Camera3D.new()
 	Look.camera(_cam)
 	stage.add_child(_cam)
+	Look.reflection_probe(stage)
+	Look.post(_vp)
 
+	Look.mirror_setup(stage, _cam, _vp.world_3d, we.environment)
 	var M := BodyGen.load_data(PlanLoader.load_json("res://assets/body_data.json"))
 	var meas: Dictionary = BodyGen.DEFAULT_MEAS.duplicate()
 	if BodyGen.PRESETS.has(preset):
@@ -73,13 +93,55 @@ func _init() -> void:
 		v[i] = Vector3(pos[3 * i], pos[3 * i + 1], pos[3 * i + 2])
 	var body := BodyView.new()
 	body.material_override = Look.body_material()
+	body.layers = 2                                   # not in the reflection probe's capture
+	body.gi_mode = GeometryInstance3D.GI_MODE_DYNAMIC
 	stage.add_child(body)
-	body.use_custom(v, M["tris"])
-	body.set_skin_data(SkinMap.build(M))
+	# the body's own _ready (it loads the baked walk of its preset) runs when the tree starts, after this: set the generated
+	# standing body up after it, or the mannequin walks
+	body.ready.connect(func() -> void:
+		body.walking = false
+		body.use_custom(v, M["tris"])
+		body.set_skin_data(SkinMap.build(M))
+		body.eyes.set_iris(eye_key)
+		# FL_IDLE=0 leaves the mannequin still; FL_IDLE_T=12 lets the idle layer run for 12 s before the shots; FL_IDLE_SEED=n
+		if OS.get_environment("FL_IDLE") != "0":
+			var il := Idle.new(int(OS.get_environment("FL_IDLE_SEED")) if OS.has_environment("FL_IDLE_SEED") else 7)
+			for _i in int(float(OS.get_environment("FL_IDLE_T")) * 30.0) if OS.has_environment("FL_IDLE_T") else 0:
+				il.tick(1.0 / 30.0)
+			if OS.has_environment("FL_BLINK"):
+				il.hold_blink = float(OS.get_environment("FL_BLINK"))
+			if OS.has_environment("FL_IDLE_GAIN"):
+				il.intensity = float(OS.get_environment("FL_IDLE_GAIN"))
+			body.set_idle(il, stand["joints"], M["bones"])
+			if OS.has_environment("FL_IDLE_FREEZE"):                         # hold that moment: no further time passes
+				il.intensity = il.intensity
+		, CONNECT_ONE_SHOT)
 	Look.set_skin_tone(body.material_override, skin_key)
 	Look.set_hair(body.material_override, hair_key)
-	body.eyes.set_iris(eye_key)
 	Look.apply_quality(qual, we.environment, st["key"], _vp, body.material_override)
+	# FL_FX=nogi,nossr,nossil,nossao,noglow,nodof,notaa,noprobe,nosss turns those effects off, for finding which one draws an artifact
+	if OS.has_environment("FL_FX"):
+		var fx := OS.get_environment("FL_FX").split(",")
+		var e := we.environment
+		if fx.has("nogi"): e.sdfgi_enabled = false
+		if fx.has("nossr"): e.ssr_enabled = false
+		if fx.has("nossil"): e.ssil_enabled = false
+		if fx.has("nossao"): e.ssao_enabled = false
+		if fx.has("noglow"): e.glow_enabled = false
+		if fx.has("nodof"): _cam.attributes = null
+		if fx.has("notaa"): _vp.use_taa = false
+		if fx.has("noprobe"): Look._probe.visible = false
+		if fx.has("noadj"): e.adjustment_enabled = false
+		if fx.has("sss"): (body.material_override as ShaderMaterial).set_shader_parameter("sss", 0.35)
+		if fx.has("nosss"): (body.material_override as ShaderMaterial).set_shader_parameter("sss", 0.0)
+		if fx.has("exp"):
+			e.tonemap_exposure = float(OS.get_environment("FL_EXP"))
+	# FL_ENV="sdfgi_use_occlusion=false;sdfgi_cascades=4" sets Environment properties (numbers and true/false)
+	if OS.has_environment("FL_ENV"):
+		for kv in OS.get_environment("FL_ENV").split(";", false):
+			var pv := kv.split("=")
+			var val: Variant = pv[1] == "true" if pv[1] in ["true", "false"] else (int(pv[1]) if pv[1].is_valid_int() else float(pv[1]))
+			we.environment.set(pv[0], val)
 	if OS.has_environment("FL_SKIN_DEBUG"):
 		(body.material_override as ShaderMaterial).set_shader_parameter("debug_view", int(OS.get_environment("FL_SKIN_DEBUG")))
 	# FL_SKIN_PARAMS="name=v;name=x,y,z" overrides skin shader uniforms (floats or vec3)
@@ -119,6 +181,9 @@ func _init() -> void:
 				mi.position = Vector3(0.75, 0.4, 0.15)
 			mi.material_override = StandardMaterial3D.new() if OS.get_environment("FL_SPHERE") == "std" else body.material_override
 			stage.add_child(mi)
+	if OS.has_environment("FL_RIMSHADOW"):    # FL_RIMSHADOW=0: only the key casts a shadow (the old set-up)
+		for id in ["rim_l", "rim_r", "top"]:
+			(st["lights"][id] as Light3D).shadow_enabled = OS.get_environment("FL_RIMSHADOW") == "1"
 	if OS.has_environment("FL_NOSHADOW"):
 		for id in (st["lights"] as Dictionary).keys():
 			(st["lights"][id] as Light3D).shadow_enabled = false
@@ -139,8 +204,10 @@ func _tick() -> void:
 		_cam.position = s[1]
 		_cam.fov = float(s[3])
 		_cam.look_at(s[2])
+		Look.mirror_update()
+		Look.focus(_cam.position.distance_to(s[2]))
 	# a few frames for the sky radiance, shadows and TAA to settle
-	if _frames >= 8:
+	if _frames >= 40:
 		var img := _vp.get_texture().get_image()
 		var path := "%s/look_%s.png" % [_out, s[0]]
 		img.save_png(path)

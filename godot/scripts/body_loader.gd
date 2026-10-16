@@ -32,6 +32,18 @@ var _skin: Dictionary = {}
 var _drawn_idx := PackedInt32Array()   # the drawn mesh's triangles (skin "drawn"), winding flipped like _draw_idx
 var eyes: Node3D = null
 
+# The idle layer (idle.gd): breathing, weight shifts, micro motion, blinks and gaze. The mesh is not rebuilt for it: the skin
+# shader skins it again with one small transform per bone (a 24 x 3 float texture) and displaces the chest for the breath.
+var idle: RefCounted = null          # FailoringIdle; null: the body is still
+var idle_pose_on := true             # the host turns the bone motion off while the drawn pose is not a standing one (a walk)
+var idle_paused := false             # a render steps the idle layer itself, once per frame (render_mode.gd)
+var breath_gain := 1.0               # the host lowers it when garments are on (the cloth does not follow the chest)
+var _idle_img: Image
+var _idle_tex: ImageTexture
+var _idle_mat: ShaderMaterial
+var _rig_joints: Dictionary = {}     # joint name -> position in the standing pose, for the bones' pivots
+var _rig_bones: Array = []
+
 
 func _ready() -> void:
 	extra_cull_margin = 0.5          # the posed mesh moves; the AABB of the first surface does not follow it
@@ -97,7 +109,55 @@ func use_custom(verts: PackedVector3Array, tris: PackedInt32Array) -> void:
 	_build(standing)
 
 
+# The idle layer needs the standing pose's joint positions and the rig's bones (BodyGen.stand()["joints"], M["bones"]).
+func set_idle(idle_layer: RefCounted, joints: Dictionary = {}, bones: Array = []) -> void:
+	idle = idle_layer
+	if not joints.is_empty():
+		_rig_joints = joints
+	if not bones.is_empty():
+		_rig_bones = bones
+	if _idle_img == null:
+		_idle_img = Image.create(24, 3, false, Image.FORMAT_RGBAF)
+		_idle_tex = ImageTexture.create_from_image(_idle_img)
+		var m := material_override as ShaderMaterial
+		if m != null:
+			m.set_shader_parameter("idle_xf", _idle_tex)
+
+
+func _idle_step(delta: float) -> void:
+	var m := material_override as ShaderMaterial
+	if m == null:
+		return
+	if _idle_mat != m:
+		_idle_mat = m
+		m.set_shader_parameter("idle_xf", _idle_tex)
+	idle.tick(0.0 if idle_paused else delta)
+	var rig_ok: bool = not _rig_bones.is_empty() and not _rig_joints.is_empty() and not _skin.is_empty() \
+			and (_skin["drawn"] as Dictionary)["custom1"].size() > 0 and _rig_bones.size() <= 24
+	var head := Transform3D.IDENTITY
+	if idle.enabled and idle_pose_on and rig_ok:
+		var xf: Array = idle.solve(_rig_joints, _rig_bones)
+		for k in xf.size():
+			var t: Transform3D = xf[k]
+			var bs := t.basis
+			_idle_img.set_pixel(k, 0, Color(bs.x.x, bs.y.x, bs.z.x, t.origin.x))
+			_idle_img.set_pixel(k, 1, Color(bs.x.y, bs.y.y, bs.z.y, t.origin.y))
+			_idle_img.set_pixel(k, 2, Color(bs.x.z, bs.y.z, bs.z.z, t.origin.z))
+			if (_rig_bones[k] as Dictionary)["joint"] == "head":
+				head = t
+		_idle_tex.update(_idle_img)
+		m.set_shader_parameter("idle_on", 1.0)
+	else:
+		m.set_shader_parameter("idle_on", 0.0)
+	m.set_shader_parameter("breath", idle.breath * breath_gain if idle.enabled else 0.0)
+	m.set_shader_parameter("blink", idle.blink)
+	if eyes != null:
+		eyes.idle(idle.gaze, head)
+
+
 func _process(delta: float) -> void:
+	if idle != null:
+		_idle_step(delta)
 	if not walking or frames.is_empty():
 		return
 	_t += delta * speed
@@ -224,6 +284,14 @@ func _build(verts: PackedVector3Array) -> void:
 		arrays[Mesh.ARRAY_COLOR] = d["color"]
 		arrays[Mesh.ARRAY_CUSTOM0] = d["custom0"]
 		flags = Mesh.ARRAY_CUSTOM_RGBA_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM0_SHIFT
+		if (d["custom1"] as PackedFloat32Array).size() == 4 * src.size():
+			# the rig (bones and weights) and the breathing weights, for the idle layer in the vertex shader
+			arrays[Mesh.ARRAY_CUSTOM1] = d["custom1"]
+			arrays[Mesh.ARRAY_CUSTOM2] = d["custom2"]
+			arrays[Mesh.ARRAY_CUSTOM3] = d["custom3"]
+			flags |= Mesh.ARRAY_CUSTOM_RGBA_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM1_SHIFT
+			flags |= Mesh.ARRAY_CUSTOM_RGBA_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM2_SHIFT
+			flags |= Mesh.ARRAY_CUSTOM_RGBA_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM3_SHIFT
 	else:
 		arrays[Mesh.ARRAY_VERTEX] = verts
 		arrays[Mesh.ARRAY_NORMAL] = n

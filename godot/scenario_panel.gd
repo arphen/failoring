@@ -43,6 +43,7 @@ var _view := false                  # the showcase owns the 3D view
 var _playing := false
 var _t := 0.0                       # playhead, scenario seconds (negative during the lead-in)
 var _prop_nodes: Array = []
+var _st := {}                       # the last poll of the render in flight
 
 
 func _init(ed: Node, vb: VBoxContainer) -> void:
@@ -206,6 +207,7 @@ func _poll_render() -> void:
 	if _pre == null:
 		return
 	var st := _pre.poll()
+	_st = st
 	_bar.value = float(st["progress"]) * 100.0
 	if not bool(st["done"]):
 		_status.text = "Rendering... %d%% (%s, %.0f s)" % [int(float(st["progress"]) * 100.0), String(st["stage"]), float(st["seconds"])]
@@ -409,3 +411,94 @@ func shutdown() -> void:
 	if _view:
 		_clear_props()
 		_view = false
+
+
+# ---------------------------------------------------------------- the API of render mode (render_mode.gd)
+func api_scenarios() -> Array:
+	var out := []
+	if _lib.is_empty():
+		return out
+	for id in _lib["order"]:
+		var sc: Dictionary = _lib["by_id"][id]
+		out.append({"id": String(id), "name": String(sc["name"]), "duration": float(sc["duration"]), "loop": bool(sc["loop"])})
+	return out
+
+
+# Starts the cloth simulation of a scenario for the garment on the mannequin, or finds it cached. {state: "cached" | "started" |
+# "error", key, message}.
+func api_begin(id: String, qkey: String) -> Dictionary:
+	if _lib.is_empty():
+		return {"state": "error", "message": "The scenario library (assets/scenarios.json) is missing."}
+	if _pre != null:
+		return {"state": "error", "message": "A render is already running."}
+	_scen_opt.select(maxi(_lib["order"].find(id), 0))
+	_qual_opt.select(maxi(QUALITY_KEYS.find(qkey), 0))
+	var inputs: Dictionary = _ed.showcase_inputs(qkey)
+	if inputs.is_empty():
+		return {"state": "error", "message": "There is no garment on the mannequin to render. Add one from the Library."}
+	var sc := _scenario()
+	var key := ShowcasePrerender.key_for(inputs, sc)
+	if _mem.has(key) or FileAccess.file_exists(ShowcasePrerender.file_for(key)):
+		if not _mem.has(key):
+			var r := ShowcasePrerender.load(ShowcasePrerender.file_for(key))
+			if not r.is_empty():
+				_mem[key] = r
+		if _mem.has(key):
+			return {"state": "cached", "key": key, "message": ""}
+	_on_render()
+	return {"state": "started" if _pre != null else "error", "key": key, "message": _status.text}
+
+
+# The render in flight: {busy, progress 0..1, stage, seconds, status}.
+func api_status() -> Dictionary:
+	return {"busy": _pre != null, "progress": float(_st.get("progress", 0.0)), "stage": String(_st.get("stage", "")),
+		"seconds": float(_st.get("seconds", 0.0)), "status": _status.text if _status != null else ""}
+
+
+func api_cancel() -> void:
+	_on_cancel()
+
+
+# True when this scenario's simulation is rendered for the garment on the mannequin.
+func api_ready(id: String, qkey: String) -> bool:
+	var inputs: Dictionary = _ed.showcase_inputs(qkey)
+	if inputs.is_empty() or _lib.is_empty():
+		return false
+	var key := ShowcasePrerender.key_for(inputs, _lib["by_id"][id])
+	return _mem.has(key)
+
+
+# Puts the simulated frames on the 3D view, paused at the lead-in.
+func api_enter(id: String, qkey: String) -> bool:
+	_scen_opt.select(maxi(_lib["order"].find(id), 0))
+	_qual_opt.select(maxi(QUALITY_KEYS.find(qkey), 0))
+	_list.deselect_all()
+	_on_play()
+	_set_playing(false)
+	return _view
+
+
+func api_show(t: float) -> void:
+	if _view:
+		_t = t
+		_show_frame()
+
+
+func api_duration() -> float:
+	return float(_cur_scenario.get("duration", 0.0))
+
+
+func api_in_view() -> bool:
+	return _view
+
+
+func api_exit() -> void:
+	_exit_view()
+
+
+# The cache key of a scenario's simulation for the garment on the mannequin ("" without a garment).
+func api_key(id: String, qkey: String) -> String:
+	var inputs: Dictionary = _ed.showcase_inputs(qkey)
+	if inputs.is_empty() or _lib.is_empty():
+		return ""
+	return ShowcasePrerender.key_for(inputs, _lib["by_id"][id])

@@ -34,14 +34,26 @@ void fragment() {
 	vec3 col = mix(sclera, sclera * vec3(1.0, 0.82, 0.78), smoothstep(0.55, 0.95, rr));
 	float vein = n2(vec2(ang * 60.0, rr * 9.0)) * n2(vec2(ang * 23.0, rr * 30.0));
 	col = mix(col, vec3(0.75, 0.35, 0.33), smoothstep(0.35, 0.6, vein) * smoothstep(0.62, 0.9, rr) * 0.35);
+	// the iris sits behind the cornea: look through it (a ray refracted at the cornea's surface, index 1.376, to the iris
+	// plane 0.5 radii behind the apex), so the iris shifts as the eye is seen from the side: depth, not a sticker
+	vec2 ip = d.xy;
+	if (d.z > 0.0 && rr < iris_r + 0.08) {
+		vec3 vm = normalize((inverse(MODEL_MATRIX) * (INV_VIEW_MATRIX * vec4(VIEW, 0.0))).xyz);
+		vec3 cn = normalize(v_loc - vec3(0.0, 0.0, 0.31));
+		vec3 rf = refract(-vm, cn, 1.0 / 1.376);
+		float tt = max(v_loc.z - 0.52, 0.0) / max(-rf.z, 0.25);
+		ip = (v_loc + rf * tt).xy;
+	}
+	float rri = length(ip);
+	float angi = atan(ip.y, ip.x) / 6.2831853 + 0.5;
 	// iris: radial fibres, a lighter collarette, a dark limbal ring at the edge
-	float fib = n2(vec2(ang * 120.0, rr * 6.0)) * 0.6 + n2(vec2(ang * 47.0, rr * 18.0)) * 0.4;
-	vec3 ir = mix(iris_in, iris_out, smoothstep(pupil_r + 0.03, iris_r * 0.75, rr));
+	float fib = n2(vec2(angi * 120.0, rri * 6.0)) * 0.6 + n2(vec2(angi * 47.0, rri * 18.0)) * 0.4;
+	vec3 ir = mix(iris_in, iris_out, smoothstep(pupil_r + 0.03, iris_r * 0.75, rri));
 	ir *= 0.65 + 0.7 * fib;
-	ir *= 1.0 - 0.75 * smoothstep(iris_r - 0.09, iris_r, rr);
-	float in_iris = 1.0 - smoothstep(iris_r - 0.01, iris_r + 0.015, rr);
+	ir *= 1.0 - 0.75 * smoothstep(iris_r - 0.09, iris_r, rri);
+	float in_iris = 1.0 - smoothstep(iris_r - 0.01, iris_r + 0.015, rr);          // the limbus itself stays where the cornea meets the eye
 	col = mix(col, ir, in_iris);
-	col = mix(col, vec3(0.008), 1.0 - smoothstep(pupil_r - 0.01, pupil_r + 0.01, rr));
+	col = mix(col, vec3(0.008), (1.0 - smoothstep(pupil_r - 0.01, pupil_r + 0.01, rri)) * in_iris);
 	// the upper lid shades the top of the eye, and the corners are in the socket's shadow
 	float shade = 1.0 - 0.55 * smoothstep(0.0, 0.5, d.y) - 0.3 * smoothstep(0.55, 0.85, abs(d.x));
 	ALBEDO = col * shade;

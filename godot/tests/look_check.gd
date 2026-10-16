@@ -150,7 +150,8 @@ func _init() -> void:
 	_check(is_equal_approx(float(m.get_shader_parameter("hair")), 1.0), "hair on")
 	_check(Eyes.IRIS.has(Look.EYE_DEFAULT) and Look.SKIN_TONES.has(Look.SKIN_DEFAULT) and Look.HAIR_COLORS.has(Look.HAIR_DEFAULT), "defaults exist")
 
-	# the studio: one shadowed key, every lamp aimed at the subject, a fixture per lamp, a sky with every lamp in it
+	# the studio: every lamp aimed at the subject and shadowed from where it stands (the fill is a bounce card), a fixture
+	# per lamp, a sky with every lamp in it, a room round a platform whose top is the solver's floor
 	var stage := Node3D.new()
 	root.add_child(stage)
 	var st: Dictionary = Studio.build(stage)
@@ -158,6 +159,7 @@ func _init() -> void:
 	_check(lights.size() == Studio.LAMPS.size() and st["key"] == lights["key"], "%d lamps, key first" % lights.size())
 	var aimed := true
 	var shadowed := 0
+	var away := true
 	for lamp in Studio.LAMPS:
 		var l: SpotLight3D = lights[lamp["id"]]
 		var to: Vector3 = (lamp["aim"] as Vector3) - l.position
@@ -165,17 +167,48 @@ func _init() -> void:
 			aimed = false
 		if l.shadow_enabled:
 			shadowed += 1
+			# the shadow runs along the lamp's axis: on the floor it points from the lamp across the subject
+			var ax := -l.transform.basis.z
+			if Vector2(l.position.x, l.position.z).dot(Vector2(ax.x, ax.z)) >= 0.0:
+				away = false
 	_check(aimed, "every lamp points at its aim")
-	_check(shadowed == 1 and (lights["key"] as Light3D).shadow_enabled, "only the key casts shadows")
+	_check(shadowed == Studio.LAMPS.size() - 1 and not (lights["fill"] as Light3D).shadow_enabled, "every lamp casts a shadow except the fill's bounce card")
+	_check(away, "every shadow falls away from its lamp, across the subject")
 	_check((st["fixtures"] as Array).size() == Studio.LAMPS.size(), "a visible fixture per lamp")
 	var sky_m := (st["sky"] as Sky).sky_material as ShaderMaterial
 	_check(int(sky_m.get_shader_parameter("lamp_n")) == Studio.LAMPS.size(), "the sky holds every lamp")
-	var cove: MeshInstance3D = (st["root"] as Node3D).get_node("Cove")
-	var aabb := cove.get_aabb()
-	_check(aabb.size.x > 2.0 * Studio.COVE_R - 0.1 and aabb.position.y < 0.0 and aabb.end.y > Studio.COVE_H - 0.1, "the cove surrounds the stage")
-	# the floor of the cove faces up (inside of the studio)
-	var arrc := (cove.mesh as ArrayMesh).surface_get_arrays(0)
-	_check((arrc[Mesh.ARRAY_NORMAL] as PackedVector3Array)[0].y > 0.99, "the cove's floor faces up")
+	var sroot: Node3D = st["root"]
+	for nm in ["Room", "Platform", "Furniture"]:
+		_check(sroot.has_node(nm), "the studio has its " + nm)
+	var plat_top: MeshInstance3D = sroot.get_node("Platform").get_child(1)     # the felt top of the platform
+	_check(absf(plat_top.get_aabb().end.y) < 1.0e-4 and absf(plat_top.get_aabb().size.x - Studio.PODIUM.x) < 1.0e-3, "the platform's top is at y = 0 (the solver's floor)")
+	_check(is_equal_approx(Studio.FLOOR_Y, -Studio.PODIUM_H) and Studio.PODIUM_H > 0.14 and Studio.PODIUM_H < 0.21, "the platform stands 15-20 cm above the floor")
+	_check((st["practicals"] as Array).size() >= 6, "warm pendants and cool window light: %d practical lights" % (st["practicals"] as Array).size())
+	var fit: Dictionary = Studio.fit_camera(Vector3(0.0, 1.0, 6.8), Vector3(0.0, 0.86, 0.0), 18.0)
+	_check((fit["pos"] as Vector3).z < Studio.ROOM_Z and float(fit["fov"]) > 18.0, "a camera outside the room is pulled in and the lens widened")
+	var fit2: Dictionary = Studio.fit_camera(Vector3(0.0, 1.0, 3.0), Vector3(0.0, 0.86, 0.0), 18.0)
+	_check((fit2["pos"] as Vector3).is_equal_approx(Vector3(0.0, 1.0, 3.0)) and is_equal_approx(float(fit2["fov"]), 18.0), "a camera inside the room is left alone")
+	_check(absf(Look.CAM_FOV - rad_to_deg(2.0 * atan(12.0 / 50.0))) < 0.1, "the camera is a 50 mm lens")
+	# the atelier: lived-in props, the mirror with three planar-reflection panels, camera views that all fit the room
+	for nm in ["Furniture"]:
+		var fur: Node3D = sroot.get_node(nm)
+		_check(fur.get_child_count() >= 18, "the atelier holds %d props" % fur.get_child_count())
+	var glass := sroot.find_children("Glass*", "MeshInstance3D", true, false)
+	_check(glass.size() == 3, "the fitting mirror has three glass panels")
+	var CamViews = load("res://cam_views.gd")
+	var ids := []
+	for vw in CamViews.VIEWS:
+		ids.append(vw["id"])
+		var fo: Dictionary = CamViews.focus(String(vw["focus"]), 1.68, 1.6, float(CamViews.fov_of(vw, Look.CAM_FOV)), 1.0)
+		var dir := Vector3(sin(float(vw["yaw"])), 0.0, cos(float(vw["yaw"])))
+		_check(float(fo["d"]) > 0.3 and float(fo["d"]) < 9.0 and (fo["p"] as Vector3).y > 0.0, "view %s: focus %s at %.1f m" % [vw["id"], vw["focus"], float(fo["d"])])
+	_check(ids.has("fit") and ids.has("back") and ids.has("mirror") and ids.has("atelier"), "views include fit, back, mirror, atelier")
+	# fitting a 1.8 m figure: the 50 mm lens must stand far enough back to see it whole in a landscape pane and in a tall one
+	var d_land: float = CamViews.fit(1.8, 1.0, 1.8, Look.CAM_FOV)
+	var d_tall: float = CamViews.fit(1.8, 1.0, 0.5, Look.CAM_FOV)
+	_check(d_land > 3.5 and d_tall > d_land, "the fit distance follows the pane: %.1f m wide, %.1f m narrow" % [d_land, d_tall])
+	for lv in Look.QUALITY_LEVELS:
+		_check((Look.QUALITY[lv] as Dictionary).has_all(["gi", "ssil", "ssr", "dof", "probe"]), "quality %s sets the room's effects" % lv)
 
 	body.queue_free()
 	stage.queue_free()
