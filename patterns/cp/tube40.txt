@@ -1,0 +1,15 @@
+# Test tube - 40-stitch circumference from a 20-chain oval base, 12 sc rounds.
+# Expected: base round 40 sc; 11 rounds of 40 sc; round join ss each round.
+20ch
+sk,18sc,3sc@[0,0],18sc,sc@[@],ss@[%,0]
+40sc,ss@[%,0]
+40sc,ss@[%,0]
+40sc,ss@[%,0]
+40sc,ss@[%,0]
+40sc,ss@[%,0]
+40sc,ss@[%,0]
+40sc,ss@[%,0]
+40sc,ss@[%,0]
+40sc,ss@[%,0]
+40sc,ss@[%,0]
+40sc,ss@[%,0]

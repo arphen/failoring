@@ -17,8 +17,9 @@ anything not checked is marked **not verified**.
 | LLVM libc++, libc++abi, compiler-rt builtins | linked into `wasm/failoring.wasm`, which is embedded in `failoring.html` | llvm-project `llvmorg-18.1.2` (producer string: clang 18.1.2-wasi-sdk) | Apache-2.0 WITH LLVM-exception | `LICENSES/llvm-libcxx-*`, `llvm-libcxxabi-*`, `llvm-compiler-rt-*` |
 | wasi-libc, with musl, cloudlibc and dlmalloc parts | linked into `wasm/failoring.wasm` | WebAssembly/wasi-libc @ `b9ef79d7dbd47c6c5bafdae760823467c2f60b70` (the commit pinned by wasi-sdk-24) | multi-licensed: wasi-libc's own code Apache-2.0 WITH LLVM-exception; musl MIT; cloudlibc BSD-2-Clause; dlmalloc CC0 | `LICENSES/wasi-libc-LICENSE.txt`, `wasi-libc-LICENSE-APACHE-LLVM.txt`, `musl-COPYRIGHT.txt`, `cloudlibc-BSD-2-Clause-LICENSE.txt`, `CC0-1.0-makehuman-LICENSE.ASSETS.txt` (CC0 1.0 text) |
 | wasi-sdk 24 (build toolchain) | not shipped; used by `tools/build_wasm.sh` | WebAssembly/wasi-sdk tag `wasi-sdk-24` | Apache-2.0 WITH LLVM-exception | `LICENSES/wasi-sdk-LICENSE.txt` |
+| CrochetPARADE | not shipped and not committed; cloned into the git-ignored `third_party/crochetparade/` and used by `tools/crochet/cp_export.mjs` (T4.0) | stassev/CrochetPARADE @ `06e987b13ccfc94cfdfcebc1fe4664d37d2c6687` (GitHub; the Codeberg head `be11c8b0a37f2fdeaca39bd2c1cd2b0cc7fc281d` is older) | GPL-3.0-or-later | `LICENSES/crochetparade-GPL-3.0.txt` |
 
-Development tools that are not shipped (Playwright, numpy, matplotlib, bezier-js) are listed in section 7.
+Development tools that are not shipped (Playwright, numpy, matplotlib, bezier-js) are listed in section 7; CrochetPARADE (used by the crochet tools, not shipped) is section 8.
 
 ## 1. MakeHuman community assets (CC0 1.0)
 
@@ -190,6 +191,28 @@ These are used by the tools and are not part of the distributed app.
 * **bezier-js** 6.1.4 (MIT, `Copyright (c) 2023 Pomax`): loaded by `tools/freesewing/loader.mjs` from a local clone. It is
   a dependency of FreeSewing's drafting code and is not shipped.
 
+## 8. CrochetPARADE (GPL-3.0-or-later, not shipped)
+
+* **Upstream:** https://github.com/stassev/CrochetPARADE commit
+  `06e987b13ccfc94cfdfcebc1fe4664d37d2c6687` (committer date 2026-05-26). The README names Codeberg
+  as the primary home; the Codeberg head recorded during the T4.0 spike was
+  `be11c8b0a37f2fdeaca39bd2c1cd2b0cc7fc281d` (2026-03-13), older than the GitHub commit, and GitHub
+  was used. 29 MB checkout: the JavaScript parser (`parse64.js`), the Emscripten layout
+  (`graph64.js`, `graph64.wasm`), C++ sources, and the user manual (`Manual.md`).
+* **Licence:** GPL-3.0-or-later. Every source header says "either version 3 of the License, or (at
+  your option) any later version"; the root `LICENSE` is the GPLv3 text (232 lines), copied
+  verbatim to `LICENSES/crochetparade-GPL-3.0.txt`. GPLv3 code may be combined into Failoring's
+  AGPL-3.0 work. The user manual is CC BY-NC-SA 4.0 and is **not** copied anywhere in this repo;
+  Failoring describes the grammar in its own words and links to the manual.
+* **Used:** not committed (`third_party/` is git-ignored) and not linked into any build.
+  `tools/crochet/cp_export.mjs` (T4.0 prototype) loads `parse64.js` and `graph64.wasm` headlessly
+  with `node` to turn `patterns/cp/*.txt` into the JSON of `docs/CROCHET_PLAN.md` section 5.0; if
+  the checkout is missing the tool exits with clone instructions.
+* **What was checked:** the commit and the licence headers above (2026-10-16); all ten
+  `patterns/cp/*.txt` fixtures parse and export with zero errors, with the counts and timings in
+  `docs/crochet/T4.0_crochetparade.md`; headless layout runs (deterministic). **Not verified:** the
+  Codeberg-vs-GitHub diff was not re-checked in the final session, and the web UI was not run.
+
 ## Licence text files
 
 `LICENSES/`:
@@ -208,6 +231,7 @@ These are used by the tools and are not part of the distributed app.
 | `wasi-libc-LICENSE-APACHE-LLVM.txt` | wasi-libc `LICENSE-APACHE-LLVM` at `b9ef79d7` |
 | `musl-COPYRIGHT.txt` | wasi-libc `libc-top-half/musl/COPYRIGHT` at `b9ef79d7` |
 | `cloudlibc-BSD-2-Clause-LICENSE.txt` | wasi-libc `libc-bottom-half/cloudlibc/LICENSE` at `b9ef79d7` |
+| `crochetparade-GPL-3.0.txt` | CrochetPARADE `LICENSE` at `06e987b1` (GPLv3 text) |
 
 ## Failoring's licence
 
