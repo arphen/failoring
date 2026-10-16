@@ -1,0 +1,28 @@
+{
+  "_comment": ["STARTER values, not measured. Calibrate with a swatch (docs/CROCHET_PLAN.md section 10)."],
+  "hooks_mm": {"B-1": 2.25, "C-2": 2.75, "D-3": 3.25, "E-4": 3.5, "F-5": 3.75, "G-6": 4.0, "7": 4.5, "H-8": 5.0,
+               "I-9": 5.5, "J-10": 6.0, "K-10.5": 6.5, "L-11": 8.0, "M/N-13": 9.0, "N/P-15": 10.0},
+  "fibres": {
+    "acrylic": {"bend": 1.0, "tensile": 1.0, "lock": 1.0, "friction": 0.5, "sheen": 0.3},
+    "cotton":  {"bend": 1.6, "tensile": 1.4, "lock": 0.7, "friction": 0.6, "sheen": 0.1},
+    "wool":    {"bend": 0.8, "tensile": 0.8, "lock": 1.3, "friction": 0.7, "sheen": 0.05},
+    "jute":    {"bend": 3.0, "tensile": 2.5, "lock": 0.5, "friction": 0.8, "sheen": 0.0},
+    "tshirt":  {"bend": 0.6, "tensile": 0.5, "lock": 2.0, "friction": 0.6, "sheen": 0.1},
+    "polyester_cord": {"bend": 1.2, "tensile": 1.6, "lock": 0.6, "friction": 0.4, "sheen": 0.5}
+  },
+  "yarns": [
+    {"id": "acrylic_worsted", "name": "Acrylic worsted (CYC 4)", "fibre": "acrylic", "weight_class": 4,
+     "grams": 100, "metres": 180, "diameter_mm": 2.5, "hook_mm": 5.0, "colour": "#b5523b"},
+    {"id": "cotton_worsted", "name": "Cotton worsted (CYC 4)", "fibre": "cotton", "weight_class": 4,
+     "grams": 50, "metres": 78, "diameter_mm": 2.6, "hook_mm": 4.5, "colour": "#e8dcc4"},
+    {"id": "cotton_dk", "name": "Cotton DK (CYC 3)", "fibre": "cotton", "weight_class": 3,
+     "grams": 50, "metres": 115, "diameter_mm": 2.0, "hook_mm": 4.0, "colour": "#6f8fa6"},
+    {"id": "wool_worsted", "name": "Wool worsted (CYC 4)", "fibre": "wool", "weight_class": 4,
+     "grams": 100, "metres": 200, "diameter_mm": 2.6, "hook_mm": 5.0, "colour": "#4f6b3a"},
+    {"id": "cotton_cord_bulky", "name": "Cotton macrame cord 3 mm", "fibre": "cotton", "weight_class": 5,
+     "grams": 250, "metres": 120, "diameter_mm": 3.2, "hook_mm": 6.0, "colour": "#d9cbb0"},
+    {"id": "tshirt_yarn", "name": "T-shirt yarn (CYC 7)", "fibre": "tshirt", "weight_class": 7,
+     "grams": 350, "metres": 120, "diameter_mm": 7.0, "hook_mm": 10.0, "colour": "#2b2b2b"}
+  ],
+  "swatches": []
+}
