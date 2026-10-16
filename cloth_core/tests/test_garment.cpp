@@ -134,5 +134,17 @@ int main() {
             }
         writeObj(std::string(FL_OUT_DIR) + "/garment_body.obj", X, T);
     }
+
+    // Crochet T0.1 regression dump: FL_DUMP=<path> writes the settled positions, one vertex per line,
+    // so a solver refactor can be checked bit for bit (docs/crochet/BOARD.md, ticket T1.1).
+    if (const char* dump = std::getenv("FL_DUMP")) {
+        if (FILE* fp = std::fopen(dump, "w")) {
+            for (const Vec3& p : cs.positions()) std::fprintf(fp, "%.17g %.17g %.17g\n", p.x, p.y, p.z);
+            std::fclose(fp);
+            std::printf("  dumped %d vertex positions to %s\n", cs.vertexCount(), dump);
+        } else {
+            std::printf("  FL_DUMP: cannot write %s\n", dump);
+        }
+    }
     FINISH();
 }

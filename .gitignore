@@ -7,3 +7,5 @@ __pycache__/
 third_party/
 build-native/
 build_k5/
+
+.worktrees/

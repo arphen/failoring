@@ -1,0 +1,103 @@
+# Baseline: cmake build + ctest on main @ f5a0a9888c7113c3d20e8d6c6fdf3097d5e464a4 (f5a0a98), 2026-10-16 15:37
+
+Test project /Users/swozny/projects/failoring/build
+      Start  1: test_basics
+ 1/13 Test  #1: test_basics ......................   Passed    0.48 sec
+      Start  2: test_cantilever
+ 2/13 Test  #2: test_cantilever ..................   Passed    1.98 sec
+      Start  3: test_drape
+ 3/13 Test  #3: test_drape .......................   Passed  127.19 sec
+      Start  4: test_garment
+ 4/13 Test  #4: test_garment .....................   Passed   26.07 sec
+      Start  5: test_sdf_grid
+ 5/13 Test  #5: test_sdf_grid ....................   Passed    3.67 sec
+      Start  6: test_soft_skin
+ 6/13 Test  #6: test_soft_skin ...................   Passed   70.03 sec
+      Start  7: test_barrier
+ 7/13 Test  #7: test_barrier .....................   Passed    0.86 sec
+      Start  8: test_passthrough
+ 8/13 Test  #8: test_passthrough .................   Passed    0.38 sec
+      Start  9: test_layers
+ 9/13 Test  #9: test_layers ......................***Failed    1.59 sec
+[layered sheet-on-sheet: 10 cm cotton sheet dropped 1 cm onto a pinned plate]
+    cost: 0.4 ms/frame, Newton iterations 560 (2.33 per substep), factorisations 560, pattern rebuilds 0
+  vertex-tri    : min layer gap -13185.849 mm (frame 50: -2661.660 mm), top mean height -13188.228 mm, intersecting frames 5 of 120 (max pairs 18)
+    cost: 10.5 ms/frame, Newton iterations 1048 (4.37 per substep), factorisations 1048, pattern rebuilds 14
+  barrier (EE)  : min layer gap 1000000000000.000 mm (frame 50: 0.794 mm), top mean height -4052.768 mm, intersecting frames 0 of 120 (max pairs 0)
+  FAIL /Users/swozny/projects/failoring/cloth_core/tests/test_layers.cpp:98: neu.topMeanY > 0.0 -> barrier mode: top layer ended below the plate plane
+RESULT: 1 failure(s)
+
+      Start 10: test_skin_barrier
+10/13 Test #10: test_skin_barrier ................   Passed   31.56 sec
+      Start 11: test_wedge
+11/13 Test #11: test_wedge .......................***Failed  123.58 sec
+[scene 1 | old_solver] 672 verts, 240 frames, 31.7 s
+  KE final 3.37e-05 J; last 60 frames: mean 1.05e-05, max 3.37e-05 J
+  last 60 frames, per substep: Newton iters 12.00, cap hits 240 of 240 substeps, ls-fail 0 (total 0)
+  held vertices 91.6, held-set flips: between iterations 37.92, between substeps 4.22
+  in-Newton projections 178.15 (after the first iteration 84.28), mean depth 2.95e-05 m
+  step KE after Newton 4.62e-05, after body pass 4.62e-05, after self collision 1.08e-05 J (mean per substep)
+  post-solve totals: pushed 5704, friction applied 5704 vertex-substeps; Hessian switches 0
+  min clearance 1.636 mm, max stretch 1.1449 (final 1.0684), hem 243.3 mm, seam gap 0.50 mm, finite yes
+[scene 1 | default] 672 verts, 240 frames, 31.7 s
+  KE final 1.65e-07 J; last 60 frames: mean 2.78e-07, max 6.44e-07 J
+  last 60 frames, per substep: Newton iters 10.78, cap hits 58 of 240 substeps, ls-fail 0 (total 0)
+  held vertices 53.0, held-set flips: between iterations 20.81, between substeps 0.06
+  in-Newton projections 79.39 (after the first iteration 26.04), mean depth 4.01e-05 m
+  step KE after Newton 3.26e-05, after body pass 3.26e-05, after self collision 2.78e-07 J (mean per substep)
+  post-solve totals: pushed 2346, friction applied 2346 vertex-substeps; Hessian switches 229
+  min clearance 1.650 mm, max stretch 1.1580 (final 1.0635), hem 245.9 mm, seam gap 0.38 mm, finite yes
+  FAIL /Users/swozny/projects/failoring/cloth_core/tests/test_wedge.cpp:224: on.keMeanTail * 100 < off.keMeanTail -> scene 1: default solver reduces the tail KE only 38x (1.05e-05 -> 2.78e-07 J)
+  FAIL /Users/swozny/projects/failoring/cloth_core/tests/test_wedge.cpp:225: on.capTail == 0 -> scene 1 default: 58 substeps hit the Newton iteration cap in the last 60 frames
+[scene 0 | default] 672 verts, 240 frames, 29.4 s
+  KE final 6.31e-07 J; last 60 frames: mean 1.24e-06, max 3.59e-06 J
+  last 60 frames, per substep: Newton iters 11.87, cap hits 173 of 240 substeps, ls-fail 0 (total 0)
+  held vertices 86.7, held-set flips: between iterations 24.82, between substeps 0.37
+  in-Newton projections 110.85 (after the first iteration 21.57), mean depth 4.28e-05 m
+  step KE after Newton 5.60e-05, after body pass 5.60e-05, after self collision 1.26e-06 J (mean per substep)
+  post-solve totals: pushed 4859, friction applied 4859 vertex-substeps; Hessian switches 43
+  min clearance 1.641 mm, max stretch 1.1547 (final 1.0486), hem 165.7 mm, seam gap 0.46 mm, finite yes
+  FAIL /Users/swozny/projects/failoring/cloth_core/tests/test_wedge.cpp:232: on0.capTail <= on0.subTail / 20 -> scene 0 default: 173 of 240 substeps hit the cap in the last 60 frames
+[scene 1 | contact_al] 672 verts, 240 frames, 30.1 s
+  KE final 1.56e-06 J; last 60 frames: mean 2.06e-06, max 5.27e-06 J
+  last 60 frames, per substep: Newton iters 10.54, cap hits 0 of 240 substeps, ls-fail 0 (total 14)
+  held vertices 71.8, held-set flips: between iterations 39.62, between substeps 0.20
+  in-Newton projections 0.00 (after the first iteration 0.00), mean depth 0.00e+00 m
+  step KE after Newton 1.72e-05, after body pass 1.72e-05, after self collision 2.06e-06 J (mean per substep)
+  post-solve totals: pushed 0, friction applied 0 vertex-substeps; Hessian switches 617
+  contactAL: Newton solves per substep 1.02, deepest after a solve 0.009 mm, largest multiplier 2.386e-01 N
+  min clearance 1.623 mm, max stretch 1.1275 (final 1.0758), hem 249.9 mm, seam gap 0.45 mm, finite yes
+  FAIL /Users/swozny/projects/failoring/cloth_core/tests/test_wedge.cpp:237: al.keMeanTail < 1e-6 -> scene 1 contactAL: mean KE over the last 60 frames 2.06e-06 J
+[summary] scene 1 mean KE last 60 frames: old solver 1.05e-05 J, default 2.78e-07 J (38x), contactAL 2.06e-06 J; scene 0 default 1.24e-06 J
+RESULT: 4 failure(s)
+
+      Start 12: test_static
+12/13 Test #12: test_static ......................***Failed  176.66 sec
+== cantilever strips (test_cantilever's cases), static vs beam theory and vs dynamic
+  hex mesh   h=7.0mm   analytic 4.311 mm | dynamic 5.287 mm (61 frames, 382 it, 0.05 s cpu) | static 5.287 mm (+22.6 %), 55 it, conv 1, res 7.7e-05, 0.01 s cpu | static - dynamic +0.000 mm
+  hex mesh   h=3.5mm   analytic 5.054 mm | dynamic 5.152 mm (61 frames, 386 it, 0.21 s cpu) | static 5.152 mm (+1.9 %), 70 it, conv 1, res 5.1e-06, 0.04 s cpu | static - dynamic +0.000 mm
+  hex mesh   h=2.5mm   analytic 5.282 mm | dynamic 5.318 mm (61 frames, 383 it, 0.50 s cpu) | static 5.318 mm (+0.7 %), 78 it, conv 1, res 5.6e-04, 0.11 s cpu | static - dynamic +0.000 mm
+  grid mesh  h=3.5mm   analytic 4.796 mm | dynamic 5.568 mm (61 frames, 320 it, 0.16 s cpu) | static 5.567 mm (+16.1 %), 66 it, conv 1, res 6.0e-06, 0.03 s cpu | static - dynamic -0.000 mm
+== garment tube on the ellipsoid (test_garment's scene), static vs dynamic
+  tube: predicted lodging height 161.2 mm | dynamic hem 165.6 mm (201 frames, 9208 it, 24.2 s cpu, seam gap 0.45 mm) | static hem 161.2 mm, 605 it, conv 1, res 4.9e-04, 1.6 s cpu, seam gap 0.48 mm, clearance 1.65 mm, energy 8.2753e-02 vs dynamic 1.0152e-01 J
+== warm start after a small edit
+  strip, bending +10 %: before 5.152 mm; warm 4.695 mm (7 it, 0.004 s cpu, symbolic analyses in total 1); cold 4.695 mm (70 it, 0.041 s cpu); max shape difference 0.000 mm
+== drape disc, static vs dynamic
+  silk_charmeuse     h 10.0 mm,  847 verts | dynamic: DC  40.8, 300 frames, 13805 Newton it,  56.10 s cpu | static: DC  38.0, 346 it (6 stages, 0 failed, final 329), res 9.8e-04, step 5.0e-06,   1.49 s cpu, clear 1.60 mm | factor it x39.9, cpu x37.6 | energy static -5.0344e-04 vs dynamic -5.7108e-04 J
+  FAIL /Users/swozny/projects/failoring/cloth_core/tests/test_static.cpp:85: std::fabs(dcSta - dcDyn) < 2.0 -> silk_charmeuse: static DC 37.96 vs dynamic 40.80
+  cotton_poplin      h 10.0 mm,  847 verts | dynamic: DC  62.3, 235 frames, 10933 Newton it,  44.51 s cpu | static: DC  60.5, 151 it (6 stages, 0 failed, final 134), res 7.4e-04, step 6.0e-06,   0.63 s cpu, clear 1.65 mm | factor it x72.4, cpu x70.8 | energy static -6.4851e-04 vs dynamic -6.3643e-04 J
+  denim_12oz         h 10.0 mm,  847 verts | dynamic: DC  80.7, 246 frames, 10862 Newton it,  43.60 s cpu | static: DC  80.0, 110 it (6 stages, 0 failed, final 93), res 4.6e-04, step 9.9e-07,   0.45 s cpu, clear 1.90 mm | factor it x98.7, cpu x97.1 | energy static -1.2865e-03 vs dynamic -1.2856e-03 J
+RESULT: 1 failure(s)
+
+      Start 13: test_friction
+13/13 Test #13: test_friction ....................   Passed    0.97 sec
+
+77% tests passed, 3 tests failed out of 13
+
+Total Test time (real) = 565.05 sec
+
+The following tests FAILED:
+	  9 - test_layers (Failed)
+	 11 - test_wedge (Failed)
+	 12 - test_static (Failed)
+Errors while running CTest
