@@ -186,9 +186,15 @@ void ClothSolver::assembleEnergy(Real seamScale) {
     }
     for (const BendC& b : bendC_) {
         Vec3 g[4];
-        const Real theta = detail::hingeAngle(x_[b.i[0]], x_[b.i[1]], x_[b.i[2]], x_[b.i[3]], g);
-        if (theta < 0) continue;
-        add(4, b.i, b.slot, g, theta, 1.0 / b.alpha);
+        if (b.rest == 0) {  // no rest angle: the unsigned positional angle, unchanged from before T1.3
+            const Real theta = detail::hingeAngle(x_[b.i[0]], x_[b.i[1]], x_[b.i[2]], x_[b.i[3]], g);
+            if (theta < 0) continue;
+            add(4, b.i, b.slot, g, theta, 1.0 / b.alpha);
+        } else {  // signed hinge with a rest angle (crochet plan 2.2): C = theta_s - rest, same Gauss-Newton form
+            Real ths = 0;
+            if (!detail::hingeAngleSigned(x_[b.i[0]], x_[b.i[1]], x_[b.i[2]], x_[b.i[3]], ths, g)) continue;
+            add(4, b.i, b.slot, g, ths - b.rest, 1.0 / b.alpha);
+        }
     }
     for (const SeamC& s : seamC_) {
         const Vec3 target = x_[s.b0] * (1 - s.t) + x_[s.b1] * s.t;
@@ -218,8 +224,14 @@ Real ClothSolver::variationalEnergy(Real invH2, Real seamScale) const {
         E += 0.5 / c.alphaS * Cs * Cs;
     }
     for (const BendC& b : bendC_) {
-        const Real th = detail::hingeAngle(x_[b.i[0]], x_[b.i[1]], x_[b.i[2]], x_[b.i[3]], nullptr);
-        if (th >= 0) E += 0.5 / b.alpha * th * th;
+        if (b.rest == 0) {  // no rest angle: the unsigned positional angle, unchanged from before T1.3
+            const Real th = detail::hingeAngle(x_[b.i[0]], x_[b.i[1]], x_[b.i[2]], x_[b.i[3]], nullptr);
+            if (th >= 0) E += 0.5 / b.alpha * th * th;
+        } else {  // signed hinge with a rest angle (crochet plan 2.2)
+            Real ths = 0;
+            if (detail::hingeAngleSigned(x_[b.i[0]], x_[b.i[1]], x_[b.i[2]], x_[b.i[3]], ths, nullptr))
+                E += 0.5 / b.alpha * (ths - b.rest) * (ths - b.rest);
+        }
     }
     for (const SeamC& s : seamC_) {
         const Vec3 d = x_[s.a] - (x_[s.b0] * (1 - s.t) + x_[s.b1] * s.t);

@@ -35,6 +35,17 @@ constexpr Real kHingeGradSign = -1.0;
 // opposite vertices. Writes d(theta)/d(x1..x4) into g[4] when g != nullptr.
 // Returns -1 for degenerate triangles.
 Real hingeAngle(const Vec3& x1, const Vec3& x2, const Vec3& x3, const Vec3& x4, Vec3* g);
+// Sign of the Bridson et al. (2003) gradient term relative to d(theta_s)/dx of hingeAngleSigned below; verified
+// with central finite differences of theta_s itself in tests/test_intrinsic.cpp (crochet plan section 2.7 test 3).
+constexpr Real kHingeSignedGradSign = 1.0;
+// Signed dihedral bending angle of the same hinge, for hinges with a rest angle (crochet plan section 2.2). Same
+// arguments as hingeAngle; the triangle normals are consistently oriented (both triangles listed counter-clockwise
+// around the same side), so a flat pair gives 0 and a fully folded pair gives +-pi. The sign convention is the one
+// documented at BendC::rest: a positive angle means the triangle whose opposite vertex is x4 is folded toward the
+// side its own normal points to (equivalently, the side x3's consistently oriented normal points to when flat).
+// Writes d(theta_s)/d(x1..x4) into g[4] when g != nullptr (sums to zero). Returns false on degeneracy (zero-length
+// edge or zero-area triangle) with thetaOut = 0 and zero gradients; the caller skips the hinge.
+bool hingeAngleSigned(const Vec3& x1, const Vec3& x2, const Vec3& x3, const Vec3& x4, Real& thetaOut, Vec3* g);
 }  // namespace detail
 
 enum class LinearSolver {
@@ -361,8 +372,19 @@ private:
     struct BendC {
         int i[4];  // shared edge (i0,i1), opposite vertices (i2,i3)
         Real alpha, lam;
-        // Signed hinge rest angle (rad). Used by the implicit solver from T1.3 on; XPBD (solveBends) and VBD
-        // (vbdLocalEnergy) keep the unsigned positional angle and ignore it - deliberate, not pending.
+        // Signed hinge rest angle (rad): the signed dihedral angle the hinge relaxes to (0 = flat, the default;
+        // +-pi = fully folded). Sign convention (crochet plan section 2.2): a positive rest angle folds the second
+        // triangle toward the side its own normal points to, i.e. the hinge bends toward the common side of the two
+        // consistently oriented triangle normals (both triangles listed counter-clockwise around the same side - the
+        // winding addIntrinsicPanel/intrinsic meshes use, so the two normals agree on a flat pair).
+        // In our index convention i[2] is the opposite vertex of the first triangle and i[3] of the second (the
+        // "second triangle" whose normal the sentence above means), so: with a positive rest angle the i[3] vertex
+        // folds to the side the i[2] triangle's oriented normal points to, and a negative rest angle folds it to the
+        // other side. Verified in tests/test_intrinsic.cpp (crochet plan section 2.7 test 4): a flat 2-triangle
+        // strip pinned on the i[2] triangle with rest = +0.5 rad settles at a measured signed angle of +0.5 rad with
+        // the free i[3] vertex on the +normal side of the pinned triangle. detail::hingeAngleSigned computes it.
+        // Used by the implicit solver from T1.3 on; XPBD (solveBends) and VBD (vbdLocalEnergy) keep the unsigned
+        // positional angle and ignore it - deliberate, not pending.
         Real rest = 0;
         int slot[16];
     };
