@@ -37,9 +37,9 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
 | T1.6 | Contact force accessors, RoundedBoxCollider | T1.1 | todo | | 0 | | box SDF + resting patch force balance |
 | T2.1 | materials/yarns.json + loader (crochet_core target created here) | T0.1 | done | default | 1 | 225d0ab (merged 9b3a0d0) | loads; ids unique; fibres exist |
 | T3.1 | Stitch model | T2.1 | done | default | 1 | ac0e14a (merged 66ef507) | §4.5 tests: PASS |
-| T4.0 | CrochetPARADE spike + decision A/B/C | T0.1 | changes_requested | default | 2 | 67a2708 (r1) | r1 recommends B; r2 asked: cp_export.mjs truncates piped stdout >~72 KiB (process.exit) |
-| T4.1 | Bridge (A/B) or DSL parser→AST (C) | T4.0 | todo | | 0 | | format fixed by T4.0 decision |
-| T4.2 | Facing/RS, point seams, count checks (A/B) or compiler (C) | T4.1 | todo | | 0 | | ★ §5.4 tests |
+| T4.0 | CrochetPARADE spike + decision A/B/C | T0.1 | done | default | 2 | 3c45316 (merged b736625) | decision B (see Decisions); r2 fixed cp_export pipe flush |
+| T4.1 | Bridge: exporter + C++ importer into StitchGraph + `#!` extension-line reader (B) | T4.0 | todo | | 0 | | decision B; docs/CROCHET_DSL.md pins the `#!` syntax |
+| T4.2 | Facing/RS, point seams, count checks (B) | T4.1 | todo | | 0 | | ★ §5.4 tests |
 | T5.1 | Faces (BFS base path, zipper), rest shapes, orientation | T4.2, T1.2 | todo | | 0 | | ★ §6.10 test 4 hygiene, all fixtures |
 | T5.2 | Materials, hinge mods, seams → IntrinsicMesh | T5.1, T3.1, T1.3, T1.5 | todo | | 0 | | §6.10 test 6 (mass) |
 | T5.3 | Layouts (flat, fold, revolve, attached, arc; CP positions if A/B) | T5.2 | todo | | 0 | | layout PNGs under docs/crochet-shots/layout/ |
@@ -71,6 +71,17 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
 * 2026-10-16 — §2.1 step 8 (T1.2) is implemented as: a comment on `BendC::rest` stating that the implicit
   solver reads it (from T1.3 on) while XPBD/VBD keep the unsigned positional angle and ignore it. No
   `// TODO` marker (the review laziness scan rejects them and the behaviour is deliberate, not pending).
+* 2026-10-16 — **§5.0 decision: B.** CrochetPARADE is the pattern front end: vendored clone
+  `third_party/crochetparade` @ `06e987b13ccfc94cfdfcebc1fe4664d37d2c6687` (GitHub; newer than the
+  Codeberg head `be11c8b0`; gitignored, fetch steps in `docs/crochet/T4.0_crochetparade.md` §8 and in
+  `tools/crochet/cp_export.mjs`). `patterns/cp/*.txt` replace the `.fcro` fixtures. The two structures
+  CP cannot express (second targets of through-both-layers stitches and strap-end joins, optionally
+  piece names) go into `#!` extension lines that CP ignores (comment lines do not shift rows) and our
+  importer reads; the exact syntax is pinned in `docs/CROCHET_DSL.md` (T4.1). Fold and surface-slst
+  placement are T5.3 layout concerns, not grammar gaps. T4.1 = exporter + C++ importer into
+  `StitchGraph` + extension reader; T4.2 = RS/WS facing, point seams from `links`, count checks.
+  The 66 s bag layout must run on a worker/cache in T7.1; the tube radius drift gets another look in
+  T5.3.
 * 2026-10-16 — T1.2 must keep panel hinge alphas *bit-identical*: the §2.1 step 4 harmonic mean is only
   computed when the two triangles' Beffs differ (`Beff1 == Beff2` -> keep `Beff1`), because
   `2/(1/B + 1/B)` can differ from `B` by 1 ulp. Verified by the test_garment dump.

@@ -51,3 +51,21 @@ acceptance, with the measured numbers. Honest numbers; "not measured" where not 
   Review: clean rebuild 12/15 (same 3 baseline failures, FAIL lines identical), mutation check
   (fibre bend multiplier ignored -> fibre-ordering test fails) caught. Merged `66ef507`.
 * Suite size is now 15 tests: 12 pass, the 3 baseline failures unchanged.
+
+### 2026-10-16 — T4.0 CrochetPARADE spike: decision B
+
+* All §11 fixtures are written in CrochetPARADE syntax (`patterns/cp/*.txt`); the vendored clone is
+  `third_party/crochetparade` @ `06e987b` (GPL-3.0-or-later, licence filed in `LICENSES/`; the clone
+  itself is gitignored). Counts verified per row (pouch 1380 stitches, bags 5798/5912, circles
+  217/189/273, tube 512); 0 export errors on all ten fixtures.
+* Parse times: pouch 0.09 s, bag 0.67 s (bar: < 2 s — met). Layout (cold, single-thread): pouch
+  3.5 s, bag 66 s → must run on a worker/cache in T7.1.
+* Layout shapes: +6 flat (plane rms 0.83), +5 cup (cone slope −0.58, residual 0.26), +8 ruffle
+  (rim ring rms 2.90); deterministic and idempotent. Tube axis straight (1.1 %) but radius drifts
+  2.07→4.90 — initial shape only; revisit in T5.3.
+* Missing constructs are exactly the single-target attachment: second targets for the side seams and
+  strap-end joins → `#!` extension line (decision B; syntax fixed in `docs/CROCHET_DSL.md`, T4.1).
+* Review found and round 2 fixed a defect in `tools/crochet/cp_export.mjs`: piped stdout truncated
+  at the pipe buffer (`process.exit` before flush); pipe and `--out` outputs are now byte-identical.
+* Phase 4 (DSL + graph) stays in progress: T4.1 (bridge + importer + extension reader) and T4.2
+  (facing/RS, seams, count checks) remain.
