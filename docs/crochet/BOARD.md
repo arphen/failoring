@@ -29,7 +29,7 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
 | Ticket | Title | Depends on | Status | Owner model | Round | Commit | Notes |
 |---|---|---|---|---|---|---|---|
 | T0.1 | Branch, baseline ctest, board, status, \`FL_DUMP\` regression dump | – | done | orchestrator | 1 | (this commit) | baseline has 3 pre-existing failures, see above |
-| T1.1 | Refactor finalize() to per-triangle triRest_/triMat_ (no new API) | T0.1 | in_progress | default | 1 | | ★ test_garment bit-identical to the T0.1 dump |
+| T1.1 | Refactor finalize() to per-triangle triRest_/triMat_ (no new API) | T0.1 | done | default | 1 | 7dc34d2 (merged dddb4ea) | ★ test_garment bit-identical: PASS |
 | T1.2 | IntrinsicMesh, addIntrinsicPanel, extraMass, strain-limit edge rest lengths, barrier guard | T1.1 | todo | | 0 | | ★ §2.7 test 1 (< 1e-9 m) |
 | T1.3 | HingeMod, signed hinge with rest angle | T1.2 | todo | | 0 | | ★ §2.7 tests 3, 4; old tests unchanged |
 | T1.4 | J-curve stretch (+ JSON keys) | T1.1 | todo | | 0 | | ★ §2.7 test 5 |
