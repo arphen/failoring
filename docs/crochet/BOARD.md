@@ -32,7 +32,7 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
 | T1.1 | Refactor finalize() to per-triangle triRest_/triMat_ (no new API) | T0.1 | done | default | 1 | 7dc34d2 (merged dddb4ea) | ★ test_garment bit-identical: PASS |
 | T1.2 | IntrinsicMesh, addIntrinsicPanel, extraMass, strain-limit edge rest lengths, barrier guard | T1.1 | done | default | 1 | cc20eee (merged cbfc587) | ★ §2.7 test 1: PASS (max diff 0 m) |
 | T1.3 | Signed hinge with rest angle | T1.2 | done | default | 1 | 8369c65 (merged a63db24) | ★ §2.7 tests 3, 4: PASS (rel err 4.5e-08; settled 0.5000 rad); 2 mutations caught |
-| T1.4 | J-curve stretch (+ JSON keys) | T1.1 | todo | | 0 | | ★ §2.7 test 5 |
+| T1.4 | J-curve stretch (+ JSON keys) | T1.1 | in_progress | default | 1 | | ★ §2.7 test 5 |
 | T1.5 | addPointSeam, SolverParams::dampingScale | T1.1 | todo | | 0 | | §2.7 test 6 |
 | T1.6 | Contact force accessors, RoundedBoxCollider | T1.1 | todo | | 0 | | box SDF + resting patch force balance |
 | T2.1 | materials/yarns.json + loader (crochet_core target created here) | T0.1 | done | default | 1 | 225d0ab (merged 9b3a0d0) | loads; ids unique; fibres exist |
@@ -71,6 +71,10 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
 * 2026-10-16 — §2.1 step 8 (T1.2) is implemented as: a comment on `BendC::rest` stating that the implicit
   solver reads it (from T1.3 on) while XPBD/VBD keep the unsigned positional angle and ignore it. No
   `// TODO` marker (the review laziness scan rejects them and the behaviour is deliberate, not pending).
+* 2026-10-16 — J-curve material JSON keys are `lock_strain_warp`, `lock_strain_weft`,
+  `lock_stiffness_ratio` (snake_case like the existing `tensile_warp_N_m`), optional, defaults 0 / 0 / 1;
+  validation lock >= 0 and ratio >= 1. The TriC u axis is warp, v is weft (T5.2 maps crochet
+  wale -> warp when it builds materials from yarns).
 * 2026-10-16 — T4.1 test data: the ten `cp_export.mjs` outputs are committed under
   `patterns/cp/exported/*.json` (~6.6 MB deterministic JSON) so `ctest` is hermetic (no node, no
   clone needed at test time); regenerate them with
