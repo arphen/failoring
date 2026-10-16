@@ -37,7 +37,7 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
 | T1.6 | Contact force accessors, RoundedBoxCollider | T1.1 | todo | | 0 | | box SDF + resting patch force balance |
 | T2.1 | materials/yarns.json + loader (crochet_core target created here) | T0.1 | done | default | 1 | 225d0ab (merged 9b3a0d0) | loads; ids unique; fibres exist |
 | T3.1 | Stitch model | T2.1 | done | default | 1 | ac0e14a (merged 66ef507) | §4.5 tests: PASS |
-| T4.0 | CrochetPARADE spike + decision A/B/C | T0.1 | in_progress | default | 1 | | docs/crochet/T4.0_crochetparade.md, 7 steps |
+| T4.0 | CrochetPARADE spike + decision A/B/C | T0.1 | changes_requested | default | 2 | 67a2708 (r1) | r1 recommends B; r2 asked: cp_export.mjs truncates piped stdout >~72 KiB (process.exit) |
 | T4.1 | Bridge (A/B) or DSL parser→AST (C) | T4.0 | todo | | 0 | | format fixed by T4.0 decision |
 | T4.2 | Facing/RS, point seams, count checks (A/B) or compiler (C) | T4.1 | todo | | 0 | | ★ §5.4 tests |
 | T5.1 | Faces (BFS base path, zipper), rest shapes, orientation | T4.2, T1.2 | todo | | 0 | | ★ §6.10 test 4 hygiene, all fixtures |
