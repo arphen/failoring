@@ -223,6 +223,7 @@ YarnBook loadYarnsFromString(const std::string& jsonText) {
         yarn.hookMm = getNum(y, "hook_mm", yarn.hookMm);
         if (book.fibres.find(yarn.fibre) == book.fibres.end())
             FL_THROW(std::runtime_error, "yarns JSON: yarn '" + yarn.id + "' has unknown fibre '" + yarn.fibre + "'");
+        yarn.fibreParams = book.fibres[yarn.fibre];  // T3.1: multipliers for the stitch model
         book.yarns.push_back(std::move(yarn));
     }
     return book;

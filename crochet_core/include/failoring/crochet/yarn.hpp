@@ -22,6 +22,7 @@ struct Yarn {
     std::string id, name, fibre, colour;
     int weightClass = 0;  // CYC weight class, 1..7
     Real grams = 0, metres = 0, diameterMm = 0, hookMm = 0;
+    YarnFibre fibreParams;  // the fibre's multipliers; the loader fills this (T3.1)
     Real lambda() const { return grams / metres; }  // linear density, g/m
 };
 
