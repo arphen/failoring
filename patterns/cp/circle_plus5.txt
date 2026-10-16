@@ -1,0 +1,11 @@
+# Test circle - mr 6 sc with +5 stitches per round, 8 rounds.
+# Expected counts per round: 6, 11, 16, 21, 26, 31, 36, 41.
+ring.R
+(6sc)@R
+sc,sc@[@],sc,sc@[@],sc,sc@[@],sc,sc@[@],sc,sc@[@],sc
+sc,sc@[@],1sc,sc,sc@[@],1sc,sc,sc@[@],1sc,sc,sc@[@],1sc,sc,sc@[@],1sc,sc
+sc,sc@[@],2sc,sc,sc@[@],2sc,sc,sc@[@],2sc,sc,sc@[@],2sc,sc,sc@[@],2sc,sc
+sc,sc@[@],3sc,sc,sc@[@],3sc,sc,sc@[@],3sc,sc,sc@[@],3sc,sc,sc@[@],3sc,sc
+sc,sc@[@],4sc,sc,sc@[@],4sc,sc,sc@[@],4sc,sc,sc@[@],4sc,sc,sc@[@],4sc,sc
+sc,sc@[@],5sc,sc,sc@[@],5sc,sc,sc@[@],5sc,sc,sc@[@],5sc,sc,sc@[@],5sc,sc
+sc,sc@[@],6sc,sc,sc@[@],6sc,sc,sc@[@],6sc,sc,sc@[@],6sc,sc,sc@[@],6sc,sc
