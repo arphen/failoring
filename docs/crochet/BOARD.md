@@ -35,7 +35,7 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
 | T1.4 | J-curve stretch (+ JSON keys) | T1.1 | todo | | 0 | | ★ §2.7 test 5 |
 | T1.5 | addPointSeam, SolverParams::dampingScale | T1.1 | todo | | 0 | | §2.7 test 6 |
 | T1.6 | Contact force accessors, RoundedBoxCollider | T1.1 | todo | | 0 | | box SDF + resting patch force balance |
-| T2.1 | materials/yarns.json + loader (crochet_core target created here) | T0.1 | in_progress | default | 1 | | loads; ids unique; fibres exist |
+| T2.1 | materials/yarns.json + loader (crochet_core target created here) | T0.1 | done | default | 1 | 225d0ab (merged 9b3a0d0) | loads; ids unique; fibres exist |
 | T3.1 | Stitch model | T2.1 | todo | | 0 | | §4.5 tests |
 | T4.0 | CrochetPARADE spike + decision A/B/C | T0.1 | in_progress | default | 1 | | docs/crochet/T4.0_crochetparade.md, 7 steps |
 | T4.1 | Bridge (A/B) or DSL parser→AST (C) | T4.0 | todo | | 0 | | format fixed by T4.0 decision |
