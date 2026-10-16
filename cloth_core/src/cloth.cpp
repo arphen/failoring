@@ -40,6 +40,41 @@ Real hingeAngle(const Vec3& x1, const Vec3& x2, const Vec3& x3, const Vec3& x4, 
     return theta;
 }
 
+bool hingeAngleSigned(const Vec3& x1, const Vec3& x2, const Vec3& x3, const Vec3& x4, Real& thetaOut, Vec3* g) {
+    const Vec3 e = x2 - x1;
+    const Real le = length(e);
+    const Vec3 p3 = x3 - x1, p4 = x4 - x1;
+    const Vec3 c3 = cross(e, p3), c4 = cross(e, p4);  // normals of the listings (x1,x2,x3) and (x1,x2,x4)
+    const Real l3 = length(c3), l4 = length(c4);
+    if (le < 1e-14 || l3 < 1e-14 || l4 < 1e-14) {  // degenerate edge or triangle: the caller skips the hinge
+        thetaOut = 0;
+        if (g) g[0] = g[1] = g[2] = g[3] = Vec3(0, 0, 0);
+        return false;
+    }
+    // Consistently oriented normals (crochet plan 2.2): triangle 1 listed (x1,x2,x3) gives n1 = c3/|c3|; a triangle
+    // that traverses the shared edge the other way, (x2,x1,x4), gives n2 = -c4/|c4|. On a flat pair both point to
+    // the same side, and |theta_s| below equals the unsigned hingeAngle.
+    const Vec3 n1 = c3 / l3, n2 = -c4 / l4;
+    const Vec3 eHat = e / le;
+    // The signed rotation from n1 to n2 about eHat is atan2(<cross(n1,n2), eHat>, <n1,n2>). BendC::rest needs the
+    // opposite sign (positive = the x4 triangle folds toward the side its own normal points to, see cloth.hpp), so
+    // the cross product is written (n2, n1).
+    thetaOut = std::atan2(dot(cross(n2, n1), eHat), dot(n1, n2));
+    if (!g) return true;
+    // Gradients after Bridson et al. 2003, section 4.1, with their indexing mapped onto ours: their x1 = x3 and
+    // x2 = x4 (the opposite vertices), their x3 = x1 and x4 = x2 (the shared edge, E = x2 - x1 = e). Then their
+    // N1 = (x1-x3)x(x1-x4) = c3 and N2 = (x2-x4)x(x2-x3) = -c4, i.e. u1 -> g[2], u2 -> g[3], u3 -> g[0], u4 -> g[1].
+    const Vec3 A = c3 / (l3 * l3);   // N1 / |N1|^2
+    const Vec3 B = -c4 / (l4 * l4);  // N2 / |N2|^2
+    const Real a = dot(p3, eHat), b = dot(p4, eHat);  // (x3-x1).E/|E|, (x4-x1).E/|E|
+    const Real k = kHingeSignedGradSign;
+    g[0] = ((a - le) * A + (b - le) * B) * k;  // u3
+    g[1] = -(a * A + b * B) * k;               // u4
+    g[2] = A * (le * k);                       // u1
+    g[3] = B * (le * k);                       // u2
+    return true;
+}
+
 }  // namespace detail
 
 namespace {
