@@ -38,8 +38,17 @@ if(FL_OPENMP)
   target_link_libraries(cloth_core PUBLIC OpenMP::OpenMP_CXX)
 endif()
 
+# Crochet core: yarn data, pattern language, stitch graph, mesh and scenes.
+# Static and Godot-free; it links cloth_core but cloth_core does not depend on it.
+add_library(crochet_core STATIC
+  crochet_core/src/yarn.cpp)
+target_include_directories(crochet_core PUBLIC crochet_core/include)
+target_link_libraries(crochet_core PUBLIC cloth_core)
+target_compile_options(crochet_core PRIVATE -Wall -Wextra)
+
 enable_testing()
 set(FL_MATERIALS_PATH "${CMAKE_SOURCE_DIR}/materials/fabrics.json")
+set(FL_YARNS_PATH "${CMAKE_SOURCE_DIR}/materials/yarns.json")
 set(FL_OUT_DIR "${CMAKE_SOURCE_DIR}/out")
 
 foreach(t test_basics test_cantilever test_drape test_garment test_sdf_grid test_soft_skin test_barrier test_passthrough test_layers test_skin_barrier test_wedge test_static test_friction)
@@ -48,6 +57,13 @@ foreach(t test_basics test_cantilever test_drape test_garment test_sdf_grid test
   target_compile_definitions(${t} PRIVATE FL_MATERIALS_PATH="${FL_MATERIALS_PATH}" FL_OUT_DIR="${FL_OUT_DIR}")
   add_test(NAME ${t} COMMAND ${t})
 endforeach()
+
+# crochet_core test: links crochet_core and reads the yarn database.
+add_executable(test_crochet_yarn crochet_core/tests/test_crochet_yarn.cpp)
+target_link_libraries(test_crochet_yarn PRIVATE crochet_core)
+target_include_directories(test_crochet_yarn PRIVATE cloth_core/tests)
+target_compile_definitions(test_crochet_yarn PRIVATE FL_YARNS_PATH="${FL_YARNS_PATH}")
+add_test(NAME test_crochet_yarn COMMAND test_crochet_yarn)
 
 # Native timing (not in ctest): cmake -DFL_BENCH=ON, then build/bench_native.
 option(FL_BENCH "Build the native timing benchmark (bench_native), not run by ctest" OFF)
