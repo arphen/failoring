@@ -8,8 +8,8 @@ acceptance, with the measured numbers. Honest numbers; "not measured" where not 
 | # | Phase | Done when | Status |
 | --- | --- | --- | --- |
 | 1 | Solver extensions (§2) | old ctest unchanged, bit-identical regression, 6 new checks pass | todo |
-| 2 | Yarn data (§3) | yarns.json loads, unit tests | todo |
-| 3 | Stitch model (§4) | gauge sanity and monotonicity tests | todo |
+| 2 | Yarn data (§3) | yarns.json loads, unit tests | done (T2.1, 2026-10-16) |
+| 3 | Stitch model (§4) | gauge sanity and monotonicity tests | done (T3.1, 2026-10-16) |
 | 4 | DSL + graph (§5) | all fixtures compile with the stated counts, error-message tests | todo |
 | 5 | Mesh + layout + relax (§6) | flat/cup/ruffle circle, tube, swatch size, hinge sign, mass | todo |
 | 6 | Scenes + load + metrics + CLI (§7) | strap analytic, force balance, settle, fit checks; PNG snapshots of all fixtures in docs/crochet-shots/ | todo |
@@ -38,3 +38,16 @@ acceptance, with the measured numbers. Honest numbers; "not measured" where not 
   * test_wedge: scene 1 default KE reduction 38x (want >100x), 58/240 tail substeps at the Newton cap;
     scene 0 173/240 cap hits; contactAL tail KE 2.06e-06 J (want <1e-06).
   * test_static: drape disc silk static 37.96 vs dynamic 40.80 (want <2.0 difference).
+
+### 2026-10-16 — phases 2 and 3 accepted (T2.1, T3.1)
+
+* T2.1 (yarns.json + loader, `225d0ab`): file is byte-identical to the plan's §3 block; loader tests
+  pass. Review: clean rebuild 11/14 (same 3 baseline failures, FAIL lines identical), mutation check
+  (duplicate-id guard disabled -> test fails) caught. Merged `9b3a0d0`.
+* T3.1 (stitch model, `ac0e14a`): worsted sc on a 5 mm hook gives w 6.500 mm, h 6.000 mm
+  (15.38 sts and 16.67 rows per 10 cm), density 0.4363 kg/m2 (10x10 cm swatch 4.363 g) — inside the
+  §4.2/§4.3 sanity ranges. Monotonicity, fibre ordering (cotton > acrylic > wool bending), toFabric
+  warp=wale mapping, all 35 type/insertion combos and the §10 calibration semantics have tests.
+  Review: clean rebuild 12/15 (same 3 baseline failures, FAIL lines identical), mutation check
+  (fibre bend multiplier ignored -> fibre-ordering test fails) caught. Merged `66ef507`.
+* Suite size is now 15 tests: 12 pass, the 3 baseline failures unchanged.
