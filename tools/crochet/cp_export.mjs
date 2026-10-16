@@ -49,7 +49,9 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, '..', '..');
 
 function usage(exitCode) {
-  console.error('usage: node tools/crochet/cp_export.mjs [--layout] [--time] [--out FILE] PATTERN.txt');
+  // process.exit() aborts pending asynchronous writes to a pipe on POSIX, so
+  // write the message synchronously before exiting (see emit()).
+  fs.writeSync(2, 'usage: node tools/crochet/cp_export.mjs [--layout] [--time] [--out FILE] PATTERN.txt\n');
   process.exit(exitCode);
 }
 
@@ -61,16 +63,17 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--time') time = true;
   else if (a === '--out') { outFile = argv[++i]; if (!outFile) usage(2); }
   else if (a === '--help' || a === '-h') usage(0);
-  else if (a.startsWith('-')) { console.error('unknown option: ' + a); usage(2); }
+  else if (a.startsWith('-')) { fs.writeSync(2, 'unknown option: ' + a + '\n'); usage(2); }
   else patternFile = a;
 }
 if (!patternFile) usage(2);
 
 const cpDir = process.env.CP_DIR || path.join(repoRoot, 'third_party', 'crochetparade');
 if (!fs.existsSync(path.join(cpDir, 'parse64.js'))) {
-  console.error('CrochetPARADE not found at ' + cpDir);
-  console.error('Clone https://github.com/stassev/CrochetPARADE at commit 06e987b13ccfc94cfdfcebc1fe4664d37d2c6687');
-  console.error('into third_party/crochetparade (gitignored), or set CP_DIR.');
+  fs.writeSync(2,
+    'CrochetPARADE not found at ' + cpDir + '\n' +
+    'Clone https://github.com/stassev/CrochetPARADE at commit 06e987b13ccfc94cfdfcebc1fe4664d37d2c6687\n' +
+    'into third_party/crochetparade (gitignored), or set CP_DIR.\n');
   process.exit(2);
 }
 
@@ -91,11 +94,18 @@ const lineOf = (nrow) => (nrow >= 0 && nrow < lineMap.length ? lineMap[nrow] : -
 
 const out = { stitches: [], rows: [], links: [], positions: [], errors: [] };
 
-function emit() {
+// Write the output and resolve with the exit code once it is complete.
+// process.exit() must not run before then: on POSIX it aborts pending
+// asynchronous writes to a pipe and truncates stdout (file writes are
+// synchronous, which is why --out never showed this).
+async function emit() {
   const json = JSON.stringify(out, null, 2) + '\n';
-  if (outFile) fs.writeFileSync(outFile, json);
-  else process.stdout.write(json);
-  process.exit(out.errors.length > 0 ? 1 : 0);
+  const code = out.errors.length > 0 ? 1 : 0;
+  if (outFile) {
+    fs.writeFileSync(outFile, json);
+    return code;
+  }
+  return new Promise((resolve) => process.stdout.write(json, () => resolve(code)));
 }
 
 // ---- load the parser in a vm context (parse64.js expects a browser-ish global) ----
@@ -115,7 +125,7 @@ try {
   const msg = String(e.message).split('\n')[0];
   const m = /"nrow":\s*(\d+)/.exec(String(e.message));
   out.errors.push({ line: m ? lineOf(Number(m[1])) : -1, msg });
-  emit();
+  process.exit(await emit()); // stdout fully flushed; safe to exit
 }
 const parseMs = performance.now() - tParse0;
 
@@ -242,4 +252,4 @@ if (time) {
   }));
 }
 
-emit();
+process.exit(await emit()); // stdout fully flushed; safe to exit
