@@ -46,6 +46,19 @@ constexpr Real kHingeSignedGradSign = 1.0;
 // Writes d(theta_s)/d(x1..x4) into g[4] when g != nullptr (sums to zero). Returns false on degeneracy (zero-length
 // edge or zero-area triangle) with thetaOut = 0 and zero gradients; the caller skips the hinge.
 bool hingeAngleSigned(const Vec3& x1, const Vec3& x2, const Vec3& x3, const Vec3& x4, Real& thetaOut, Vec3* g);
+
+// J-curve stretch above the lock strain (crochet plan 2.3): energy, dE/dC and the Gauss-Newton
+// stiffness factor for C > lock > 0. Below the lock the caller keeps the plain 0.5 k C^2 path.
+// Only valid for C > lock > 0 (at C = lock the formula is still C1 with the plain parabola); asserting
+// that is the callers' job. k = 1/alpha is the unlocked (linear) stiffness, ratio >= 1 the stiffness
+// multiplier above the lock. Shared by assembleEnergy, variationalEnergy and tests, so they cannot drift.
+struct JCurveStretch { Real e, dedc, kappa; };
+inline JCurveStretch jCurveStretch(Real C, Real k, Real lock, Real ratio) {
+    const Real cl = C - lock;
+    return {0.5 * k * lock * lock + k * lock * cl + 0.5 * ratio * k * cl * cl,  // e, C1 at C = lock
+            k * lock + ratio * k * cl,                                          // dE/dC
+            ratio * k};                                                         // kappa (Gauss-Newton)
+}
 }  // namespace detail
 
 enum class LinearSolver {
@@ -366,6 +379,9 @@ private:
         int i0, i1, i2;
         Real a, b, c, d;  // inverse of the rest edge matrix
         Real alphaU, alphaV, alphaS, comp;
+        // J-curve lock terms (CROCHET_PLAN §2.3) from the triangle's material: lockU/lockV are the strain at which
+        // the loops lock along u (warp)/v (weft), 0 = off; ratio = stiffness above the lock / below.
+        Real lockU, lockV, ratio;
         Real lamU, lamV, lamS;
         int slot[9];  // block positions for the implicit solver's Hessian
     };

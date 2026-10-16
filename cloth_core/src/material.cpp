@@ -182,6 +182,12 @@ std::vector<FabricMaterial> loadMaterialsFromString(const std::string& text) {
         m.frictionStatic = getNum(*p, "friction_static", m.frictionStatic);
         m.frictionKinetic = getNum(*p, "friction_kinetic", m.frictionKinetic);
         m.damping = getNum(*p, "damping_1_s", m.damping);
+        // J-curve lock terms (CROCHET_PLAN §2.3), optional so the old JSON files stay valid and unchanged in meaning.
+        m.lockStrainWarp = getNum(*p, "lock_strain_warp", m.lockStrainWarp);
+        m.lockStrainWeft = getNum(*p, "lock_strain_weft", m.lockStrainWeft);
+        m.lockStiffnessRatio = getNum(*p, "lock_stiffness_ratio", m.lockStiffnessRatio);
+        if (m.lockStrainWarp < 0 || m.lockStrainWeft < 0 || m.lockStiffnessRatio < 1)
+            throw std::runtime_error("materials JSON: bad lock parameters in fabric '" + m.id + "'");
         if (m.density <= 0 || m.tensileWarp <= 0 || m.tensileWeft <= 0 || m.shear <= 0 || m.bendWarp <= 0 || m.bendWeft <= 0)
             throw std::runtime_error("materials JSON: non-positive parameter in fabric '" + m.id + "'");
         out.push_back(std::move(m));
