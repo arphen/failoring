@@ -31,7 +31,7 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
 | T0.1 | Branch, baseline ctest, board, status, \`FL_DUMP\` regression dump | – | done | orchestrator | 1 | (this commit) | baseline has 3 pre-existing failures, see above |
 | T1.1 | Refactor finalize() to per-triangle triRest_/triMat_ (no new API) | T0.1 | done | default | 1 | 7dc34d2 (merged dddb4ea) | ★ test_garment bit-identical: PASS |
 | T1.2 | IntrinsicMesh, addIntrinsicPanel, extraMass, strain-limit edge rest lengths, barrier guard | T1.1 | done | default | 1 | cc20eee (merged cbfc587) | ★ §2.7 test 1: PASS (max diff 0 m) |
-| T1.3 | HingeMod, signed hinge with rest angle | T1.2 | todo | | 0 | | ★ §2.7 tests 3, 4; old tests unchanged |
+| T1.3 | Signed hinge with rest angle | T1.2 | in_progress | default | 1 | | ★ §2.7 tests 3, 4; old tests unchanged |
 | T1.4 | J-curve stretch (+ JSON keys) | T1.1 | todo | | 0 | | ★ §2.7 test 5 |
 | T1.5 | addPointSeam, SolverParams::dampingScale | T1.1 | todo | | 0 | | §2.7 test 6 |
 | T1.6 | Contact force accessors, RoundedBoxCollider | T1.1 | todo | | 0 | | box SDF + resting patch force balance |
