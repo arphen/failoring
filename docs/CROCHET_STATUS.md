@@ -69,3 +69,22 @@ acceptance, with the measured numbers. Honest numbers; "not measured" where not 
   at the pipe buffer (`process.exit` before flush); pipe and `--out` outputs are now byte-identical.
 * Phase 4 (DSL + graph) stays in progress: T4.1 (bridge + importer + extension reader) and T4.2
   (facing/RS, seams, count checks) remain.
+
+### 2026-10-16 — T1.3 signed hinges with a rest angle (phase 1, item 3 of 6)
+
+* `detail::hingeAngleSigned`: signed dihedral angle with consistently oriented normals,
+  `theta_s = atan2(<cross(n2,n1), e_hat>, <n1,n2>)` (the cross order is the global-sign choice
+  §2.2 tells the implementer to fix by finite differences), Bridson 2003 §4.1 gradients
+  (index-mapped and sign-verified by FD: kHingeSignedGradSign = +1), degenerate → false + zero
+  gradients. The unsigned `hingeAngle` is untouched.
+* `assembleEnergy`/`variationalEnergy`: `rest == 0` runs the exact pre-change code (bit-identical
+  by the FL_DUMP check, 672 vertices); `rest != 0` uses C = theta_s − rest with the same
+  Gauss-Newton `add`. XPBD (`solveBends`) and VBD keep the unsigned positional angle (deliberate).
+* Test 3: 20 seeded random configurations — |theta_s| == unsigned theta to 4.4e-16 rad, worst
+  E-gradient relative error vs central FD 4.5e-08 (< 1e-6), gradient sum 8.0e-16, flat 0,
+  folded ±pi/2. Test 4: strip with rest +0.5 rad settles at 0.5000 rad in 42 Newton iterations
+  with the free vertex +9.59 mm on triangle 1's +normal side.
+* Review: clean rebuild 13/16 (the 3 baseline failures, FAIL lines identical), dump bit-identical,
+  two mutations caught (gradient sign flip; rest sign flip in assembleEnergy). Merged.
+* Phase 1 remains in progress: T1.4 (J-curve, test 5), T1.5 (point seams, test 6) and T1.6
+  (contact readback, RoundedBoxCollider) remain.
