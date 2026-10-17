@@ -88,3 +88,21 @@ acceptance, with the measured numbers. Honest numbers; "not measured" where not 
   two mutations caught (gradient sign flip; rest sign flip in assembleEnergy). Merged.
 * Phase 1 remains in progress: T1.4 (J-curve, test 5), T1.5 (point seams, test 6) and T1.6
   (contact readback, RoundedBoxCollider) remain.
+
+### 2026-10-16/17 — T1.4 J-curve strain-stiffening (phase 1, item 4 of 6)
+
+* `FabricMaterial` gains optional `lockStrainWarp`/`lockStrainWeft` (0 = off) and
+  `lockStiffnessRatio` (>= 1); JSON keys `lock_strain_warp`/`lock_strain_weft`/
+  `lock_stiffness_ratio`; `TriC` gains `lockU`/`lockV`/`ratio` (u = warp, v = weft).
+* One shared helper `detail::jCurveStretch` (e, dE/dC, GN kappa = r*k) feeds the locked branches of
+  `assembleEnergy` (gradient `g·dedc` via `add(..., dedc/kappa, kappa)`, tension term `dedc/lu`) and
+  `variationalEnergy` (`jc.e`). The unlocked arithmetic is byte-for-byte the pre-T1.4 code.
+* Test 5a: C1 at the lock exactly; central-difference dE/dC worst relative error 2.5e-11.
+  Test 5b: single-triangle pinned-weight rig settles at C = 0.199503 (above the 0.15 lock) —
+  measured vs analytic piecewise answer and vs an independent bisection both 3.0e-12
+  (< 0.5 %); `StaticResult.energy` matches `jc.e − work` to 0 J; the v-axis mirror (lockV 0.12)
+  the same. Loader validation (ratio < 1, negative lock) throws.
+* Review: clean rebuild 13/16 (baseline failures, FAIL lines identical), dump bit-identical,
+  mutation (dedc ignores ratio) caught six ways. Merged. (The implementer session died to a
+  harness rate limit after committing; the review re-ran everything from the commit.)
+* Phase 1 remains: T1.5 (point seams, test 6) and T1.6 (contact readback, RoundedBoxCollider).
