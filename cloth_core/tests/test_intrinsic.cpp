@@ -510,5 +510,217 @@ int main() {
         std::printf("  after 10 frames: KE dampingScale 1 = %.6e J, dampingScale 5 = %.6e J (PASS if 5 < 1)\n", ke1, ke5);
         CHECK_MSG(ke5 < ke1, "dampingScale 5 KE %.6e J is not strictly below dampingScale 1 KE %.6e J", ke5, ke1);
     }
+
+    std::printf("[RoundedBoxCollider: SDF and normals on a rotated box (crochet plan 2.6 test 7a)]\n");
+    {
+        auto mul = [](const Mat3& A, const Mat3& B) {
+            Mat3 C;
+            for (int i = 0; i < 3; ++i)
+                for (int j = 0; j < 3; ++j)
+                    for (int k = 0; k < 3; ++k) C.m[3 * i + j] += A.m[3 * i + k] * B.m[3 * k + j];
+            return C;
+        };
+        auto rotX = [](Real a) {
+            Mat3 R;
+            R.m[0] = 1;
+            R.m[4] = std::cos(a); R.m[5] = -std::sin(a);
+            R.m[7] = std::sin(a); R.m[8] = std::cos(a);
+            return R;
+        };
+        auto rotZ = [](Real a) {
+            Mat3 R;
+            R.m[0] = std::cos(a); R.m[1] = -std::sin(a);
+            R.m[3] = std::sin(a); R.m[4] = std::cos(a);
+            R.m[8] = 1;
+            return R;
+        };
+        // rotate about x by 0.5 rad, then about z by 0.3 rad: R is applied to local vectors (world = centre + R l)
+        const Mat3 R = mul(rotZ(0.3), rotX(0.5));
+        const Vec3 centre(0.2, -0.1, 0.3), half(0.10, 0.05, 0.08);
+        const Real r = 0.015;
+        const Vec3 H = half - Vec3(r, r, r);  // core half extents
+        RoundedBoxCollider box(centre, R, half, r);
+        auto world = [&](const Vec3& l) { return centre + R * l; };
+        auto axisVec = [](int a, Real v) { return a == 0 ? Vec3(v, 0, 0) : a == 1 ? Vec3(0, v, 0) : Vec3(0, 0, v); };
+
+        // Every probe is a local point l; the expected distance and local normal follow from the SDF definition.
+        struct Probe {
+            std::string name;
+            Vec3 l, nl;
+            Real d;
+        };
+        std::vector<Probe> probes;
+        const Real comp[3] = {half.x, half.y, half.z}, core[3] = {H.x, H.y, H.z};
+        const char ax[3] = {'x', 'y', 'z'};
+        for (int a = 0; a < 3; ++a)
+            for (Real s : {Real(-1), Real(1)}) {
+                const Vec3 nl = axisVec(a, s);
+                const std::string sfx = std::string(1, ax[a]) + (s > 0 ? "+" : "-");
+                probes.push_back({"face out " + sfx, axisVec(a, s * (comp[a] + 0.02)), nl, 0.02});
+                probes.push_back({"face slab " + sfx, axisVec(a, s * (comp[a] - 0.01)), nl, -0.01});
+                probes.push_back({"core " + sfx, axisVec(a, s * (core[a] - 0.01)), nl, -0.01 - r});
+            }
+        const Real tc = r / std::sqrt(3.0), te = r / std::sqrt(2.0);
+        probes.push_back({"corner", Vec3(H.x + tc, H.y + tc, H.z + tc), normalized(Vec3(1, 1, 1)), 0});
+        probes.push_back({"edge", Vec3(H.x + te, H.y + te, 0), normalized(Vec3(1, 1, 0)), 0});
+        probes.push_back({"far", Vec3(2 * half.x, 0, 0), Vec3(1, 0, 0), half.x});
+
+        Real worstD = 0, worstN = 0, worstUnit = 0;
+        for (const Probe& pr : probes) {
+            Vec3 n;
+            const Real d = box.eval(world(pr.l), n);
+            const Vec3 nexp = R * pr.nl;
+            const Real de = std::fabs(d - pr.d), ne = length(n - nexp);
+            worstD = std::max(worstD, de);
+            worstN = std::max(worstN, ne);
+            worstUnit = std::max(worstUnit, std::fabs(length(n) - 1));
+            CHECK_MSG(de < 1e-12, "probe %s: d = %.17g, expected %.17g", pr.name.c_str(), d, pr.d);
+            CHECK_MSG(ne < 1e-12, "probe %s: |n - n_expected| = %.3e", pr.name.c_str(), ne);
+        }
+        auto report = [&](const char* name, const Vec3& l) {
+            Vec3 n;
+            const Real d = box.eval(world(l), n);
+            std::printf("  %-10s d = %+.12e m, n = (%+.9f, %+.9f, %+.9f)\n", name, d, n.x, n.y, n.z);
+        };
+        report("face out", Vec3(half.x + 0.02, 0, 0));
+        report("face slab", Vec3(half.x - 0.01, 0, 0));
+        report("core", Vec3(H.x - 0.01, 0, 0));
+        report("corner", Vec3(H.x + tc, H.y + tc, H.z + tc));
+        report("edge", Vec3(H.x + te, H.y + te, 0));
+        report("far", Vec3(2 * half.x, 0, 0));
+        std::printf("  %d probes (3 axes x 3 x 2 signs + corner, edge, far): worst |d - expected| = %.3e m,"
+                    " worst |n - expected| = %.3e, worst | |n| - 1 | = %.3e (PASS if all < 1e-12)\n",
+                    static_cast<int>(probes.size()), worstD, worstN, worstUnit);
+        CHECK_MSG(worstD < 1e-12, "worst SDF error %.3e", worstD);
+        CHECK_MSG(worstN < 1e-12, "worst normal error %.3e", worstN);
+        CHECK_MSG(worstUnit < 1e-12, "worst | |n| - 1 | %.3e", worstUnit);
+
+        // central differences of the SDF against the returned normal, 6 points away from edges/corners
+        const Real fdStep = 1e-6;
+        const Vec3 fdPts[6] = {
+            Vec3(half.x + 0.05, 0.01, -0.02),          // +x face slab
+            Vec3(-0.02, half.y + 0.04, 0.02),          // +y face slab
+            Vec3(0.01, -0.01, -(half.z + 0.03)),       // -z face slab
+            Vec3(H.x + 0.02, H.y + 0.02, 0.0),         // rounded +x/+y edge
+            Vec3(H.x + 0.03, H.y + 0.03, H.z + 0.03),  // rounded corner
+            Vec3(H.x - 0.03, 0.0, -0.01),              // inside the core, nearest the +x face
+        };
+        Real worstGrad = 0;
+        for (const Vec3& l : fdPts) {
+            const Vec3 p = world(l);
+            Vec3 n;
+            box.eval(p, n);
+            for (int k = 0; k < 3; ++k) {
+                Vec3 dp = p, dm = p, dummy;
+                (k == 0 ? dp.x : k == 1 ? dp.y : dp.z) += fdStep;
+                (k == 0 ? dm.x : k == 1 ? dm.y : dm.z) -= fdStep;
+                const Real fd = (box.eval(dp, dummy) - box.eval(dm, dummy)) / (2 * fdStep);
+                const Real an = k == 0 ? n.x : k == 1 ? n.y : n.z;
+                worstGrad = std::max(worstGrad, std::fabs(fd - an));
+            }
+        }
+        std::printf("  central-difference gradient (step %.0e) at %d points: worst |FD - n| component = %.3e (PASS if < 1e-4)\n",
+                    fdStep, 6, worstGrad);
+        CHECK_MSG(worstGrad < 1e-4, "SDF gradient mismatches the normal by %.3e", worstGrad);
+
+        // setPose recomputes the frame: a probe in the new frame reads the new-frame answer, and the old probe
+        // point no longer reads its old distance.
+        const Vec3 pOld = world(Vec3(half.x + 0.02, 0, 0));  // +x face probe of the original pose (d = +0.02)
+        const Vec3 centre2 = centre + Vec3(0.05, 0.04, -0.02);
+        const Mat3 R2 = mul(rotZ(0.9), rotX(-0.4));
+        box.setPose(centre2, R2);
+        Vec3 n2, nOld;
+        const Real d2 = box.eval(centre2 + R2 * Vec3(half.x + 0.02, 0, 0), n2);
+        const Real dOld = box.eval(pOld, nOld);
+        std::printf("  setPose: new-frame +x face probe d = %.12e (expected +0.02), |n - R2 ex| = %.3e\n",
+                    d2, length(n2 - R2 * Vec3(1, 0, 0)));
+        std::printf("  the pre-setPose probe point (was d = +0.02) now reads d = %.12e (PASS if changed)\n", dOld);
+        CHECK_MSG(std::fabs(d2 - 0.02) < 1e-12, "setPose: new-frame probe reads d = %.17g", d2);
+        CHECK_MSG(length(n2 - R2 * Vec3(1, 0, 0)) < 1e-12, "setPose: normal not recomputed, |n - R2 ex| = %.3e",
+                  length(n2 - R2 * Vec3(1, 0, 0)));
+        CHECK_MSG(std::fabs(dOld - 0.02) > 1e-3, "setPose left the old probe reading %.17g", dOld);
+
+        // r = 0 degenerates to the sharp box (the gdextension's behaviour): a corner probe reads sqrt(3) t.
+        const Real tSharp = 0.02;
+        RoundedBoxCollider sharp(centre, R, half, 0.0);
+        Vec3 ns;
+        const Real ds = sharp.eval(centre + R * Vec3(half.x + tSharp, half.y + tSharp, half.z + tSharp), ns);
+        std::printf("  r = 0 (sharp box): corner probe l = half + %.2f (1,1,1) reads d = %.12e (expected sqrt(3)*%.2f = %.12e),"
+                    " |n - R (1,1,1)/sqrt(3)| = %.3e\n",
+                    tSharp, ds, tSharp, std::sqrt(3.0) * tSharp, length(ns - normalized(R * Vec3(1, 1, 1))));
+        CHECK_MSG(std::fabs(ds - std::sqrt(3.0) * tSharp) < 1e-12, "r = 0 corner probe reads %.17g, expected %.17g", ds,
+                  std::sqrt(3.0) * tSharp);
+        CHECK_MSG(length(ns - normalized(R * Vec3(1, 1, 1))) < 1e-12, "r = 0 corner normal error %.3e",
+                  length(ns - normalized(R * Vec3(1, 1, 1))));
+
+        bool threwHalf = false, threwNegR = false, threwBigR = false;
+        try { RoundedBoxCollider bad(centre, R, Vec3(0, half.y, half.z), 0.0); (void)bad; }
+        catch (const std::invalid_argument&) { threwHalf = true; }
+        try { RoundedBoxCollider bad(centre, R, half, -0.001); (void)bad; }
+        catch (const std::invalid_argument&) { threwNegR = true; }
+        try { RoundedBoxCollider bad(centre, R, half, half.x); (void)bad; }
+        catch (const std::invalid_argument&) { threwBigR = true; }
+        std::printf("  validation: half.x = 0 throws: %s, r < 0 throws: %s, r >= min(half) throws: %s (PASS if yes/yes/yes)\n",
+                    threwHalf ? "yes" : "no", threwNegR ? "yes" : "no", threwBigR ? "yes" : "no");
+        CHECK_MSG(threwHalf, "RoundedBoxCollider accepted half.x = 0");
+        CHECK_MSG(threwNegR, "RoundedBoxCollider accepted a negative cornerRadius");
+        CHECK_MSG(threwBigR, "RoundedBoxCollider accepted cornerRadius >= min(halfExtents)");
+    }
+
+    std::printf("[RoundedBoxCollider: resting patch vector force balance (crochet plan 2.5 + 2.6 test 7b)]\n");
+    {
+        // A flat 0.12 x 0.12 m cotton patch (2 cm cells) starts 2.5 cm above the flat top face of a rounded box:
+        // centre (0, -0.03, 0), identity rotation, half (0.12, 0.03, 0.12), r 0.02. The box's top face is y = 0 and
+        // its flat part runs |x|, |z| <= H.x = H.z = 0.10, so the whole patch (|x|, |z| <= 0.06) lands on the flat.
+        Mat3 I;
+        I.m[0] = I.m[4] = I.m[8] = 1;
+        auto box = std::make_shared<RoundedBoxCollider>(Vec3(0, -0.03, 0), I, Vec3(0.12, 0.03, 0.12), 0.02);
+        PanelMesh patch = meshRect(0.12, 0.12, 0.02);
+        PanelPlacement place;
+        place.origin = Vec3(-0.06, 0.025, -0.06);
+        place.ex = Vec3(1, 0, 0);
+        place.ey = Vec3(0, 0, 1);
+        SolverParams sp;  // defaults: implicit integrator, gravity (0, -9.81, 0), no pins
+        ClothSolver s(sp);
+        s.setCollider(box);
+        s.addPanel(patch, *fab, place, 0, "patch");
+        const int N = s.vertexCount();
+        const int frames = 200;
+        for (int f = 0; f < frames; ++f) s.step();
+
+        const std::vector<Real>& forces = s.rigidContactForces();
+        const std::vector<Vec3>& normals = s.contactNormals();
+        CHECK(static_cast<int>(forces.size()) == N);
+        CHECK(static_cast<int>(normals.size()) == N);
+        Vec3 F(0, 0, 0);
+        Real m = 0, minForce = 1e30;
+        int contact = 0;
+        bool nonNeg = true, normalsUnit = true, upward = true;
+        for (int i = 0; i < N; ++i) {
+            m += s.vertexMass(i);
+            if (forces[i] < 0) nonNeg = false;
+            if (forces[i] > 0) {
+                ++contact;
+                minForce = std::min(minForce, forces[i]);
+                F += normals[i] * forces[i];
+                if (std::fabs(length(normals[i]) - 1) > 1e-12) normalsUnit = false;
+                if (dot(normals[i], Vec3(0, 1, 0)) <= 0.5) upward = false;
+            }
+        }
+        const Real g = 9.81;
+        const Vec3 W(0, m * g, 0);
+        const Real rel = length(F - W) / (m * g);
+        const Real mDensity = fab->density * 0.12 * 0.12;
+        std::printf("  after %d frames: KE %.3e J, %d of %d vertices carry force > 0 (%.3e N minimum)\n", frames,
+                    s.kineticEnergy(), contact, N, contact ? minForce : 0.0);
+        std::printf("  m = sum vertexMass(i) = %.9f kg (material density x area = %.9f kg), m g = %.9f N\n", m, mDensity, m * g);
+        std::printf("  Fv = sum f_i n_i = (%+.6e, %+.6e, %+.6e) N vs (0, m g, 0) = (0, %+.6e, 0) N\n", F.x, F.y, F.z, m * g);
+        std::printf("  |Fv - m g| / (m g) = %.3e (PASS if < 1e-2)\n", rel);
+        CHECK_MSG(rel < 0.01, "resting patch force balance off by %.3e (relative)", rel);
+        CHECK_MSG(nonNeg, "a rigid contact force is negative");
+        CHECK_MSG(normalsUnit, "a contact normal of a positive force is not unit length");
+        CHECK_MSG(upward, "a contact normal of a positive force does not point upward");
+        CHECK_MSG(contact >= 20, "only %d vertices carry a contact force", contact);
+    }
     FINISH();
 }

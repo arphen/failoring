@@ -528,6 +528,15 @@ void ClothSolver::stepImplicit() {
                     else x_[i] -= nrm * phiR;
                     phiR = 0; phi = -lim;
                 }
+                // Audit (§2.5): is contactN_[i] written for every vertex with rigidForce_[i] > 0? YES, in this
+                // pass of the same Newton iteration. contactN_[i] is (re)written here for every vertex with a
+                // non-zero inverse mass w_[i] whenever a collider exists; the continue above skips exactly the
+                // pinned and the no-collider vertices, and both get rigidForce_[i] = 0 in the force loop below.
+                // A positive force needs a collider: without one, contactPhi_[i] stays 1e30, so neither the
+                // `contactPhi_ < contactBand` hold test nor the contactAL `f = lambda - rho * contactPhi_ > 0`
+                // test can fire. It also needs w_[i] != 0 (pinned vertices are assigned 0). So every vertex
+                // with rigidForce_ > 0 had its normal written here in the same iteration: the normals are
+                // valid exactly where the force is > 0.
                 contactN_[i] = nrm;
                 contactPhi_[i] = phiR;
                 if (skin) skinPhi_[i] = phi;
