@@ -77,6 +77,27 @@ static const Link* findLink(const StitchGraph& g, int a, int b, const char* kind
         if (l.a == a && l.b == b && l.kind == kind) return &l;
     return nullptr;
 }
+static const PointSeam* findSeam(const std::vector<PointSeam>& seams, int stitch) {
+    for (const PointSeam& s : seams)
+        if (s.stitch == stitch) return &s;
+    return nullptr;
+}
+// The stitch at the `#!` (row, index) address; nullptr when there is none.
+static const Stitch* stitchAt(const StitchGraph& g, int row, int index) {
+    return stitchById(g, idAt(g, row, index));
+}
+// Stitches whose resolved RS-relative loop differs from the as-written one:
+// exactly the blo/flo on WS rows.
+static int countSwappedLoop(const StitchGraph& g) {
+    int n = 0;
+    for (const Stitch& s : g.st)
+        if (s.loopRs != s.loop) ++n;
+    return n;
+}
+static bool rsAt(const StitchGraph& g, int row, int index) {
+    const int id = idAt(g, row, index);
+    return id >= 0 && g.st[id].rs;
+}
 
 // Invariants every import must satisfy: ids are positions, rows cover 0..N-1,
 // every target/prev/link endpoint exists, no stitch is in two links, every
@@ -388,6 +409,230 @@ int main() {
         const StitchGraph g = importPatternFile(exportPath("pouch"));
         CHECKP(g.st.size() == 1380 && g.links.empty(), "pouch.json without the pattern: 1380 stitches, 0 links (%zu/%zu)",
                g.st.size(), g.links.size());
+    }
+
+    // ---- facing/RS, resolved by resolveFacing on every import (plan 5.5) ----
+    {
+        // Rule: rs(0) = true. Row 0 here is the 16-ch foundation (every node
+        // `ch`), so its `turn` is part of working back along the chain and does
+        // not flip row 1 ("row 1 is RS by default"); body rows 1..50 all turn,
+        // so rs(r) = rows[r-1].turned ? !rs(r-1) : rs(r-1) alternates from row
+        // 1 RS: odd body rows RS (row 49 RS), even WS (row 50 WS). The border
+        // round 51 does not turn, so the strap restarts RS at 52 and turns
+        // again: 52 RS, 53 WS, ..., 131 WS (79 turns after 52). The strap's
+        // last row turns, so the join round 132 is RS.
+        const StitchGraph g = loadFixture("pouch");
+        CHECKP(rsAt(g, 1, 0), "pouch facing: [1,0] RS");
+        CHECKP(!rsAt(g, 2, 0), "pouch facing: [2,0] WS");
+        CHECKP(rsAt(g, 49, 0), "pouch facing: [49,0] RS (odd body rows are RS)");
+        CHECKP(!rsAt(g, 50, 0), "pouch facing: [50,0] WS");
+        CHECKP(rsAt(g, 51, 0), "pouch facing: border round [51,0] RS");
+        CHECKP(rsAt(g, 52, 0), "pouch facing: strap row 1 [52,0] RS (the border round does not turn)");
+        CHECKP(!rsAt(g, 131, 0), "pouch facing: strap row 80 [131,0] WS");
+        CHECKP(rsAt(g, 132, 0), "pouch facing: join round [132,0] RS");
+        int bodyAlternating = 0;
+        for (int r = 1; r <= 50; ++r)
+            if (rsAt(g, r, 0) == (r % 2 == 1)) ++bodyAlternating;
+        CHECKP(bodyAlternating == 50, "pouch facing: all 50 body rows alternate from row 1 RS (%d)", bodyAlternating);
+        int strapAlternating = 0;
+        for (int r = 52; r <= 131; ++r)  // even rows are RS after round 51
+            if (rsAt(g, r, 0) == (r % 2 == 0)) ++strapAlternating;
+        CHECKP(strapAlternating == 80, "pouch facing: all 80 strap rows alternate from [52,0] RS to [131,0] WS (%d)",
+               strapAlternating);
+    }
+    {
+        // Bag: row 0 is the 51-ch foundation (no flip); the rounds 1..44 never
+        // turn, so all are RS, and strap row 45 (row 1 of the strap) is RS.
+        // Strap rows 45..144 all turn: 45 RS, 46 WS, ..., 144 WS (99 turns
+        // after 45); row 144 turns, so the join round 145 is RS again.
+        const StitchGraph g = loadFixture("bag_round_blo");
+        CHECKP(rsAt(g, 1, 0) && rsAt(g, 4, 0) && rsAt(g, 45, 0), "bag_round_blo facing: rounds 1 and 4 RS, strap row 45 RS");
+        CHECKP(!rsAt(g, 46, 0) && !rsAt(g, 144, 0), "bag_round_blo facing: strap rows 46 and 144 WS");
+        CHECKP(rsAt(g, 145, 0), "bag_round_blo facing: join round 145 RS");
+        int roundsRs = 0;
+        for (int r = 1; r <= 44; ++r)
+            if (rsAt(g, r, 0)) ++roundsRs;
+        CHECKP(roundsRs == 44, "bag_round_blo facing: all 44 wall rounds RS (%d)", roundsRs);
+        int strapAlternating = 0;
+        for (int r = 45; r <= 144; ++r)  // odd rows are RS after round 44
+            if (rsAt(g, r, 0) == (r % 2 == 1)) ++strapAlternating;
+        CHECKP(strapAlternating == 100, "bag_round_blo facing: all 100 strap rows alternate from [45,0] RS to [144,0] WS (%d)",
+               strapAlternating);
+    }
+    {
+        // Circles and the tube never turn: every stitch keeps the RS of round 1.
+        const char* names[] = {"circle_plus5", "circle_plus6", "circle_plus8", "tube40"};
+        for (const char* name : names) {
+            const StitchGraph g = loadFixture(name);
+            int rsStitches = 0;
+            for (const Stitch& s : g.st)
+                if (s.rs) ++rsStitches;
+            CHECKP(rsStitches == static_cast<int>(g.st.size()), "%s facing: all stitches RS (%d/%zu)", name, rsStitches,
+                   g.st.size());
+        }
+    }
+
+    // ---- RS-relative loop insertion: blo/flo swap exactly on WS rows --------
+    {
+        // The facing swatch: 6-ch foundation, then scbl (row 1 RS), scbl (row 2
+        // WS), scfl (row 3 RS), scfl (row 4 WS); every row turns. Row 1 and the
+        // sc of rows 2..4 sit at index 0/1 (index 0 of rows 2..4 is the turning
+        // chain).
+        const StitchGraph g = loadFixture("facing");
+        CHECKP(g.st.size() == 29 && g.rows.size() == 5, "facing: 29 stitches in 5 rows (%zu/%zu)", g.st.size(),
+               g.rows.size());
+        CHECKP(rowCount(g, 0) == 6 && rowCount(g, 1) == 5 && rowCount(g, 2) == 6 && rowCount(g, 3) == 6 &&
+                   rowCount(g, 4) == 6,
+               "facing: node counts 6/5/6/6/6 (%d/%d/%d/%d/%d)", rowCount(g, 0), rowCount(g, 1), rowCount(g, 2),
+               rowCount(g, 3), rowCount(g, 4));
+        CHECKP(structuralViolations(g) == 0, "facing: graph structure consistent (%d violations)", structuralViolations(g));
+        const Stitch* r1 = stitchAt(g, 1, 0);  // RS scbl
+        const Stitch* r2 = stitchAt(g, 2, 1);  // WS scbl
+        const Stitch* r3 = stitchAt(g, 3, 1);  // RS scfl
+        const Stitch* r4 = stitchAt(g, 4, 1);  // WS scfl
+        CHECKP(r1 && r1->rs && r1->loop == "blo" && r1->loopRs == "blo", "facing: RS row + scbl keeps blo (%s -> %s)",
+               r1 ? r1->loop.c_str() : "(missing)", r1 ? r1->loopRs.c_str() : "(missing)");
+        CHECKP(r2 && !r2->rs && r2->loop == "blo" && r2->loopRs == "flo", "facing: WS row + scbl becomes flo (%s -> %s)",
+               r2 ? r2->loop.c_str() : "(missing)", r2 ? r2->loopRs.c_str() : "(missing)");
+        CHECKP(r3 && r3->rs && r3->loop == "flo" && r3->loopRs == "flo", "facing: RS row + scfl keeps flo (%s -> %s)",
+               r3 ? r3->loop.c_str() : "(missing)", r3 ? r3->loopRs.c_str() : "(missing)");
+        CHECKP(r4 && !r4->rs && r4->loop == "flo" && r4->loopRs == "blo", "facing: WS row + scfl becomes blo (%s -> %s)",
+               r4 ? r4->loop.c_str() : "(missing)", r4 ? r4->loopRs.c_str() : "(missing)");
+        CHECKP(countSwappedLoop(g) == 10, "facing: 10 of the 20 blo/flo stitches swap (the two WS rows) (%d)",
+               countSwappedLoop(g));
+    }
+    {
+        // bag_round_blo's round 4 works 114 scbl on an RS round: no swap.
+        const StitchGraph g = loadFixture("bag_round_blo");
+        const Stitch* s = stitchAt(g, 4, 0);
+        CHECKP(s && s->rs && s->loop == "blo" && s->loopRs == "blo", "bag_round_blo: round 4 scbl on RS keeps blo (%s)",
+               s ? s->loopRs.c_str() : "(missing)");
+        CHECKP(countSwappedLoop(g) == 0, "bag_round_blo: 0 stitches swap their loop (%d)", countSwappedLoop(g));
+    }
+    {
+        // every other fixture: the as-written both/space (and the RS blo/flo of
+        // the bag and slst variants) copy through unchanged.
+        const char* names[] = {"pouch",         "bag_round_plain", "bag_round_flo", "bag_round_slst",
+                               "bag_round_surface", "circle_plus5",  "circle_plus6",  "circle_plus8",
+                               "tube40"};
+        int total = 0;
+        for (const char* name : names) total += countSwappedLoop(loadFixture(name));
+        CHECKP(total == 0, "nine fixtures: as-written both/space/blo/flo keep loopRs == loop (%d swapped)", total);
+    }
+
+    // ---- `#! count [row] N`: one line per row in every fixture ---------------
+    {
+        // The committed fixtures carry a mechanically generated count block for
+        // every row (node counts from the committed exports: turning chains and
+        // join sl sts included). Importing a fixture checks all of its lines,
+        // so a clean import is the check.
+        const char* names[] = {"pouch",         "bag_round_plain", "bag_round_blo", "bag_round_flo", "bag_round_slst",
+                               "bag_round_surface", "circle_plus5",  "circle_plus6",  "circle_plus8", "tube40",
+                               "facing"};
+        int imported = 0;
+        for (const char* name : names) {
+            bool ok = true;
+            std::string err;
+            try {
+                loadFixture(name);
+            } catch (const std::exception& e) {
+                ok = false;
+                err = e.what();
+            }
+            const std::string msg = ok ? "" : (" (" + err + ")");
+            CHECKP(ok, "%s: imports with its per-row #! count lines%s", name, msg.c_str());
+            if (ok) ++imported;
+        }
+        CHECKP(imported == 11, "counts: all 11 fixtures import with their count lines (%d)", imported);
+    }
+    {
+        // `#! count [row] N` against the tiny export (rows 0 and 1 have two
+        // nodes each): correct counts pass, each failure names its line and
+        // token in the T4.1 error style.
+        const StitchGraph g = importPattern(tinyJson(), "#! count [0] 2\n#! count [1] 2\n");
+        CHECKP(g.st.size() == 4, "count: correct counts import cleanly (%zu stitches)", g.st.size());
+        const std::string c1 = importError(tinyJson(), "a pattern line\n#! count [1] 3\n");
+        CHECKP(has(c1, "line 2: row [1] has 2 stitches, the pattern says 3"),
+               "count: wrong count names line 2, row [1] and both numbers (%s)", c1.c_str());
+        const std::string c2 = importError(tinyJson(), "#! count [9] 2\n");
+        CHECKP(has(c2, "line 1: row [9] does not exist"), "count: nonexistent row names line 1 and [9] (%s)", c2.c_str());
+        const std::string c3 = importError(tinyJson(), "#! count [1]\n");
+        CHECKP(has(c3, "line 1: expected `count [row] N`, got 1 argument(s)"),
+               "count: wrong arity names line 1 (%s)", c3.c_str());
+        const std::string c4 = importError(tinyJson(), "#! count 1 2\n");
+        CHECKP(has(c4, "cannot parse address '1' (expected [row])"), "count: address without brackets (%s)", c4.c_str());
+        const std::string c5 = importError(tinyJson(), "#! count [1,0] 2\n");
+        CHECKP(has(c5, "cannot parse address '[1,0]' (expected [row])"),
+               "count: the [row,pos] link address is rejected here (%s)", c5.c_str());
+        const std::string c6 = importError(tinyJson(), "#! count [1] x\n");
+        CHECKP(has(c6, "cannot parse count 'x'"), "count: non-integer count value (%s)", c6.c_str());
+    }
+
+    // ---- point seams resolved from the links (plan section 6.7) -------------
+    {
+        const StitchGraph g = loadFixture("pouch");
+        const std::vector<PointSeam> seams = pointSeams(g);
+        int both = 0, joins = 0, matched = 0;
+        for (const PointSeam& s : seams) {
+            if (s.kind == "both_layers") ++both;
+            if (s.kind == "join") ++joins;
+            if (findLink(g, s.stitch, s.partner, s.kind.c_str()) != nullptr) ++matched;
+        }
+        CHECKP(seams.size() == 55 && both == 50 && joins == 5,
+               "point seams: pouch resolves 55 = 50 both_layers + 5 join (%zu/%d/%d)", seams.size(), both, joins);
+        CHECKP(matched == 55, "point seams: every pouch seam mirrors its link, kind included (%d)", matched);
+        const PointSeam* s0 = findSeam(seams, idAt(g, 51, 0));
+        const PointSeam* s24 = findSeam(seams, idAt(g, 51, 24));
+        const PointSeam* s40 = findSeam(seams, idAt(g, 51, 40));
+        const PointSeam* j0 = findSeam(seams, idAt(g, 132, 0));
+        const PointSeam* j4 = findSeam(seams, idAt(g, 132, 4));
+        CHECKP(s0 && s0->partner == idAt(g, 26, 15) && s0->kind == "both_layers",
+               "point seams: seam stitch [51,0] has partner [26,15] (stitch %d both_layers)", s0 ? s0->partner : -1);
+        CHECKP(s24 && s24->partner == idAt(g, 50, 15) && s40 && s40->partner == idAt(g, 50, 1),
+               "point seams: side-2 seams [51,24] -> [50,15] and [51,40] -> [50,1] resolve");
+        CHECKP(j0 && j0->partner == idAt(g, 131, 1) && j0->kind == "join" && j4 && j4->partner == idAt(g, 131, 5) &&
+                   j4->kind == "join",
+               "point seams: joins [132,0] -> [131,1] and [132,4] -> [131,5] resolve (%d/%d)", j0 ? j0->partner : -1,
+               j4 ? j4->partner : -1);
+    }
+    {
+        // Each bag has its six strap-end joins; the circles and the tube none.
+        const char* bags[] = {"bag_round_plain", "bag_round_blo", "bag_round_flo", "bag_round_slst",
+                              "bag_round_surface"};
+        for (const char* name : bags) {
+            const StitchGraph g = loadFixture(name);
+            const std::vector<PointSeam> seams = pointSeams(g);
+            int joins = 0;
+            for (const PointSeam& s : seams)
+                if (s.kind == "join") ++joins;
+            CHECKP(seams.size() == 6 && joins == 6, "%s: 6 join point seams (%zu/%d)", name, seams.size(), joins);
+        }
+        const char* none[] = {"circle_plus5", "circle_plus6", "circle_plus8", "tube40"};
+        int total = 0;
+        for (const char* name : none) total += static_cast<int>(pointSeams(loadFixture(name)).size());
+        CHECKP(total == 0, "point seams: the circles and the tube have none (%d)", total);
+    }
+    {
+        // Validation: a link whose seam stitch has no export target, and a
+        // partner that is already a target of the seam stitch; both name the
+        // stitch ids. The link itself imports (the importer cannot see this).
+        const StitchGraph noTarget = importPattern(tinyJson(), "#! link [0,1] [1,0] both_layers\n");
+        std::string m1;
+        try {
+            pointSeams(noTarget);
+        } catch (const std::exception& e) {
+            m1 = e.what();
+        }
+        CHECKP(has(m1, "seam stitch 1 has no target"), "point seam error: empty targets names stitch 1 (%s)", m1.c_str());
+        const StitchGraph dupPartner = importPattern(tinyJson(), "#! link [1,0] [0,0] both_layers\n");
+        std::string m2;
+        try {
+            pointSeams(dupPartner);
+        } catch (const std::exception& e) {
+            m2 = e.what();
+        }
+        CHECKP(has(m2, "stitch 0 is already a target of seam stitch 2"),
+               "point seam error: an existing target names both ids (%s)", m2.c_str());
     }
 
     FINISH();

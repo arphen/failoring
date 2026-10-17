@@ -248,6 +248,17 @@ std::vector<std::string> tokensOf(const std::string& line) {
     return out;
 }
 
+// A whole non-negative decimal integer: no sign, no trailing garbage. Returns
+// false when the token has anything else.
+bool wholeNumber(const std::string& s, int* out) {
+    const char* begin = s.c_str();
+    char* end = nullptr;
+    const long v = std::strtol(begin, &end, 10);
+    if (end == begin || *end != '\0' || v < 0 || v > 0x7FFFFFFF) return false;
+    *out = static_cast<int>(v);
+    return true;
+}
+
 // `[row,pos]` with free whitespace: the brackets are required, the two numbers
 // are decimal integers. Returns false when the token has anything else.
 bool parseAddress(const std::string& tok, int* row, int* pos) {
@@ -257,20 +268,20 @@ bool parseAddress(const std::string& tok, int* row, int* pos) {
     if (comma == std::string::npos) return false;
     const std::string a = inner.substr(0, comma);
     const std::string b = inner.substr(comma + 1);
-    const auto whole = [](const std::string& s, int* out) {
-        const char* begin = s.c_str();
-        char* end = nullptr;
-        const long v = std::strtol(begin, &end, 10);
-        if (end == begin || *end != '\0' || v < 0 || v > 0x7FFFFFFF) return false;
-        *out = static_cast<int>(v);
-        return true;
-    };
-    return whole(a, row) && whole(b, pos);
+    return wholeNumber(a, row) && wholeNumber(b, pos);
+}
+
+// `[row]`, the `#! count` address: one number, not the `[row,pos]` form.
+bool parseRowAddress(const std::string& tok, int* row) {
+    if (tok.size() < 3 || tok.front() != '[' || tok.back() != ']') return false;
+    return wholeNumber(tok.substr(1, tok.size() - 2), row);
 }
 
 std::string addressText(int row, int pos) {
     return "[" + std::to_string(row) + "," + std::to_string(pos) + "]";
 }
+
+std::string rowAddressText(int row) { return "[" + std::to_string(row) + "]"; }
 
 // Apply every `#!` line of the pattern text to the imported graph. Lines whose
 // first two characters are not `#!` are pattern text and ignored here.
@@ -289,6 +300,11 @@ void applyExtensionLines(const std::string& text, StitchGraph& g) {
         linked.insert(l.b);
     }
 
+    // The `#! count` expected values: the stitch nodes of every row, turning
+    // chains and join sl sts included (that is exactly Stitch::row).
+    std::vector<int> rowNodes(g.rows.size(), 0);
+    for (const Stitch& s : g.st) ++rowNodes[s.row];
+
     std::istringstream in(text);
     std::string line;
     int lineNo = 0;
@@ -297,9 +313,30 @@ void applyExtensionLines(const std::string& text, StitchGraph& g) {
         if (line.size() < 2 || line[0] != '#' || line[1] != '!') continue;
         const std::vector<std::string> tok = tokensOf(line.substr(2));
         if (tok.empty())
-            extFail(lineNo, "missing keyword (expected `link [row,pos] [row,pos] <kind>`)");
+            extFail(lineNo, "missing keyword (expected `link [row,pos] [row,pos] <kind>` or `count [row] N`)");
+        if (tok[0] == "count") {
+            if (tok.size() != 3)
+                extFail(lineNo, "expected `count [row] N`, got " + std::to_string(tok.size() - 1) +
+                                    " argument(s) after the keyword");
+            int row = 0;
+            if (!parseRowAddress(tok[1], &row))
+                extFail(lineNo, "cannot parse address '" + tok[1] + "' (expected [row])");
+            int want = 0;
+            if (!wholeNumber(tok[2], &want))
+                extFail(lineNo, "cannot parse count '" + tok[2] + "' (expected a non-negative integer)");
+            if (rowNodes.empty())
+                extFail(lineNo, "row " + rowAddressText(row) + " does not exist (the export has no rows)");
+            if (row >= static_cast<int>(rowNodes.size()))
+                extFail(lineNo, "row " + rowAddressText(row) + " does not exist (rows are 0.." +
+                                    std::to_string(rowNodes.size() - 1) + ")");
+            const int have = rowNodes[row];
+            if (have != want)
+                extFail(lineNo, "row " + rowAddressText(row) + " has " + std::to_string(have) +
+                                    " stitches, the pattern says " + std::to_string(want));
+            continue;
+        }
         if (tok[0] != "link")
-            extFail(lineNo, "unknown keyword '" + tok[0] + "' (T4.1 implements 'link')");
+            extFail(lineNo, "unknown keyword '" + tok[0] + "' (T4.2 implements 'link' and 'count')");
         if (tok.size() != 4)
             extFail(lineNo, "expected `link [row,pos] [row,pos] <kind>`, got " + std::to_string(tok.size() - 1) +
                                 " argument(s) after the keyword");
@@ -423,6 +460,10 @@ StitchGraph importPattern(const std::string& jsonText, const std::string& extens
     }
 
     if (!extensionText.empty()) applyExtensionLines(extensionText, g);
+
+    // RS/WS facing and RS-relative loop insertion (plan section 5.5), resolved
+    // for every import, after the extension lines have been applied.
+    resolveFacing(g);
     return g;
 }
 

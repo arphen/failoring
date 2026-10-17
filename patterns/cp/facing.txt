@@ -1,0 +1,18 @@
+# Facing swatch - RS/WS loop insertion test (docs/CROCHET_PLAN.md section 5.5).
+# 6-chain foundation; row 1 (RS) works 5 scbl into the chain; row 2 (WS) works
+# 5 scbl; row 3 (RS) works 5 scfl; row 4 (WS) works 5 scfl; every row ends with
+# a turn.
+# Expected RS-relative insertion: row 1 blo stays blo; row 2 blo becomes flo;
+# row 3 flo stays flo; row 4 flo becomes blo (blo/flo swap exactly on the WS
+# rows 2 and 4).
+6ch,turn
+sk,5scbl,turn
+ch,5scbl,turn
+ch,5scfl,turn
+ch,5scfl,turn
+# ---- Failoring row counts (#! count [row] N; docs/CROCHET_DSL.md section 2) ----
+#! count [0] 6
+#! count [1] 5
+#! count [2] 6
+#! count [3] 6
+#! count [4] 6
