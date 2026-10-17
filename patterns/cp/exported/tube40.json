@@ -228,7 +228,7 @@
       "index": 0,
       "loop": "both",
       "targets": [
-        1
+        18
       ],
       "prev": 19,
       "line": 4
@@ -241,7 +241,7 @@
       "index": 1,
       "loop": "both",
       "targets": [
-        2
+        17
       ],
       "prev": 20,
       "line": 4
@@ -254,7 +254,7 @@
       "index": 2,
       "loop": "both",
       "targets": [
-        3
+        16
       ],
       "prev": 21,
       "line": 4
@@ -267,7 +267,7 @@
       "index": 3,
       "loop": "both",
       "targets": [
-        4
+        15
       ],
       "prev": 22,
       "line": 4
@@ -280,7 +280,7 @@
       "index": 4,
       "loop": "both",
       "targets": [
-        5
+        14
       ],
       "prev": 23,
       "line": 4
@@ -293,7 +293,7 @@
       "index": 5,
       "loop": "both",
       "targets": [
-        6
+        13
       ],
       "prev": 24,
       "line": 4
@@ -306,7 +306,7 @@
       "index": 6,
       "loop": "both",
       "targets": [
-        7
+        12
       ],
       "prev": 25,
       "line": 4
@@ -319,7 +319,7 @@
       "index": 7,
       "loop": "both",
       "targets": [
-        8
+        11
       ],
       "prev": 26,
       "line": 4
@@ -332,7 +332,7 @@
       "index": 8,
       "loop": "both",
       "targets": [
-        9
+        10
       ],
       "prev": 27,
       "line": 4
@@ -345,7 +345,7 @@
       "index": 9,
       "loop": "both",
       "targets": [
-        10
+        9
       ],
       "prev": 28,
       "line": 4
@@ -358,7 +358,7 @@
       "index": 10,
       "loop": "both",
       "targets": [
-        11
+        8
       ],
       "prev": 29,
       "line": 4
@@ -371,7 +371,7 @@
       "index": 11,
       "loop": "both",
       "targets": [
-        12
+        7
       ],
       "prev": 30,
       "line": 4
@@ -384,7 +384,7 @@
       "index": 12,
       "loop": "both",
       "targets": [
-        13
+        6
       ],
       "prev": 31,
       "line": 4
@@ -397,7 +397,7 @@
       "index": 13,
       "loop": "both",
       "targets": [
-        14
+        5
       ],
       "prev": 32,
       "line": 4
@@ -410,7 +410,7 @@
       "index": 14,
       "loop": "both",
       "targets": [
-        15
+        4
       ],
       "prev": 33,
       "line": 4
@@ -423,7 +423,7 @@
       "index": 15,
       "loop": "both",
       "targets": [
-        16
+        3
       ],
       "prev": 34,
       "line": 4
@@ -436,7 +436,7 @@
       "index": 16,
       "loop": "both",
       "targets": [
-        17
+        2
       ],
       "prev": 35,
       "line": 4
@@ -449,7 +449,7 @@
       "index": 17,
       "loop": "both",
       "targets": [
-        18
+        1
       ],
       "prev": 36,
       "line": 4
@@ -6621,8 +6621,8 @@
     {
       "id": 0,
       "piece": "main",
-      "kind": "round",
-      "turned": false
+      "kind": "row",
+      "turned": true
     },
     {
       "id": 1,

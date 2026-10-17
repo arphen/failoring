@@ -44,7 +44,8 @@ add_library(crochet_core STATIC
   crochet_core/src/yarn.cpp
   crochet_core/src/stitch_model.cpp
   crochet_core/src/parse.cpp
-  crochet_core/src/graph.cpp)
+  crochet_core/src/graph.cpp
+  crochet_core/src/crochet_mesh.cpp)
 target_include_directories(crochet_core PUBLIC crochet_core/include)
 target_link_libraries(crochet_core PUBLIC cloth_core)
 target_compile_options(crochet_core PRIVATE -Wall -Wextra)
@@ -84,6 +85,15 @@ target_link_libraries(test_crochet_parse PRIVATE crochet_core)
 target_include_directories(test_crochet_parse PRIVATE cloth_core/tests)
 target_compile_definitions(test_crochet_parse PRIVATE FL_PATTERNS_DIR="${FL_PATTERNS_DIR}")
 add_test(NAME test_crochet_parse COMMAND test_crochet_parse)
+
+# crochet_core test: the mesh topology (plan sections 6.1-6.4, hygiene test 6.10.4):
+# faces, rest shapes and orientation of every fixture. Reads the committed exports
+# and the yarn database; no node at test time.
+add_executable(test_crochet_mesh crochet_core/tests/test_crochet_mesh.cpp)
+target_link_libraries(test_crochet_mesh PRIVATE crochet_core)
+target_include_directories(test_crochet_mesh PRIVATE cloth_core/tests)
+target_compile_definitions(test_crochet_mesh PRIVATE FL_PATTERNS_DIR="${FL_PATTERNS_DIR}" FL_YARNS_PATH="${FL_YARNS_PATH}")
+add_test(NAME test_crochet_mesh COMMAND test_crochet_mesh)
 
 # Native timing (not in ctest): cmake -DFL_BENCH=ON, then build/bench_native.
 option(FL_BENCH "Build the native timing benchmark (bench_native), not run by ctest" OFF)

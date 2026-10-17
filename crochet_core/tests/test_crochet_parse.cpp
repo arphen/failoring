@@ -301,7 +301,9 @@ int main() {
                "tube40: 20 ch + 480 sc + 12 slst (%d/%d/%d)", countType(g, "ch"), countType(g, "sc"),
                countType(g, "slst"));
         CHECKP(g.links.empty(), "tube40: 0 links (%zu)", g.links.size());
-        bool roundsOk = rowCount(g, 0) == 20 && g.rows[0].kind == "round";
+        // T5.1 fixture fix: the foundation chain ends with `turn` (like the pouch's), so CrochetPARADE
+        // works the first side back along the chain, 18..1; row 0 is therefore a turned "row".
+        bool roundsOk = rowCount(g, 0) == 20 && g.rows[0].kind == "row" && g.rows[0].turned;
         for (int r = 1; r <= 12; ++r) roundsOk = roundsOk && rowCount(g, r) == 41;
         CHECKP(roundsOk, "tube40: 20 ch then 12 rounds of 40 sc + 1 join (%d at round 12)", rowCount(g, 12));
         const int bad = structuralViolations(g);
