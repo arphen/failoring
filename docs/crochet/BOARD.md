@@ -41,7 +41,7 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
 | T4.1 | Bridge: exporter + C++ importer into StitchGraph + `#!` extension-line reader (B) | T4.0 | done | default | 1 | a066c9d (merged b31c3f8) | §5.4-ready: 110 PASS lines; 10/10 exports byte-identical; 2 mutations caught; docs/CROCHET_DSL.md pins the `#!` syntax |
 | T4.2 | Facing/RS, point seams, count checks (B) | T4.1 | done | default | 1 | 40b31b4 (merged 97173d6) | ★ §5.4: 172 PASS lines; facing.txt all 4 RS x loop combos; 11/11 exports byte-identical; 3 orchestrator mutations caught |
 | T5.1 | Faces (BFS base path, zipper), rest shapes, orientation | T4.2, T1.2 | done | default | 1 | 247f809 (merged 4bb4817) | ★ §6.10 test 4: 114 PASS lines on 11 fixtures; Euler 1, 1 component, 0 warnings; 9 orchestrator mutations caught; oval fixtures fixed (see Decisions) |
-| T5.2 | Materials, hinge mods, seams → IntrinsicMesh | T5.1, T3.1, T1.3, T1.5 | todo | | 0 | | §6.10 test 6 (mass) |
+| T5.2 | Materials, hinge mods, seams → IntrinsicMesh | T5.1, T3.1, T1.3, T1.5 | done | default | 1 | 80e6647 (merged 326f2b4) | §6.10 test 6: solver mass = yarn model on all 11 fixtures (0.0000 %); 7 mutations caught; kWsFoldSign = -1 to be confirmed by T5.4 test 5 |
 | T5.3 | Layouts (flat, fold, revolve, attached, arc; CP positions if A/B) | T5.2 | todo | | 0 | | layout PNGs under docs/crochet-shots/layout/ |
 | T5.4 | Relaxation + mesh tests | T5.3 | todo | | 0 | | ★ §6.10 tests 1,2,3,5 (circle is the key one) |
 | T6.1 | Scenes hang_pin, hang_peg, settle loop | T5.4 | todo | | 0 | | §7.4 test 3 for the pouch |
@@ -128,3 +128,9 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
   upward and the old export jumped n chain stitches in round 1. Exports regenerated; the other five
   exports are byte-identical; docs/CROCHET_DSL.md section 8. `test_crochet_parse` tube40 row 0 is now
   a turned `row` (the only changed assertion).
+* 2026-10-17 — T5.2: each stitch's triangles carry exactly that stitch's yarn (density = M_s / sum of their
+  rest areas), because the plan's nominal density loses mass on increase triangles; stitches that own no
+  triangle lump their yarn into `extraMass` (own vertex, else `dropTo`). The strap-end sl st join rows are
+  polygons and so get the sl st hinge firmness even in the plain variants (pouch 8, each bag 10 modifiers).
+  Plan "toward the WS" angles enter the solver negated (`kWsFoldSign = -1`; normals point to the RS and a
+  positive BendC::rest bends toward the normal side) - T5.4's hinge-sign test is the empirical check.

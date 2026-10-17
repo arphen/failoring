@@ -11,7 +11,7 @@ acceptance, with the measured numbers. Honest numbers; "not measured" where not 
 | 2 | Yarn data (§3) | yarns.json loads, unit tests | done (T2.1, 2026-10-16) |
 | 3 | Stitch model (§4) | gauge sanity and monotonicity tests | done (T3.1, 2026-10-16) |
 | 4 | DSL + graph (§5) | all fixtures compile with the stated counts, error-message tests | done (T4.0-T4.2, 2026-10-17) |
-| 5 | Mesh + layout + relax (§6) | flat/cup/ruffle circle, tube, swatch size, hinge sign, mass | in progress (T5.1 done) |
+| 5 | Mesh + layout + relax (§6) | flat/cup/ruffle circle, tube, swatch size, hinge sign, mass | in progress (T5.1, T5.2 done) |
 | 6 | Scenes + load + metrics + CLI (§7) | strap analytic, force balance, settle, fit checks; PNG snapshots of all fixtures in docs/crochet-shots/ | todo |
 | 7 | Godot bindings + scene (§8) | crochet_api_check passes; the user can open, edit, run, and see the pouch hang on their Mac | todo |
 | 8 | Chart, lego, compare (§9) | five-variant comparison runs from one click; the table shows different corner angles | todo |
@@ -205,3 +205,15 @@ acceptance, with the measured numbers. Honest numbers; "not measured" where not 
 * Regression: clean `build/`, 15 of 18 pass, the three baseline failures unchanged (FAIL lines
   byte-identical, 530 s), dump bit-identical, `cloth_core/` untouched. Nine mutations caught.
   Merged `4bb4817`. The first implementer died without code; the orchestrator session redid it.
+
+### 2026-10-17 — T5.2 materials, hinge modifiers, point seams (phase 5, item 2)
+
+* `buildCrochetModel` (crochet_core/src/crochet_model.cpp): the solver's total vertex mass equals the
+  yarn model's on all 11 fixtures (pouch 22.0948 g, bags 105.87 / 105.02 (slst) / 107.14 g (surface),
+  circles 3.21 / 3.68 / 4.64 g, tube 8.44 g, facing 0.409 g; relative difference 0.0000 %; plan bound 0.5 %).
+  Needed a change from the plan's density: a stitch's triangles carry its whole yarn (an increase triangle
+  has density 1.04 vs nominal 0.44 kg/m^2). 2-6 materials per fixture, J-curve lock terms mapped.
+* Hinge modifiers per plan 4.4 (UNVERIFIED starters, calibration-overridable): blo 0.30 / flo 0.35 on the
+  114 edges of round 4, slst 1.5 (base + top), surface 0.70 on 113 edges with 226 stiffened faces. Point
+  seams: pouch 55, each bag 6, share = stitch width. Seven mutations caught.
+* Open: the WS fold enters the solver as a negative angle (kWsFoldSign = -1); T5.4 test 5 measures it.
