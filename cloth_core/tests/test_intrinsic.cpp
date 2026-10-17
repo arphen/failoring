@@ -436,5 +436,79 @@ int main() {
             CHECK_MSG(std::fabs(rv.energy - EexpV) < 1e-9, "potentialEnergy %.9f J != analytic %.9f J on the v axis", rv.energy, EexpV);
         }
     }
+
+    std::printf("[point seam: two squares joined at 3 vertex pairs 5 cm apart (crochet plan 2.7 test 6)]\n");
+    {
+        // Two separate 0.10 x 0.10 m squares, cell 0.025 m (meshRect ordering id(i,j) = j*5 + i; 25 verts each).
+        // Panel A spans x in [0, 0.10] (default placement); panel B is offset by width + 5 cm, so x in [0.15, 0.25].
+        // The seams link 3 consecutive pairs on the facing edges (A's right edge i = 4, B's left edge i = 0, same y
+        // row j). Global ids (A 0..24, B 25..49): (9, 30), (14, 35), (19, 40) for rows j = 1, 2, 3; each pair starts
+        // at exactly 0.05 m (y = j * 0.025 m on both sides, 5 cm apart in x). share = 0.025 m, the vertex spacing
+        // one link stands for.
+        PanelMesh sq = meshRect(0.10, 0.10, 0.025);
+        PanelPlacement placeA, placeB;
+        placeA.origin = Vec3(0, 0, 0);
+        placeA.ex = Vec3(1, 0, 0);
+        placeA.ey = Vec3(0, 1, 0);
+        placeB.origin = Vec3(0.15, 0, 0);
+        placeB.ex = Vec3(1, 0, 0);
+        placeB.ey = Vec3(0, 1, 0);
+
+        SolverParams sp;
+        sp.gravity = Vec3(0, 0, 0);
+        sp.seamRampFrames = 30;  // all other params keep their defaults; the plan's rig
+        auto build = [&](const SolverParams& ps) {
+            auto s = std::make_unique<ClothSolver>(ps);
+            s->addPanel(sq, *fab, placeA, 0, "A");
+            s->addPanel(sq, *fab, placeB, 0, "B");
+            s->addPointSeam(9, 30, 0.025);
+            s->addPointSeam(14, 35, 0.025);
+            s->addPointSeam(19, 40, 0.025);
+            return s;
+        };
+
+        auto s = build(sp);
+        CHECK(s->vertexCount() == 50);
+        CHECK(s->panelCount() == 2);
+        // call-time validation of addPointSeam (before stepping: the solver is not finalized yet)
+        bool threwShare = false, threwRange = false, threwSame = false;
+        try { s->addPointSeam(9, 30, 0.0); } catch (const std::invalid_argument&) { threwShare = true; }
+        try { s->addPointSeam(50, 30, 0.025); } catch (const std::out_of_range&) { threwRange = true; }
+        try { s->addPointSeam(9, 9, 0.025); } catch (const std::invalid_argument&) { threwSame = true; }
+        std::printf("  validation: share 0 throws: %s, vertex 50 throws: %s, a == b throws: %s (PASS if yes/yes/yes)\n",
+                    threwShare ? "yes" : "no", threwRange ? "yes" : "no", threwSame ? "yes" : "no");
+        CHECK_MSG(threwShare, "addPointSeam: share 0 did not throw std::invalid_argument");
+        CHECK_MSG(threwRange, "addPointSeam: vertex 50 did not throw std::out_of_range");
+        CHECK_MSG(threwSame, "addPointSeam: a == b did not throw std::invalid_argument");
+
+        const int pairs[3][2] = {{9, 30}, {14, 35}, {19, 40}};
+        for (int f = 0; f < 120; ++f) s->step();
+        Real dist[3] = {0, 0, 0}, dmax = 0;
+        for (int k = 0; k < 3; ++k) {
+            dist[k] = length(s->positions()[pairs[k][0]] - s->positions()[pairs[k][1]]);
+            dmax = std::max(dmax, dist[k]);
+        }
+        std::printf("  pair distances after 120 frames: %.3e, %.3e, %.3e m; max %.3e (PASS if < 5e-4 m)\n",
+                    dist[0], dist[1], dist[2], dmax);
+        CHECK_MSG(dmax < 5e-4, "point seam max pair distance %.3e m is not below 5e-4 m (0.5 mm)", dmax);
+
+        // addPointSeam after the first step has finalized the solver must throw (same gate as addSeam).
+        bool threwLate = false;
+        try { s->addPointSeam(0, 49, 0.025); } catch (const std::logic_error&) { threwLate = true; }
+        CHECK_MSG(threwLate, "addPointSeam after the simulation started did not throw std::logic_error");
+
+        // dampingScale (CROCHET_PLAN 6.9): the same rig, fresh solvers, dampingScale 1 vs 5. Ten frames in, the
+        // ramped seams have pumped the same motion into both, so the x5 run must carry strictly less KE.
+        SolverParams sp5 = sp;
+        sp5.dampingScale = 5.0;
+        auto e1 = build(sp), e5 = build(sp5);
+        for (int f = 0; f < 10; ++f) {
+            e1->step();
+            e5->step();
+        }
+        const Real ke1 = e1->kineticEnergy(), ke5 = e5->kineticEnergy();
+        std::printf("  after 10 frames: KE dampingScale 1 = %.6e J, dampingScale 5 = %.6e J (PASS if 5 < 1)\n", ke1, ke5);
+        CHECK_MSG(ke5 < ke1, "dampingScale 5 KE %.6e J is not strictly below dampingScale 1 KE %.6e J", ke5, ke1);
+    }
     FINISH();
 }
