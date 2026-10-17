@@ -39,7 +39,7 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
 | T3.1 | Stitch model | T2.1 | done | default | 1 | ac0e14a (merged 66ef507) | §4.5 tests: PASS |
 | T4.0 | CrochetPARADE spike + decision A/B/C | T0.1 | done | default | 2 | 3c45316 (merged b736625) | decision B (see Decisions); r2 fixed cp_export pipe flush |
 | T4.1 | Bridge: exporter + C++ importer into StitchGraph + `#!` extension-line reader (B) | T4.0 | done | default | 1 | a066c9d (merged b31c3f8) | §5.4-ready: 110 PASS lines; 10/10 exports byte-identical; 2 mutations caught; docs/CROCHET_DSL.md pins the `#!` syntax |
-| T4.2 | Facing/RS, point seams, count checks (B) | T4.1 | todo | | 0 | | ★ §5.4 tests |
+| T4.2 | Facing/RS, point seams, count checks (B) | T4.1 | in_progress | default | 1 | | ★ §5.4 tests; graph.cpp facing pass + `#! count` |
 | T5.1 | Faces (BFS base path, zipper), rest shapes, orientation | T4.2, T1.2 | todo | | 0 | | ★ §6.10 test 4 hygiene, all fixtures |
 | T5.2 | Materials, hinge mods, seams → IntrinsicMesh | T5.1, T3.1, T1.3, T1.5 | todo | | 0 | | §6.10 test 6 (mass) |
 | T5.3 | Layouts (flat, fold, revolve, attached, arc; CP positions if A/B) | T5.2 | todo | | 0 | | layout PNGs under docs/crochet-shots/layout/ |
@@ -95,3 +95,10 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
 * 2026-10-16 — T1.2 must keep panel hinge alphas *bit-identical*: the §2.1 step 4 harmonic mean is only
   computed when the two triangles' Beffs differ (`Beff1 == Beff2` -> keep `Beff1`), because
   `2/(1/B + 1/B)` can differ from `B` by 1 ulp. Verified by the test_garment dump.
+* 2026-10-17 — T4.2: facing/RS is resolved at import time (§5.5); a `turn` recorded on a chains-only
+  foundation line does not flip row 1 ("row 1 is RS by default"); on a WS row `blo`/`flo` swap into the
+  RS-relative value. Count checks are the new `#! count [row] N` extension keyword (N = stitch nodes in
+  the row, turning chains and join sl sts included), with correct per-row count lines appended to every
+  fixture (mechanically derived from the committed exports / T4.0's verified counts). `fl::PointSeam`
+  (new `graph.cpp`) resolves each `Link` for T5.2's `addPointSeam`: `stitch` = the seam stitch whose
+  width `w_s` is the share, `partner` = the second target.
