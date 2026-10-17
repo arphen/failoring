@@ -253,3 +253,23 @@ never change the output (see section 1).
   as the initial layout.
 * **Charts, colour/symbol tables, per-stitch overrides** — later tickets; the graph gains
   them as they are needed.
+
+## 8. Oval foundations: the first side comes back along the chain (`turn`)
+
+The five bags and `tube40` start with an oval worked around a foundation chain: one side of
+the chain, a 3-stitch end fan, the other side, a 2-stitch fan at the far end. CrochetPARADE
+walks an *unturned* chain row from index 0 upward, so the first fixtures (T4.0) had that first
+side targeting chain stitches `1, 2, ... n` and then the end fan on chain `0`: consecutive
+stitches whose targets are `n` chain stitches apart. As an export graph that is a surface with
+a jump of `n` in the middle of the first round, and the mesh stage (docs/CROCHET_PLAN.md
+sections 6.1-6.2: the base of every face is a short path in the graph) cannot build it.
+
+The fixtures therefore say what a crocheter does: the foundation chain ends with `turn`, so the
+first side works back along the chain (`sk,49sc` targets `49, 48, ... 1`), then `3sc@[0,0]` is
+the end fan on chain `0`, and the second side is written with explicit targets
+(`sc@[0,1],sc@[0,2],...,sc@[0,49]`, then `sc@[@]` for the last stitch of the far end fan). After
+this change every pair of consecutive first-round stitches has neighbouring targets and the
+first round closes onto its own first stitch. Effects on the import: row 0 of these six
+fixtures is a turned `row` (not a `round`); resolveFacing already treats a chains-only row 0 as
+a foundation, so row 1 is still RS; row ids, stitch ids, counts and `line` numbers are
+unchanged and only the `targets` of round 1 differ.
