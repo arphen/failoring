@@ -6,6 +6,7 @@
 #include <memory>
 #include <vector>
 
+#include "failoring/error.hpp"
 #include "failoring/math.hpp"
 
 namespace fl {
@@ -110,6 +111,74 @@ public:
     }
 private:
     Vec3 c_, r_;
+};
+
+// Oriented box with rounded edges and corners (a box prop, a laptop on which the cloth rests). Frame convention:
+// `world = center + R * local`, i.e. `local = R^T (p - center)`; `rotation` is the row-major R so its columns are
+// the world directions of the local axes (the same frame idea as the GDExtension's OrientedBoxCollider, §2.6).
+// The SDF is the box of the core half extents H = halfExtents - cornerRadius, minus cornerRadius:
+//   q_i = |l_i| - H_i,  d = length(max(q, 0)) + min(max_i q_i, 0) - r
+// exact outside including the rounded slabs, and the (negative) distance to the core surface minus r inside the
+// core - e.g. 1 cm inside a flat face with r < 1 cm reads exactly -0.01. Normals are exact away from the core's
+// medial axis: outside the core normalize(max(q, 0)), inside the core the sign of the nearest face's coordinate.
+// Rounded corners avoid the jumping normals of a sharp box (the reason §2.6 exists). cornerRadius = 0 is allowed
+// and degenerates to the sharp box.
+class RoundedBoxCollider : public Collider {
+public:
+    RoundedBoxCollider(Vec3 center, Mat3 rotation, Vec3 halfExtents, Real cornerRadius)
+        : center_(center), half_(halfExtents), r_(cornerRadius) {
+        checkShape();
+        setPose(center, rotation);
+    }
+
+    // Moves (and re-orients) the box; the shape stays. `rotation` must be a rotation matrix as above.
+    void setPose(Vec3 center, Mat3 rotation) {
+        center_ = center;
+        axis_[0] = rotation * Vec3(1, 0, 0);
+        axis_[1] = rotation * Vec3(0, 1, 0);
+        axis_[2] = rotation * Vec3(0, 0, 1);
+    }
+
+    Real eval(const Vec3& p, Vec3& n) const override {
+        const Vec3 d = p - center_;
+        const Real l[3] = {dot(d, axis_[0]), dot(d, axis_[1]), dot(d, axis_[2])};
+        const Real h[3] = {half_.x - r_, half_.y - r_, half_.z - r_};  // core half extents H
+        Real q[3], nl[3] = {0, 0, 0};
+        bool outside = false;
+        for (int i = 0; i < 3; ++i) {
+            q[i] = std::fabs(l[i]) - h[i];
+            if (q[i] > 0) {
+                outside = true;
+                nl[i] = l[i] >= 0 ? q[i] : -q[i];
+            }
+        }
+        Real dist;
+        if (outside) {
+            const Real len = std::sqrt(nl[0] * nl[0] + nl[1] * nl[1] + nl[2] * nl[2]);
+            dist = len - r_;
+            for (Real& c : nl) c /= len;
+        } else {
+            int m = 0;
+            for (int i = 1; i < 3; ++i)
+                if (q[i] > q[m]) m = i;
+            dist = q[m] - r_;
+            nl[m] = l[m] >= 0 ? 1 : -1;
+        }
+        n = axis_[0] * nl[0] + axis_[1] * nl[1] + axis_[2] * nl[2];
+        return dist;
+    }
+
+private:
+    void checkShape() const {
+        if (!(half_.x > 0 && half_.y > 0 && half_.z > 0))
+            FL_THROW(std::invalid_argument, "RoundedBoxCollider: halfExtents must all be > 0");
+        if (!(r_ >= 0 && r_ < std::min(half_.x, std::min(half_.y, half_.z))))
+            FL_THROW(std::invalid_argument, "RoundedBoxCollider: cornerRadius must be >= 0 and < min(halfExtents)");
+    }
+    Vec3 center_{0, 0, 0};
+    Vec3 half_{0.5, 0.5, 0.5};
+    Real r_ = 0;
+    Vec3 axis_[3] = {Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1)};  // world directions of the local axes (R's columns)
 };
 
 // Union of several colliders (a mannequin built from primitives).

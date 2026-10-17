@@ -355,6 +355,17 @@ public:
     const std::vector<Vec3>& velocities() const { return v_; }
     // Diagnostics: per-vertex "held on the body" flag of the last Newton iteration (1 = motion filter active).
     const std::vector<char>& heldFlags() const { return contactActive_; }
+    // ---- rigid contact force readback (crochet plan §2.5) ------------------------------------------------------
+    // Normal contact force in N per vertex of the last Newton iteration (implicit integrator): the component
+    // -dot(rhs, n) of the vertex's unbalanced force along the contact normal that the rigid hold cancelled at a
+    // held vertex, 0 at a free, pinned or non-touching one. Sum f_i * contactNormals()[i] for the total force
+    // the body exerts on the cloth. After step() this is the last substep's last Newton iteration; before the
+    // first step, and for XPBD/VBD steps, it is empty or stale (the implicit solve is what fills it).
+    const std::vector<Real>& rigidContactForces() const { return rigidForce_; }
+    // Outward body normal at each vertex (unit), valid exactly where rigidContactForces() > 0: a positive force
+    // requires a collider and a non-zero inverse mass, and both write this normal in the same Newton iteration
+    // (the audit comment at the write site in cloth_implicit.cpp states the proof).
+    const std::vector<Vec3>& contactNormals() const { return contactN_; }
     const std::vector<std::array<int, 3>>& triangles() const { return tris_; }
     const std::vector<Vec2>& restUV() const { return restUV_; }  // grain-aligned rest coordinates
     int firstVertex(int panel) const { return panels_[panel].firstVertex; }
