@@ -34,7 +34,7 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
 | T1.3 | Signed hinge with rest angle | T1.2 | done | default | 1 | 8369c65 (merged a63db24) | ★ §2.7 tests 3, 4: PASS (rel err 4.5e-08; settled 0.5000 rad); 2 mutations caught |
 | T1.4 | J-curve stretch (+ JSON keys) | T1.1 | done | default | 1 | 1eaa92c (merged 3fafe40) | ★ §2.7 test 5: PASS (C 0.199503 vs analytic 3e-12); 1 mutation caught |
 | T1.5 | addPointSeam, SolverParams::dampingScale | T1.1 | done | default | 1 | 98b8dbe (merged 204d1b3) | §2.7 test 6: PASS (max pair dist 7.9e-07 m); 2 mutations caught (1 weak-seam mutation is non-detecting by design of test 6) |
-| T1.6 | Contact force accessors, RoundedBoxCollider | T1.1 | todo | | 0 | | box SDF + resting patch force balance |
+| T1.6 | Contact force accessors, RoundedBoxCollider | T1.1 | in_progress | default | 1 | | box SDF + resting patch force balance |
 | T2.1 | materials/yarns.json + loader (crochet_core target created here) | T0.1 | done | default | 1 | 225d0ab (merged 9b3a0d0) | loads; ids unique; fibres exist |
 | T3.1 | Stitch model | T2.1 | done | default | 1 | ac0e14a (merged 66ef507) | §4.5 tests: PASS |
 | T4.0 | CrochetPARADE spike + decision A/B/C | T0.1 | done | default | 2 | 3c45316 (merged b736625) | decision B (see Decisions); r2 fixed cp_export pipe flush |
@@ -95,6 +95,15 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
 * 2026-10-16 — T1.2 must keep panel hinge alphas *bit-identical*: the §2.1 step 4 harmonic mean is only
   computed when the two triangles' Beffs differ (`Beff1 == Beff2` -> keep `Beff1`), because
   `2/(1/B + 1/B)` can differ from `B` by 1 ulp. Verified by the test_garment dump.
+* 2026-10-17 — T1.6: `rigidContactForces()`/`contactNormals()` exactly as §2.5 (N per vertex, last
+  Newton iteration; normals valid where the force > 0), plus an audit comment in cloth_implicit.cpp
+  proving the invariant (contactN_ is written for every w != 0 vertex whenever a collider exists, and
+  a positive force requires both). `RoundedBoxCollider` mirrors the gdextension `OrientedBoxCollider`
+  structure: rotation convention `world = center + R * local` (row-major Mat3, axes are the columns),
+  core half extents `H = half - r`, `d = length(max(|l| - H, 0)) + min(max_i(|l_i| - H_i), 0) - r`,
+  exact normals (outside: normalize(max(q,0)); inside the core: the nearest face). Acceptance: SDF
+  spot checks + central-difference gradient agreement on a rotated box, then a resting patch whose
+  vector force balance `sum(N_i n_i)` equals `(0, m g, 0)` within 1%.
 * 2026-10-17 — T4.2: facing/RS is resolved at import time (§5.5); a `turn` recorded on a chains-only
   foundation line does not flip row 1 ("row 1 is RS by default"); on a WS row `blo`/`flo` swap into the
   RS-relative value. Count checks are the new `#! count [row] N` extension keyword (N = stitch nodes in
