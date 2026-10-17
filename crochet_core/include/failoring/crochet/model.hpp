@@ -64,6 +64,7 @@ struct SeamRequest {
 };
 
 struct CrochetModel {
+    std::vector<StitchDims> dims;       // per stitch id, metres (graphDims); the layout stage reads widths and heights
     CrochetMesh topo;                   // the T5.1 output
     IntrinsicMesh mesh;                 // tris, triRest, triMaterial, hingeMods, extraMass; x0/layoutUV empty (T5.3)
     std::vector<FabricMaterial> materials;

@@ -248,9 +248,10 @@ never change the output (see section 1).
   T5.2 turns them into the actual `addPointSeam` constraints.
 * **`rs row N` header overrides** — the plan's section 5.5 override for a non-default first
   RS row: CrochetPARADE has no such line, and no fixture needs it (section 3).
-* **Piece names, fold hints, surface placement, layouts** — T5.x. Every stitch is `main`
-  today; the fold and surface work are T5.3, which also picks up CrochetPARADE's `positions`
-  as the initial layout.
+* **Piece names, fold hints, surface placement** — still none: every stitch is `main`. T5.3
+  infers the layout from the graph instead of reading directives (regions, the fold from the
+  `both_layers` links, the strap arc from the `join` links; `crochet/layout.hpp`), and does not
+  use CrochetPARADE's `positions`.
 * **Charts, colour/symbol tables, per-stitch overrides** — later tickets; the graph gains
   them as they are needed.
 

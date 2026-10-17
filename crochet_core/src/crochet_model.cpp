@@ -89,7 +89,7 @@ private:
 
 CrochetModel buildCrochetModel(const StitchGraph& g, const Yarn& yarn, const ModelOptions& opt) {
     CrochetModel out;
-    const std::vector<StitchDims> dims = graphDims(g, yarn, opt.hook_m, opt.tension, opt.calibration);
+    const std::vector<StitchDims>& dims = out.dims = graphDims(g, yarn, opt.hook_m, opt.tension, opt.calibration);
     out.topo = buildMeshTopology(g, dims);
     const CrochetMesh& t = out.topo;
     const int nv = static_cast<int>(t.vertexStitch.size());
