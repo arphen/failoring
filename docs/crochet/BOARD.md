@@ -33,7 +33,7 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
 | T1.2 | IntrinsicMesh, addIntrinsicPanel, extraMass, strain-limit edge rest lengths, barrier guard | T1.1 | done | default | 1 | cc20eee (merged cbfc587) | ★ §2.7 test 1: PASS (max diff 0 m) |
 | T1.3 | Signed hinge with rest angle | T1.2 | done | default | 1 | 8369c65 (merged a63db24) | ★ §2.7 tests 3, 4: PASS (rel err 4.5e-08; settled 0.5000 rad); 2 mutations caught |
 | T1.4 | J-curve stretch (+ JSON keys) | T1.1 | done | default | 1 | 1eaa92c (merged 3fafe40) | ★ §2.7 test 5: PASS (C 0.199503 vs analytic 3e-12); 1 mutation caught |
-| T1.5 | addPointSeam, SolverParams::dampingScale | T1.1 | todo | | 0 | | §2.7 test 6 |
+| T1.5 | addPointSeam, SolverParams::dampingScale | T1.1 | in_progress | default | 1 | | §2.7 test 6 |
 | T1.6 | Contact force accessors, RoundedBoxCollider | T1.1 | todo | | 0 | | box SDF + resting patch force balance |
 | T2.1 | materials/yarns.json + loader (crochet_core target created here) | T0.1 | done | default | 1 | 225d0ab (merged 9b3a0d0) | loads; ids unique; fibres exist |
 | T3.1 | Stitch model | T2.1 | done | default | 1 | ac0e14a (merged 66ef507) | §4.5 tests: PASS |
