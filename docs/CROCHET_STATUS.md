@@ -141,3 +141,28 @@ acceptance, with the measured numbers. Honest numbers; "not measured" where not 
   detected (zero-g free panels: any positive stiffness closes in 120 frames) — test 6 pins seam
   presence, not stiffness, matching the plan's acceptance. Merged.
 * Phase 1 remaining: T1.6 (contact force readback, RoundedBoxCollider).
+
+
+### 2026-10-17 — T1.6 contact readback + RoundedBoxCollider (phase 1 complete)
+
+* §2.5: `ClothSolver::rigidContactForces()` / `contactNormals()` (N per vertex of the last
+  implicit Newton iteration; normals valid exactly where the force > 0) + the audit, written at
+  the `contactN_` write site: contactN_ is rewritten for every vertex with `w != 0` whenever a
+  collider exists; a positive force needs a collider-written `contactPhi_` (band test or the AL
+  multiplier `f > 0`); the final `rigidForce_` assignment gives pinned and no-collider vertices
+  exactly 0. Claim by claim verified in review.
+* §2.6: `RoundedBoxCollider(center, Mat3 rotation, halfExtents, cornerRadius)` + `setPose` in
+  `collider.hpp` — convention `world = center + R*local` (axes are R's columns), core
+  `H = half - r`, `d = length(max(q, 0)) + min(max q, 0) - r`, exact normals (two branches
+  mirroring the gdextension's `OrientedBoxCollider`), `r = 0` = the sharp box, `FL_THROW`
+  validation. The gdextension class is untouched (T7.x).
+* Test 7: 21 analytic probes on a rotated box (corner/edge distances -1.2e-17 / -1.7e-17 m),
+  central difference vs the returned normals 2.4e-10, `setPose`, `r = 0`, validation throws;
+  then a 0.12 m cotton patch resting on a rounded box for 200 frames: `sum f_i n_i` =
+  (0, +1.695168e-02, 0) N vs (0, m g, 0), 1.0e-15 relative (plan bound ±2 %), >= 20 contacts,
+  normals unit and upward.
+* Review: clean rebuild 14/17, FAIL lines byte-identical (562 s), dump bit-identical, scope
+  exactly 4 files (301 insertions), laziness clean. Mutations: forget `- r` -> 19 failures;
+  drop the inside face sign -> 4; halve `rigidForce_` -> balance off by exactly 0.5. Merged
+  (`ec7d550`, merge `d436123`). Phase 1 (T1.1-T1.6) is complete; next programming tickets are
+  T5.1/T5.2 once T4.2 merges.

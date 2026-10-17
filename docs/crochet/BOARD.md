@@ -34,7 +34,7 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
 | T1.3 | Signed hinge with rest angle | T1.2 | done | default | 1 | 8369c65 (merged a63db24) | ★ §2.7 tests 3, 4: PASS (rel err 4.5e-08; settled 0.5000 rad); 2 mutations caught |
 | T1.4 | J-curve stretch (+ JSON keys) | T1.1 | done | default | 1 | 1eaa92c (merged 3fafe40) | ★ §2.7 test 5: PASS (C 0.199503 vs analytic 3e-12); 1 mutation caught |
 | T1.5 | addPointSeam, SolverParams::dampingScale | T1.1 | done | default | 1 | 98b8dbe (merged 204d1b3) | §2.7 test 6: PASS (max pair dist 7.9e-07 m); 2 mutations caught (1 weak-seam mutation is non-detecting by design of test 6) |
-| T1.6 | Contact force accessors, RoundedBoxCollider | T1.1 | in_progress | default | 1 | | box SDF + resting patch force balance |
+| T1.6 | Contact force accessors, RoundedBoxCollider | T1.1 | done | default | 1 | ec7d550 (merged d436123) | §2.6: SDF probes exact to 1.2e-17, FD gradient 2.4e-10; patch force balance 1.0e-15 rel (plan bound ±2 %); 3 mutations caught |
 | T2.1 | materials/yarns.json + loader (crochet_core target created here) | T0.1 | done | default | 1 | 225d0ab (merged 9b3a0d0) | loads; ids unique; fibres exist |
 | T3.1 | Stitch model | T2.1 | done | default | 1 | ac0e14a (merged 66ef507) | §4.5 tests: PASS |
 | T4.0 | CrochetPARADE spike + decision A/B/C | T0.1 | done | default | 2 | 3c45316 (merged b736625) | decision B (see Decisions); r2 fixed cp_export pipe flush |
