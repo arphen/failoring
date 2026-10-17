@@ -11,7 +11,8 @@
 // Decisions recorded for ticket T3.1:
 //
 //  - StitchMech carries compressionRatio: section 4.4's reference list has it,
-//    section 4.1's listing omitted the field. Starter value 0.2, no scaling.
+//    section 4.1's listing omitted the field. Starter value 0.2 at T3.1, tuned to
+//    0.1 in T5.4 (reason in stitch_model.cpp); no scaling.
 //  - Fibre multipliers come from Yarn::fibreParams, filled by the yarn loader
 //    (yarn.cpp) from the book's "fibres" table; stitchMech only reads
 //    yarn.fibreParams and never looks a fibre up itself.

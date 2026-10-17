@@ -62,7 +62,13 @@ constexpr Real kRLockRatio = 30.0;   // stiffness above lock / below
 constexpr Real kRBendW = 3.0e-4;     // N*m
 constexpr Real kRBendC = 2.5e-4;     // N*m
 constexpr Real kRDamping = 1.0;      // 1/s, not scaled
-constexpr Real kRCompression = 0.2;  // 4.4 R list; 4.1 omitted the field
+// 4.4's R list says 0.2; T5.4 tuned it to 0.1 (4.1's struct listing omitted the field). With 0.2 the plan's
+// 6.10 test 2 circles fail: +6 sc per round at the model's w/h = 1.083 has about 3 % more rim than the
+// radial stitch heights allow, and with a compression stiffness of 0.2 k the sheet buckles to a ruffle
+// (+-10 % of the radius) from any 0.3 mm perturbation. At 0.07..0.15 the +6 circle stays flat (0.0 %) for
+// every seed and perturbation size, +5 is a 43 % deep cup and +8 a strong ruffle. UNVERIFIED like all of 4.4:
+// the swatch calibration (section 10) replaces it.
+constexpr Real kRCompression = 0.1;
 constexpr Real kTau0 = 0.5;          // reference tightness d/H
 constexpr Real kD0 = 2.5e-3;         // m, reference yarn diameter
 

@@ -43,7 +43,8 @@ std::uint64_t edgeKey(int a, int b) {
 
 struct EdgeInfo {
     int faces = 0;
-    Real len = 0;  // rest length (m), set when the edge is first created
+    Real len = 0;       // rest length (m), set when the edge is first created
+    bool chain = false; // a foundation chain edge: stretched to the width of the first stitch worked into it (see addStrip)
 };
 
 struct Tri {
@@ -124,7 +125,7 @@ private:
         for (const Stitch& s : g_.st) {
             if (s.type != "ch" || !s.targets.empty() || s.prev < 0) continue;
             const Stitch& p = g_.st[s.prev];
-            if (p.type == "ch" && p.targets.empty()) ensureEdge(p.id, s.id, d_[s.id].w);
+            if (p.type == "ch" && p.targets.empty()) ensureEdge(p.id, s.id, d_[s.id].w).chain = true;
         }
     }
 
@@ -176,7 +177,13 @@ private:
         std::vector<Real> xa(m, 0), xb(n, 0);
         Real wt = 0, wb = 0;
         for (size_t i = 1; i < m; ++i) xa[i] = (wt += d_[A[i]].w);  // course width at the right end
-        for (size_t j = 1; j < n; ++j) xb[j] = (wb += edges_[edgeKey(B[j - 1], B[j])].len);
+        for (size_t j = 1; j < n; ++j) {
+            // A foundation chain edge takes the width of the stitch worked into it: in the fabric the chain loops are
+            // spread to the stitch spacing (ch is 0.85 w_sc on its own, which would make every oval base a bowl).
+            EdgeInfo& be = edges_[edgeKey(B[j - 1], B[j])];
+            if (be.chain && be.len < d_[s].w) be.len = d_[s].w;
+            xb[j] = (wb += be.len);
+        }
         for (Real& x : xa) x -= wt / 2;
         for (Real& x : xb) x -= wb / 2;
         const Real hs = d_[s].h;

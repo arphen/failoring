@@ -478,6 +478,20 @@ static void modelTests(const YarnBook& book) {
         CHECKP(offEdge == 0, "%s: every hinge modifier is on a mesh edge (%d off)", name, offEdge);
     }
 
+    // the first row above a foundation chain: the chain edges are stretched to the stitch width, so the row-1
+    // polygons are w x h rectangles (a chain edge of 0.85 w would make every oval base a bowl)
+    {
+        const StitchGraph g = loadFixture("facing");
+        ModelOptions opt;
+        const CrochetModel cm = buildCrochetModel(g, *acrylic, opt);
+        Real area = 0;
+        for (size_t t = 0; t < cm.mesh.tris.size(); ++t)
+            if (g.st[cm.topo.triSource[t]].row == 1) area += 0.5 * std::fabs(cross(cm.mesh.triRest[t][1] - cm.mesh.triRest[t][0], cm.mesh.triRest[t][2] - cm.mesh.triRest[t][0]));
+        const StitchDims sc = stitchDims(*acrylic, opt.hook_m, 1.0, StitchType::Sc, Insertion::Both, nullptr);
+        CHECKP(std::fabs(area / (4 * sc.w * sc.h) - 1) < 0.005, "facing row 1: rest area %.2f mm^2 = 4 w x h (%.2f mm^2) within 0.5 %% (chain edges stretched to the stitch width)", area * 1e6,
+               4 * sc.w * sc.h * 1e6);
+    }
+
     // unit checks on small graphs
     {
         // an increase triangle holds a whole stitch's yarn: density * area == yarnLen * lambda
