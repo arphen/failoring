@@ -7,11 +7,11 @@ acceptance, with the measured numbers. Honest numbers; "not measured" where not 
 
 | # | Phase | Done when | Status |
 | --- | --- | --- | --- |
-| 1 | Solver extensions (§2) | old ctest unchanged, bit-identical regression, 6 new checks pass | todo |
+| 1 | Solver extensions (§2) | old ctest unchanged, bit-identical regression, 6 new checks pass | done (T1.1-T1.6, 2026-10-17) |
 | 2 | Yarn data (§3) | yarns.json loads, unit tests | done (T2.1, 2026-10-16) |
 | 3 | Stitch model (§4) | gauge sanity and monotonicity tests | done (T3.1, 2026-10-16) |
-| 4 | DSL + graph (§5) | all fixtures compile with the stated counts, error-message tests | todo |
-| 5 | Mesh + layout + relax (§6) | flat/cup/ruffle circle, tube, swatch size, hinge sign, mass | todo |
+| 4 | DSL + graph (§5) | all fixtures compile with the stated counts, error-message tests | done (T4.0-T4.2, 2026-10-17) |
+| 5 | Mesh + layout + relax (§6) | flat/cup/ruffle circle, tube, swatch size, hinge sign, mass | in progress (T5.1 done) |
 | 6 | Scenes + load + metrics + CLI (§7) | strap analytic, force balance, settle, fit checks; PNG snapshots of all fixtures in docs/crochet-shots/ | todo |
 | 7 | Godot bindings + scene (§8) | crochet_api_check passes; the user can open, edit, run, and see the pouch hang on their Mac | todo |
 | 8 | Chart, lego, compare (§9) | five-variant comparison runs from one click; the table shows different corner angles | todo |
@@ -187,3 +187,21 @@ acceptance, with the measured numbers. Honest numbers; "not measured" where not 
   configure done, scope exactly 20 files, laziness clean, independent python read-back of every
   count line. Mutations: facing turn logic off -> 10 failures; RS-relative swap off -> 3;
   PointSeam ends swapped -> 4. Merged (`40b31b4`, merge `97173d6`). T5.1 unblocked.
+
+
+### 2026-10-17 — T5.1 faces, rest shapes, orientation (phase 5, item 1)
+
+* `buildMeshTopology` (crochet_core/src/crochet_mesh.cpp) on all 11 fixtures: Euler characteristic 1
+  and one connected component everywhere, 0 warnings, every edge in <= 2 faces, orientation
+  consistent across every manifold edge, no degenerate triangle (smallest rest area 6.8 mm^2 vs the
+  0.39 mm^2 bar). Pouch 1250 vertices / 2204 faces / 1 jump (the border at the fold); each bag
+  5654 vertices / 10990 faces; circle +5/+6/+8 335/384/482 faces (+6 matches the hand count: round k >= 2
+  with N stitches = 2N - 6 triangles); tube40 499 / 956; facing 25 / 32. Dropped stitches (turning
+  chains, the chain `sk` used, closing sl sts, 114 surface sl sts in the surface bag) hand their
+  yarn mass to the nearest kept stitch (`dropTo`).
+* Found and fixed on the way: the oval-base fixtures jumped `n` chain stitches in round 1 (CP works an
+  unturned chain row upward); now `NNch,turn` with explicit second-side targets (docs/CROCHET_DSL.md
+  section 8). Five exports byte-identical, six regenerated; one assertion follows (tube40 row 0).
+* Regression: clean `build/`, 15 of 18 pass, the three baseline failures unchanged (FAIL lines
+  byte-identical, 530 s), dump bit-identical, `cloth_core/` untouched. Nine mutations caught.
+  Merged `4bb4817`. The first implementer died without code; the orchestrator session redid it.
