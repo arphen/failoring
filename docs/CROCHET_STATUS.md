@@ -166,3 +166,24 @@ acceptance, with the measured numbers. Honest numbers; "not measured" where not 
   drop the inside face sign -> 4; halve `rigidForce_` -> balance off by exactly 0.5. Merged
   (`ec7d550`, merge `d436123`). Phase 1 (T1.1-T1.6) is complete; next programming tickets are
   T5.1/T5.2 once T4.2 merges.
+
+
+### 2026-10-17 — T4.2 facing/RS, point seams from links, count checks
+
+* `resolveFacing` (import-time, `graph.cpp`): `rs(0) = true`; a chains-only foundation row 0 does
+  not flip row 1, a worked row 0 does; for `r >= 2` a row is WS iff `rows[r-1].turned`.
+  `loopRs` swaps `blo`/`flo` only on WS rows (RS-relative insertion, §5.5). Verified per fixture:
+  pouch alternates RS row 1 .. WS row 50, border round 51 RS, strap 52 RS .. 131 WS, join 132 RS;
+  bag wall rounds 1-44 RS, strap 45 RS .. 144 WS, join 145 RS; circles/tube all RS.
+* `pointSeams`: every `#! link` in written order -> `PointSeam{stitch, partner, kind}` for T5.2
+  (pouch 55 = 50 both_layers border scs + 5 strap-end joins; bags 6 joins each; circles/tube 0),
+  validated with errors naming the ids. `#! count [row] N` (N = stitches in the row, turning
+  chains and join sl sts included) with per-row count lines appended to all 11 fixtures; N is
+  checked against the imported graph and a mismatch names line, row and both numbers.
+* New `facing.txt` fixture (29 stitches, all four RS/WS x blo/flo combinations, 10 swapped
+  bodies) + export. DSL doc updated (sections 2-7).
+* Review: clean rebuild 14/17, FAIL lines byte-identical (539 s), `test_crochet_parse` 172 PASS
+  ("RESULT: ok"), 11/11 fixtures regenerate byte-identical, dump bit-identical, gdextension
+  configure done, scope exactly 20 files, laziness clean, independent python read-back of every
+  count line. Mutations: facing turn logic off -> 10 failures; RS-relative swap off -> 3;
+  PointSeam ends swapped -> 4. Merged (`40b31b4`, merge `97173d6`). T5.1 unblocked.

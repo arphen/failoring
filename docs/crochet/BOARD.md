@@ -39,7 +39,7 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
 | T3.1 | Stitch model | T2.1 | done | default | 1 | ac0e14a (merged 66ef507) | §4.5 tests: PASS |
 | T4.0 | CrochetPARADE spike + decision A/B/C | T0.1 | done | default | 2 | 3c45316 (merged b736625) | decision B (see Decisions); r2 fixed cp_export pipe flush |
 | T4.1 | Bridge: exporter + C++ importer into StitchGraph + `#!` extension-line reader (B) | T4.0 | done | default | 1 | a066c9d (merged b31c3f8) | §5.4-ready: 110 PASS lines; 10/10 exports byte-identical; 2 mutations caught; docs/CROCHET_DSL.md pins the `#!` syntax |
-| T4.2 | Facing/RS, point seams, count checks (B) | T4.1 | in_progress | default | 1 | | ★ §5.4 tests; graph.cpp facing pass + `#! count` |
+| T4.2 | Facing/RS, point seams, count checks (B) | T4.1 | done | default | 1 | 40b31b4 (merged 97173d6) | ★ §5.4: 172 PASS lines; facing.txt all 4 RS x loop combos; 11/11 exports byte-identical; 3 orchestrator mutations caught |
 | T5.1 | Faces (BFS base path, zipper), rest shapes, orientation | T4.2, T1.2 | todo | | 0 | | ★ §6.10 test 4 hygiene, all fixtures |
 | T5.2 | Materials, hinge mods, seams → IntrinsicMesh | T5.1, T3.1, T1.3, T1.5 | todo | | 0 | | §6.10 test 6 (mass) |
 | T5.3 | Layouts (flat, fold, revolve, attached, arc; CP positions if A/B) | T5.2 | todo | | 0 | | layout PNGs under docs/crochet-shots/layout/ |
