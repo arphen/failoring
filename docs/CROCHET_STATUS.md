@@ -106,3 +106,21 @@ acceptance, with the measured numbers. Honest numbers; "not measured" where not 
   mutation (dedc ignores ratio) caught six ways. Merged. (The implementer session died to a
   harness rate limit after committing; the review re-ran everything from the commit.)
 * Phase 1 remains: T1.5 (point seams, test 6) and T1.6 (contact readback, RoundedBoxCollider).
+
+### 2026-10-17 — T4.1 bridge: CrochetPARADE export importer + `#!` extension reader (decision B)
+
+* New bridge in crochet_core: `fl::StitchGraph` (graph.hpp: Stitch/Row/Link) and
+  `importPattern`/`importPatternFile` (pattern.hpp, parse.cpp) reading the committed exports plus
+  `#! link [row,pos] [row,pos] both_layers|join` extension lines, with strict schema/UTF-8/address
+  validation and errors naming the line, stitch or address. JSON `positions` is reserved for T5.3;
+  CrochetPARADE's own `errors` abort the import.
+* Ten deterministic exports committed under `patterns/cp/exported/` (~6.6 MB) so ctest is hermetic
+  (no node, no clone): pouch 1380 st / 133 rows / 55 links (25+25 both_layers by physical-column
+  parity across the fold + 5 strap joins), bags 5798 / 146 / 6 join (surface 5912 / 147), circles
+  189 / 217 / 273, tube 512 / 13; border rims 25..39 and 65..80 stay unlinked. `docs/CROCHET_DSL.md`
+  pins the format, the `#!` grammar, worked pouch examples and the regeneration command.
+* Review: clean rebuild 14/17 (baseline FAIL lines identical), `test_crochet_parse` 110 PASS lines
+  ("RESULT: ok"), 10/10 exports byte-identical to fresh `cp_export.mjs` runs, DUMP bit-identical,
+  laziness clean, scope exactly 23 files, gdextension configure done. 2 mutations caught (kind
+  demoted -> 6 failures; duplicate-link check off -> 2 failures). Merged.
+* T4.2 unblocked: RS/WS facing from `loop`, point seams from the `Link`s, count checks.

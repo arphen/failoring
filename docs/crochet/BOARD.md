@@ -38,7 +38,7 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
 | T2.1 | materials/yarns.json + loader (crochet_core target created here) | T0.1 | done | default | 1 | 225d0ab (merged 9b3a0d0) | loads; ids unique; fibres exist |
 | T3.1 | Stitch model | T2.1 | done | default | 1 | ac0e14a (merged 66ef507) | §4.5 tests: PASS |
 | T4.0 | CrochetPARADE spike + decision A/B/C | T0.1 | done | default | 2 | 3c45316 (merged b736625) | decision B (see Decisions); r2 fixed cp_export pipe flush |
-| T4.1 | Bridge: exporter + C++ importer into StitchGraph + `#!` extension-line reader (B) | T4.0 | in_progress | default | 1 | | decision B; docs/CROCHET_DSL.md pins the `#!` syntax |
+| T4.1 | Bridge: exporter + C++ importer into StitchGraph + `#!` extension-line reader (B) | T4.0 | done | default | 1 | a066c9d (merged b31c3f8) | §5.4-ready: 110 PASS lines; 10/10 exports byte-identical; 2 mutations caught; docs/CROCHET_DSL.md pins the `#!` syntax |
 | T4.2 | Facing/RS, point seams, count checks (B) | T4.1 | todo | | 0 | | ★ §5.4 tests |
 | T5.1 | Faces (BFS base path, zipper), rest shapes, orientation | T4.2, T1.2 | todo | | 0 | | ★ §6.10 test 4 hygiene, all fixtures |
 | T5.2 | Materials, hinge mods, seams → IntrinsicMesh | T5.1, T3.1, T1.3, T1.5 | todo | | 0 | | §6.10 test 6 (mass) |
