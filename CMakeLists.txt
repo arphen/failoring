@@ -42,7 +42,8 @@ endif()
 # Static and Godot-free; it links cloth_core but cloth_core does not depend on it.
 add_library(crochet_core STATIC
   crochet_core/src/yarn.cpp
-  crochet_core/src/stitch_model.cpp)
+  crochet_core/src/stitch_model.cpp
+  crochet_core/src/parse.cpp)
 target_include_directories(crochet_core PUBLIC crochet_core/include)
 target_link_libraries(crochet_core PUBLIC cloth_core)
 target_compile_options(crochet_core PRIVATE -Wall -Wextra)
@@ -50,6 +51,7 @@ target_compile_options(crochet_core PRIVATE -Wall -Wextra)
 enable_testing()
 set(FL_MATERIALS_PATH "${CMAKE_SOURCE_DIR}/materials/fabrics.json")
 set(FL_YARNS_PATH "${CMAKE_SOURCE_DIR}/materials/yarns.json")
+set(FL_PATTERNS_DIR "${CMAKE_SOURCE_DIR}/patterns")
 set(FL_OUT_DIR "${CMAKE_SOURCE_DIR}/out")
 
 foreach(t test_basics test_cantilever test_drape test_garment test_sdf_grid test_soft_skin test_barrier test_passthrough test_layers test_skin_barrier test_wedge test_static test_friction test_intrinsic)
@@ -72,6 +74,15 @@ target_link_libraries(test_crochet_model PRIVATE crochet_core)
 target_include_directories(test_crochet_model PRIVATE cloth_core/tests)
 target_compile_definitions(test_crochet_model PRIVATE FL_YARNS_PATH="${FL_YARNS_PATH}")
 add_test(NAME test_crochet_model COMMAND test_crochet_model)
+
+# crochet_core test: the CrochetPARADE export importer plus `#!` extension
+# lines (the decision-B bridge, plan sections 5.0/5.1). Reads the committed
+# exports under patterns/: no node at test time.
+add_executable(test_crochet_parse crochet_core/tests/test_crochet_parse.cpp)
+target_link_libraries(test_crochet_parse PRIVATE crochet_core)
+target_include_directories(test_crochet_parse PRIVATE cloth_core/tests)
+target_compile_definitions(test_crochet_parse PRIVATE FL_PATTERNS_DIR="${FL_PATTERNS_DIR}")
+add_test(NAME test_crochet_parse COMMAND test_crochet_parse)
 
 # Native timing (not in ctest): cmake -DFL_BENCH=ON, then build/bench_native.
 option(FL_BENCH "Build the native timing benchmark (bench_native), not run by ctest" OFF)
