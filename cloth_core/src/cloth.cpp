@@ -256,6 +256,14 @@ void ClothSolver::addSeam(int pa, int ea, int pb, int eb, bool reverse) {
     seamSpecs_.push_back({pa, ea, pb, eb, reverse});
 }
 
+void ClothSolver::addPointSeam(int a, int b, Real share) {
+    if (finalized_) FL_THROW(std::logic_error, "ClothSolver: cannot add seams after the simulation started");
+    if (share <= 0) FL_THROW(std::invalid_argument, "addPointSeam: share must be positive");
+    if (a < 0 || b < 0 || a >= vertexCount() || b >= vertexCount()) FL_THROW(std::out_of_range, "addPointSeam: bad vertex");
+    if (a == b) FL_THROW(std::invalid_argument, "addPointSeam: a and b are the same vertex");
+    pointSeamSpecs_.push_back({a, b, share});
+}
+
 void ClothSolver::pinVertex(int v, bool pinned) {
     pinned_.at(static_cast<size_t>(v)) = pinned ? 1 : 0;
     if (finalized_) w_[v] = pinned ? 0 : 1 / mass_[v];
@@ -369,6 +377,10 @@ void ClothSolver::finalize() {
         muK_[i] = m.frictionKinetic;
         radius_[i] = p_.contactOffset + 0.5 * m.thickness;
     }
+    // Zero-g relaxation damping multiplier (CROCHET_PLAN §6.9): damp_ is final after the per-vertex loop above.
+    // Guarded, so dampingScale == 1 leaves every existing result bit-identical.
+    if (p_.dampingScale != 1.0)
+        for (Real& d : damp_) d *= p_.dampingScale;
     const Real meanEdge = edgeCnt ? edgeSum / edgeCnt : 0.02;
 
     // --- hinges for bending (only within a panel: vertices are not shared across panels)
@@ -471,6 +483,18 @@ void ClothSolver::finalize() {
         if (sp.reverse) std::reverse(B.begin(), B.end());
         link(A, B);
         link(B, A);
+    }
+    // Point seams (addPointSeam, crochet plan 2.4): one link per request, b0 = b1 = b, so the two no-collide
+    // loops of link() above collapse to one in each direction. The requests persist, so a repeated finalize()
+    // rebuilds exactly the same seamC_/noCollide_ entries (idempotent).
+    for (const PointSeamSpec& ps : pointSeamSpecs_) {
+        SeamC c;
+        c.a = ps.a; c.b0 = c.b1 = ps.b; c.t = 0;
+        c.alpha = 1.0 / (p_.seamStiffness * ps.share);
+        c.lam = 0;
+        seamC_.push_back(c);
+        for (int tt : vertTris[c.b0]) noCollide_.insert(pairKey(c.a, tt));
+        for (int tt : vertTris[c.a]) noCollide_.insert(pairKey(c.b0, tt));
     }
 
     // --- self-collision hash

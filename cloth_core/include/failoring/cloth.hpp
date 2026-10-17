@@ -114,6 +114,9 @@ struct SolverParams {
     Vec3 gravity{0, -9.81, 0};
     Real seamStiffness = 20000.0;  // N/m of seam length (thread + construction)
     int seamRampFrames = 0;        // >0: seams fade in over this many frames (helps assembling far-apart panels)
+    // Multiplied into damp_ in finalize() (CROCHET_PLAN §6.9: the zero-g relaxation of an assembled layout uses
+    // x5). 1.0 leaves every existing result bit-identical.
+    Real dampingScale = 1.0;
     Real contactOffset = 0.0015;   // m, extra clearance cloth <-> body
     Real contactBand = 1e-4;       // m, implicit: a vertex this close to the body and pushed towards it is held (not released)
     // Implicit: include the (PSD) tension part of the stretch Hessian (off in the core, on in the app). Without it Newton
@@ -308,6 +311,13 @@ public:
     // Sew outline edge `edgeA` of panel A to `edgeB` of panel B (see PanelMesh::edgeChains).
     void addSeam(int panelA, int edgeA, int panelB, int edgeB, bool reverse = false);
 
+    // Sew vertex `a` directly to vertex `b` (crochet plan 2.4): one seam link with b0 = b1 = b, t = 0 and
+    // alpha = 1/(seamStiffness * share), where `share` is the seam length the link stands for (m). Like addSeam,
+    // the request is only stored and built in finalize(), so a repeated finalize() rebuilds the same set.
+    // Throws std::logic_error after the simulation started, std::invalid_argument for share <= 0 or a == b,
+    // std::out_of_range for a vertex outside [0, vertexCount()).
+    void addPointSeam(int a, int b, Real share);
+
     // ---- static equilibrium (opt-in; the dynamic step() is untouched) ---------
     // Finds the equilibrium of the potential energy (stretch, shear, bending, seams, gravity, body contact) from the
     // current positions, without simulating motion. See docs/agent_notes/S1_static_settle.md.
@@ -409,6 +419,9 @@ private:
         Real t, alpha, lam;
         int slot[9];
     };
+    // addPointSeam request (crochet plan 2.4), kept so finalize() can rebuild seamC_ from it (which makes a
+    // repeated finalize() idempotent). a, b are global vertex ids; share is the seam length the link stands for (m).
+    struct PointSeamSpec { int a, b; Real share; };
 
     void finalize();
     // VBD (cloth_vbd.cpp)
@@ -442,6 +455,7 @@ private:
     std::vector<FabricMaterial> mats_;
     std::vector<Panel> panels_;
     std::vector<SeamSpec> seamSpecs_;
+    std::vector<PointSeamSpec> pointSeamSpecs_;  // addPointSeam requests, built into seamC_ by finalize()
 
     // per vertex
     std::vector<Vec3> x_, xPrev_, v_;
