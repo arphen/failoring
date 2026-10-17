@@ -317,6 +317,9 @@ void ClothSolver::finalize() {
         c.alphaV = 1.0 / (cap(m.tensileWeft) * area);
         c.alphaS = 1.0 / (cap(m.shear) * area);
         c.comp = std::max(m.compressionRatio, 0.02);
+        c.lockU = m.lockStrainWarp;  // u axis = warp, v = weft (materials/fabrics.json convention; board 2026-10-16)
+        c.lockV = m.lockStrainWeft;
+        c.ratio = m.lockStiffnessRatio;
         c.lamU = c.lamV = c.lamS = 0;
         triC_.push_back(c);
         for (int k = 0; k < 3; ++k) {

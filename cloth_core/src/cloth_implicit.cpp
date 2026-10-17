@@ -167,15 +167,33 @@ void ClothSolver::assembleEnergy(Real seamScale) {
             const Vec3 nu = wu / lu;
             const Vec3 g[3] = {-(nu * c.a + nu * c.c), nu * c.a, nu * c.c};
             const Real C = lu - 1;
-            add(3, idx, c.slot, g, C, (C < 0 ? c.comp : 1.0) / c.alphaU);
-            if (tension && C > 0) { const Real beta[3] = {-(c.a + c.c), c.a, c.c}; addTension(c.slot, beta, nu, C / (c.alphaU * lu)); }
+            if (c.lockU > 0 && C > c.lockU) {  // J-curve: stiff above the lock strain (crochet plan 2.3)
+                // add(..., dedc/kappa, kappa) keeps the locked branch in the same form as the plain path: the
+                // gradient is g * (kappa * (dedc/kappa)) = g * dedc exactly (kappa * (dedc/kappa) = dedc), and
+                // kappa is the Gauss-Newton Hessian factor r*k.
+                const detail::JCurveStretch jc = detail::jCurveStretch(C, 1.0 / c.alphaU, c.lockU, c.ratio);
+                add(3, idx, c.slot, g, jc.dedc / jc.kappa, jc.kappa);
+                // The tension Hessian term uses dE/dC (the locked slope) in place of the plain C/alphaU.
+                if (tension) { const Real beta[3] = {-(c.a + c.c), c.a, c.c}; addTension(c.slot, beta, nu, jc.dedc / lu); }
+            } else {
+                // unlocked arithmetic, unchanged from before T1.4 (lockU = 0 keeps every old material on this path)
+                add(3, idx, c.slot, g, C, (C < 0 ? c.comp : 1.0) / c.alphaU);
+                if (tension && C > 0) { const Real beta[3] = {-(c.a + c.c), c.a, c.c}; addTension(c.slot, beta, nu, C / (c.alphaU * lu)); }
+            }
         }
         if (lv > 1e-12) {
             const Vec3 nv = wv / lv;
             const Vec3 g[3] = {-(nv * c.b + nv * c.d), nv * c.b, nv * c.d};
             const Real C = lv - 1;
-            add(3, idx, c.slot, g, C, (C < 0 ? c.comp : 1.0) / c.alphaV);
-            if (tension && C > 0) { const Real beta[3] = {-(c.b + c.d), c.b, c.d}; addTension(c.slot, beta, nv, C / (c.alphaV * lv)); }
+            if (c.lockV > 0 && C > c.lockV) {  // J-curve: stiff above the lock strain (crochet plan 2.3)
+                const detail::JCurveStretch jc = detail::jCurveStretch(C, 1.0 / c.alphaV, c.lockV, c.ratio);
+                add(3, idx, c.slot, g, jc.dedc / jc.kappa, jc.kappa);  // gradient g * dedc; Hessian kappa*g g^T
+                if (tension) { const Real beta[3] = {-(c.b + c.d), c.b, c.d}; addTension(c.slot, beta, nv, jc.dedc / lv); }
+            } else {
+                // unlocked arithmetic, unchanged from before T1.4 (lockV = 0 keeps every old material on this path)
+                add(3, idx, c.slot, g, C, (C < 0 ? c.comp : 1.0) / c.alphaV);
+                if (tension && C > 0) { const Real beta[3] = {-(c.b + c.d), c.b, c.d}; addTension(c.slot, beta, nv, C / (c.alphaV * lv)); }
+            }
         }
         {
             const Vec3 g1 = wv * c.a + wu * c.b;
@@ -219,8 +237,10 @@ Real ClothSolver::variationalEnergy(Real invH2, Real seamScale) const {
         const Vec3 d1 = x_[c.i1] - x_[c.i0], d2 = x_[c.i2] - x_[c.i0];
         const Vec3 wu = d1 * c.a + d2 * c.c, wv = d1 * c.b + d2 * c.d;
         const Real Cu = length(wu) - 1, Cv = length(wv) - 1, Cs = dot(wu, wv);
-        E += 0.5 * (Cu < 0 ? c.comp : 1.0) / c.alphaU * Cu * Cu;
-        E += 0.5 * (Cv < 0 ? c.comp : 1.0) / c.alphaV * Cv * Cv;
+        if (c.lockU > 0 && Cu > c.lockU) E += detail::jCurveStretch(Cu, 1.0 / c.alphaU, c.lockU, c.ratio).e;
+        else E += 0.5 * (Cu < 0 ? c.comp : 1.0) / c.alphaU * Cu * Cu;  // unlocked: unchanged from before T1.4
+        if (c.lockV > 0 && Cv > c.lockV) E += detail::jCurveStretch(Cv, 1.0 / c.alphaV, c.lockV, c.ratio).e;
+        else E += 0.5 * (Cv < 0 ? c.comp : 1.0) / c.alphaV * Cv * Cv;  // unlocked: unchanged from before T1.4
         E += 0.5 / c.alphaS * Cs * Cs;
     }
     for (const BendC& b : bendC_) {

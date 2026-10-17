@@ -27,6 +27,10 @@ struct FabricMaterial {
     Real bendWarp = 1.0e-5;     // N*m   bending rigidity per unit width, curvature along warp
     Real bendWeft = 1.0e-5;     // N*m   ... curvature along weft
     Real compressionRatio = 0.3;  // in-plane compression stiffness / tension stiffness (0..1)
+    // Strain-stiffening (J-curve; CROCHET_PLAN §2.3): knitted fabric is soft while the loops slide and straighten,
+    // then much stiffer once the yarn itself is straight. 0 = off, the plain linear behaviour (default).
+    Real lockStrainWarp = 0, lockStrainWeft = 0;  // 0 = off. Strain at which loops lock (e.g. 0.15)
+    Real lockStiffnessRatio = 1;                  // stiffness above lock / stiffness below (e.g. 30)
     Real frictionStatic = 0.5;  // cloth-vs-body/other friction
     Real frictionKinetic = 0.35;
     Real damping = 0.6;         // 1/s, viscous velocity damping (air + internal)
