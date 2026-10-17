@@ -124,3 +124,20 @@ acceptance, with the measured numbers. Honest numbers; "not measured" where not 
   laziness clean, scope exactly 23 files, gdextension configure done. 2 mutations caught (kind
   demoted -> 6 failures; duplicate-link check off -> 2 failures). Merged.
 * T4.2 unblocked: RS/WS facing from `loop`, point seams from the `Link`s, count checks.
+
+### 2026-10-17 — T1.5 point seams + dampingScale (phase 1, item 5 of 6)
+
+* `addPointSeam(a, b, share)` (§2.4): stores validated requests, `finalize()` rebuilds one `SeamC`
+  per request (`b0 = b1 = b`, `t = 0`, `alpha = 1/(seamStiffness*share)`) plus the bidirectional
+  `noCollide_` entries; repeated `finalize()` is idempotent; the same `finalized_` gate as
+  `addSeam`. `SolverParams::dampingScale` (default 1) multiplies `damp_` after the per-vertex
+  fill, guarded so the default path is bit-exact (§6.9's x5 relaxation).
+* Test 6: two 0.10 m squares, facing edges 5 cm apart, 3 point-seamed pairs, `seamRampFrames 30`,
+  gravity 0 — after 120 frames the pair distances are 7.47e-07 / 5.93e-07 / 7.91e-07 m
+  (< 0.5 mm). `dampingScale` 1 vs 5 after 10 frames: KE 5.775926e-05 vs 3.721010e-05 J.
+* Review: clean rebuild 13/16 (baseline FAIL lines identical), dump bit-identical, laziness
+  clean, scope exactly three files. Mutations: no point seams built -> 2 failures (distance stays
+  5.000e-02 m); `dampingScale` ignored -> 1 failure (KE x5 == x1). A 1e6-weaker seam is NOT
+  detected (zero-g free panels: any positive stiffness closes in 120 frames) — test 6 pins seam
+  presence, not stiffness, matching the plan's acceptance. Merged.
+* Phase 1 remaining: T1.6 (contact force readback, RoundedBoxCollider).
