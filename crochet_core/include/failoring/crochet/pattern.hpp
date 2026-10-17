@@ -22,10 +22,10 @@
 // Extension lines: every line in the pattern file whose first two characters
 // are `#!` is one. CrochetPARADE treats `#` as a comment start, so these lines
 // are invisible to its parser, and comment lines never shift row numbers or
-// source-line numbers (the export's `line` values are stable). T4.1 implements
-// one keyword:
+// source-line numbers (the export's `line` values are stable). Two keywords:
 //
 //   #! link [row,pos] [row,pos] <kind>     kind = both_layers | join
+//   #! count [row] N
 //
 // [row,pos] addresses a stitch by its exported row id and its index within
 // that row, exactly the values in the JSON. Both addresses must name existing
@@ -36,7 +36,14 @@
 // both_layers, a is the seam stitch the export attached to one layer and b is
 // the partner-layer stitch; for join, a is the closing sl st of a strap end
 // and b is the strap-end stitch (a's own export target is the rim stitch).
-// Errors carry the physical line number and the offending token/address.
+//
+// `#! count` asserts the number of stitch nodes in the exported row `[row]`
+// (one number in brackets, not the `[row,pos]` stitch address): exactly the
+// stitches whose `row` is that row, turning chains and join sl sts included.
+// A mismatch throws `crochet extension line <line>: row [<r>] has <A>
+// stitches, the pattern says <N>`; a nonexistent row, arity or address errors
+// throw before that. Every error carries the physical line number and the
+// offending keyword, token or address.
 #include <string>
 
 #include "failoring/crochet/graph.hpp"
@@ -44,9 +51,10 @@
 namespace fl {
 
 // Import the export JSON, then apply the `#!` lines of extensionText (empty =
-// none). Throws std::runtime_error on malformed JSON/UTF-8, on schema
-// violations and on extension-line errors, always naming the line, stitch or
-// address involved.
+// none), then resolve RS/WS facing and RS-relative loop insertion for every
+// stitch (resolveFacing, plan section 5.5). Throws std::runtime_error on
+// malformed JSON/UTF-8, on schema violations and on extension-line errors,
+// always naming the line, stitch or address involved.
 StitchGraph importPattern(const std::string& jsonText, const std::string& extensionText = {});
 
 // Read both files and call importPattern. patternPath may be empty, then no

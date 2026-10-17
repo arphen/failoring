@@ -9,3 +9,13 @@ sc,sc@[@],3sc,sc,sc@[@],3sc,sc,sc@[@],3sc,sc,sc@[@],3sc,sc,sc@[@],3sc,sc
 sc,sc@[@],4sc,sc,sc@[@],4sc,sc,sc@[@],4sc,sc,sc@[@],4sc,sc,sc@[@],4sc,sc
 sc,sc@[@],5sc,sc,sc@[@],5sc,sc,sc@[@],5sc,sc,sc@[@],5sc,sc,sc@[@],5sc,sc
 sc,sc@[@],6sc,sc,sc@[@],6sc,sc,sc@[@],6sc,sc,sc@[@],6sc,sc,sc@[@],6sc,sc
+# ---- Failoring row counts (#! count [row] N; docs/CROCHET_DSL.md section 2) ----
+#! count [0] 1
+#! count [1] 6
+#! count [2] 11
+#! count [3] 16
+#! count [4] 21
+#! count [5] 26
+#! count [6] 31
+#! count [7] 36
+#! count [8] 41

@@ -22,7 +22,8 @@ target_include_directories(cloth_core PUBLIC ${CORE}/include)
 # extension does not link it yet -- T7.1 wires the editor entry points.
 set(CROCHET_CORE ${CMAKE_CURRENT_SOURCE_DIR}/../crochet_core)
 add_library(crochet_core STATIC
-  ${CROCHET_CORE}/src/yarn.cpp ${CROCHET_CORE}/src/stitch_model.cpp ${CROCHET_CORE}/src/parse.cpp)
+  ${CROCHET_CORE}/src/yarn.cpp ${CROCHET_CORE}/src/stitch_model.cpp ${CROCHET_CORE}/src/parse.cpp
+  ${CROCHET_CORE}/src/graph.cpp)
 target_include_directories(crochet_core PUBLIC ${CROCHET_CORE}/include)
 target_link_libraries(crochet_core PUBLIC cloth_core)
 

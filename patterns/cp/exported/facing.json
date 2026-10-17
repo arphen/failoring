@@ -1,0 +1,398 @@
+{
+  "stitches": [
+    {
+      "id": 0,
+      "type": "ch",
+      "piece": "main",
+      "row": 0,
+      "index": 0,
+      "loop": "space",
+      "targets": [],
+      "prev": -1,
+      "line": 8
+    },
+    {
+      "id": 1,
+      "type": "ch",
+      "piece": "main",
+      "row": 0,
+      "index": 1,
+      "loop": "space",
+      "targets": [],
+      "prev": 0,
+      "line": 8
+    },
+    {
+      "id": 2,
+      "type": "ch",
+      "piece": "main",
+      "row": 0,
+      "index": 2,
+      "loop": "space",
+      "targets": [],
+      "prev": 1,
+      "line": 8
+    },
+    {
+      "id": 3,
+      "type": "ch",
+      "piece": "main",
+      "row": 0,
+      "index": 3,
+      "loop": "space",
+      "targets": [],
+      "prev": 2,
+      "line": 8
+    },
+    {
+      "id": 4,
+      "type": "ch",
+      "piece": "main",
+      "row": 0,
+      "index": 4,
+      "loop": "space",
+      "targets": [],
+      "prev": 3,
+      "line": 8
+    },
+    {
+      "id": 5,
+      "type": "ch",
+      "piece": "main",
+      "row": 0,
+      "index": 5,
+      "loop": "space",
+      "targets": [],
+      "prev": 4,
+      "line": 8
+    },
+    {
+      "id": 6,
+      "type": "sc",
+      "piece": "main",
+      "row": 1,
+      "index": 0,
+      "loop": "blo",
+      "targets": [
+        4
+      ],
+      "prev": 5,
+      "line": 9
+    },
+    {
+      "id": 7,
+      "type": "sc",
+      "piece": "main",
+      "row": 1,
+      "index": 1,
+      "loop": "blo",
+      "targets": [
+        3
+      ],
+      "prev": 6,
+      "line": 9
+    },
+    {
+      "id": 8,
+      "type": "sc",
+      "piece": "main",
+      "row": 1,
+      "index": 2,
+      "loop": "blo",
+      "targets": [
+        2
+      ],
+      "prev": 7,
+      "line": 9
+    },
+    {
+      "id": 9,
+      "type": "sc",
+      "piece": "main",
+      "row": 1,
+      "index": 3,
+      "loop": "blo",
+      "targets": [
+        1
+      ],
+      "prev": 8,
+      "line": 9
+    },
+    {
+      "id": 10,
+      "type": "sc",
+      "piece": "main",
+      "row": 1,
+      "index": 4,
+      "loop": "blo",
+      "targets": [
+        0
+      ],
+      "prev": 9,
+      "line": 9
+    },
+    {
+      "id": 11,
+      "type": "ch",
+      "piece": "main",
+      "row": 2,
+      "index": 0,
+      "loop": "space",
+      "targets": [],
+      "prev": 10,
+      "line": 10
+    },
+    {
+      "id": 12,
+      "type": "sc",
+      "piece": "main",
+      "row": 2,
+      "index": 1,
+      "loop": "blo",
+      "targets": [
+        10
+      ],
+      "prev": 11,
+      "line": 10
+    },
+    {
+      "id": 13,
+      "type": "sc",
+      "piece": "main",
+      "row": 2,
+      "index": 2,
+      "loop": "blo",
+      "targets": [
+        9
+      ],
+      "prev": 12,
+      "line": 10
+    },
+    {
+      "id": 14,
+      "type": "sc",
+      "piece": "main",
+      "row": 2,
+      "index": 3,
+      "loop": "blo",
+      "targets": [
+        8
+      ],
+      "prev": 13,
+      "line": 10
+    },
+    {
+      "id": 15,
+      "type": "sc",
+      "piece": "main",
+      "row": 2,
+      "index": 4,
+      "loop": "blo",
+      "targets": [
+        7
+      ],
+      "prev": 14,
+      "line": 10
+    },
+    {
+      "id": 16,
+      "type": "sc",
+      "piece": "main",
+      "row": 2,
+      "index": 5,
+      "loop": "blo",
+      "targets": [
+        6
+      ],
+      "prev": 15,
+      "line": 10
+    },
+    {
+      "id": 17,
+      "type": "ch",
+      "piece": "main",
+      "row": 3,
+      "index": 0,
+      "loop": "space",
+      "targets": [],
+      "prev": 16,
+      "line": 11
+    },
+    {
+      "id": 18,
+      "type": "sc",
+      "piece": "main",
+      "row": 3,
+      "index": 1,
+      "loop": "flo",
+      "targets": [
+        16
+      ],
+      "prev": 17,
+      "line": 11
+    },
+    {
+      "id": 19,
+      "type": "sc",
+      "piece": "main",
+      "row": 3,
+      "index": 2,
+      "loop": "flo",
+      "targets": [
+        15
+      ],
+      "prev": 18,
+      "line": 11
+    },
+    {
+      "id": 20,
+      "type": "sc",
+      "piece": "main",
+      "row": 3,
+      "index": 3,
+      "loop": "flo",
+      "targets": [
+        14
+      ],
+      "prev": 19,
+      "line": 11
+    },
+    {
+      "id": 21,
+      "type": "sc",
+      "piece": "main",
+      "row": 3,
+      "index": 4,
+      "loop": "flo",
+      "targets": [
+        13
+      ],
+      "prev": 20,
+      "line": 11
+    },
+    {
+      "id": 22,
+      "type": "sc",
+      "piece": "main",
+      "row": 3,
+      "index": 5,
+      "loop": "flo",
+      "targets": [
+        12
+      ],
+      "prev": 21,
+      "line": 11
+    },
+    {
+      "id": 23,
+      "type": "ch",
+      "piece": "main",
+      "row": 4,
+      "index": 0,
+      "loop": "space",
+      "targets": [],
+      "prev": 22,
+      "line": 12
+    },
+    {
+      "id": 24,
+      "type": "sc",
+      "piece": "main",
+      "row": 4,
+      "index": 1,
+      "loop": "flo",
+      "targets": [
+        22
+      ],
+      "prev": 23,
+      "line": 12
+    },
+    {
+      "id": 25,
+      "type": "sc",
+      "piece": "main",
+      "row": 4,
+      "index": 2,
+      "loop": "flo",
+      "targets": [
+        21
+      ],
+      "prev": 24,
+      "line": 12
+    },
+    {
+      "id": 26,
+      "type": "sc",
+      "piece": "main",
+      "row": 4,
+      "index": 3,
+      "loop": "flo",
+      "targets": [
+        20
+      ],
+      "prev": 25,
+      "line": 12
+    },
+    {
+      "id": 27,
+      "type": "sc",
+      "piece": "main",
+      "row": 4,
+      "index": 4,
+      "loop": "flo",
+      "targets": [
+        19
+      ],
+      "prev": 26,
+      "line": 12
+    },
+    {
+      "id": 28,
+      "type": "sc",
+      "piece": "main",
+      "row": 4,
+      "index": 5,
+      "loop": "flo",
+      "targets": [
+        18
+      ],
+      "prev": 27,
+      "line": 12
+    }
+  ],
+  "rows": [
+    {
+      "id": 0,
+      "piece": "main",
+      "kind": "row",
+      "turned": true
+    },
+    {
+      "id": 1,
+      "piece": "main",
+      "kind": "row",
+      "turned": true
+    },
+    {
+      "id": 2,
+      "piece": "main",
+      "kind": "row",
+      "turned": true
+    },
+    {
+      "id": 3,
+      "piece": "main",
+      "kind": "row",
+      "turned": true
+    },
+    {
+      "id": 4,
+      "piece": "main",
+      "kind": "row",
+      "turned": true
+    }
+  ],
+  "links": [],
+  "positions": [],
+  "errors": []
+}
