@@ -45,7 +45,8 @@ add_library(crochet_core STATIC
   crochet_core/src/stitch_model.cpp
   crochet_core/src/parse.cpp
   crochet_core/src/graph.cpp
-  crochet_core/src/crochet_mesh.cpp)
+  crochet_core/src/crochet_mesh.cpp
+  crochet_core/src/crochet_model.cpp)
 target_include_directories(crochet_core PUBLIC crochet_core/include)
 target_link_libraries(crochet_core PUBLIC cloth_core)
 target_compile_options(crochet_core PRIVATE -Wall -Wextra)

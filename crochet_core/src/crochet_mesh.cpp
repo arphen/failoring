@@ -82,6 +82,17 @@ private:
     std::vector<char> join_, linked_, explained_;
     std::vector<std::vector<int>> rowStitches_;
     std::vector<Tri> tris_;
+    struct Poly {
+        int source;
+        MeshPolygon::Kind kind;
+        std::vector<int> top, base;  // stitch ids
+    };
+    std::vector<Poly> polys_;
+    struct Surf {
+        int p, s;
+        std::vector<int> base;  // stitch ids
+    };
+    std::vector<Surf> surf_;
     std::vector<std::string> warnings_;
     std::vector<MeshJump> jumps_;
     std::vector<int> stamp_, parent_;
@@ -151,7 +162,7 @@ private:
     // Zipper between the top polyline A (current row, left to right in working
     // order) and the base polyline B (plan 6.2 step 3, 6.3). `s` is the upper
     // stitch whose height and material rule the polygon.
-    bool addStrip(const std::vector<int>& A, const std::vector<int>& B, int s) {
+    bool addStrip(const std::vector<int>& A, const std::vector<int>& B, int s, MeshPolygon::Kind kind) {
         const size_t m = A.size(), n = B.size();
         for (const int a : A)
             for (const int b : B)
@@ -160,6 +171,7 @@ private:
                                         std::to_string(s) + ")");
                     return false;
                 }
+        polys_.push_back({s, kind, A, B});
         // rest positions in the polygon frame (x along the work, y up the wale)
         std::vector<Real> xa(m, 0), xb(n, 0);
         Real wt = 0, wb = 0;
@@ -210,9 +222,13 @@ private:
 
     // A pair (p, s) whose base nodes no boundary path connects.
     void unresolved(int p, int s, int u, int v) {
-        if (g_.st[p].type == "slst" && g_.st[s].type == "slst" && !path(u, v, true).empty()) {
-            explained_[p] = explained_[s] = 1;  // surface sl st: the base edges are full, the row lies on the fabric
-            return;
+        if (g_.st[p].type == "slst" && g_.st[s].type == "slst") {
+            std::vector<int> base = path(u, v, true);
+            if (!base.empty()) {
+                explained_[p] = explained_[s] = 1;  // surface sl st: the base edges are full, the row lies on the fabric
+                surf_.push_back({p, s, std::move(base)});
+                return;
+            }
         }
         if (linked_[p] || linked_[s]) {
             jumps_.push_back({p, s});  // a point seam supplies the connection
@@ -243,7 +259,7 @@ private:
                     std::vector<int> top{prevAnchor};
                     top.insert(top.end(), mids.begin(), mids.end());
                     top.push_back(id);
-                    addStrip(top, base, id);
+                    addStrip(top, base, id, MeshPolygon::Pair);
                 }
             } else {
                 firstAnchor = id;
@@ -252,7 +268,7 @@ private:
             for (size_t k = 0; k + 1 < s.targets.size(); ++k) {
                 const std::vector<int> base = path(s.targets[k], s.targets[k + 1], false);
                 if (base.empty()) unresolved(id, id, s.targets[k], s.targets[k + 1]);
-                else addStrip({id}, base, id);
+                else addStrip({id}, base, id, MeshPolygon::Decrease);
             }
             prevAnchor = id;
             mids.clear();
@@ -261,7 +277,7 @@ private:
         if (g_.rows[r].kind == "round" && firstAnchor >= 0 && prevAnchor != firstAnchor) {
             const int u = g_.st[prevAnchor].targets.back(), v = g_.st[firstAnchor].targets.front();
             const std::vector<int> base = path(u, v, false);
-            if (!base.empty() && base.size() <= 2) addStrip({prevAnchor, firstAnchor}, base, firstAnchor);
+            if (!base.empty() && base.size() <= 2) addStrip({prevAnchor, firstAnchor}, base, firstAnchor, MeshPolygon::Closing);
         }
     }
 
@@ -338,6 +354,14 @@ private:
         }
         m.triComponent = comp;
         m.components = components;
+        auto toVertices = [&](const std::vector<int>& ids) {
+            std::vector<int> out;
+            out.reserve(ids.size());
+            for (const int id : ids) out.push_back(m.stitchVertex[id]);
+            return out;
+        };
+        for (const Poly& pl : polys_) m.polygons.push_back({pl.source, pl.kind, toVertices(pl.top), toVertices(pl.base)});
+        for (const Surf& sf : surf_) m.surface.push_back({sf.p, sf.s, toVertices(sf.base)});
 
         // dropped stitches: nearest kept stitch over the graph's prev/target links
         m.dropTo.assign(g_.st.size(), -1);
