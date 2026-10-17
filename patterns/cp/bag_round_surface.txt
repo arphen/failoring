@@ -149,3 +149,13 @@ ch,6sc,turn
 ch,6sc,turn
 ch,6sc,turn
 ss@[44,87],ss@[44,86],ss@[44,85],ss@[44,84],ss@[44,83],ss@[44,82]
+# ---- Failoring extension lines (decision B; docs/CROCHET_DSL.md) -------------
+# Strap end: the 6 closing sl st at row 146 are worked into bag top
+# positions 88..83 (their export targets); these links sew each one to the
+# strap row 100 stitch at the same column of the opening ring.
+#! link [146,0] [145,6] join
+#! link [146,1] [145,5] join
+#! link [146,2] [145,4] join
+#! link [146,3] [145,3] join
+#! link [146,4] [145,2] join
+#! link [146,5] [145,1] join

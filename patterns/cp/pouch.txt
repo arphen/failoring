@@ -137,3 +137,67 @@ ch,5sc,turn
 ch,5sc,turn
 ch,5sc,turn
 ss@[51,74],ss@[51,73],ss@[51,72],ss@[51,71],ss@[51,70]
+# ---- Failoring extension lines (decision B; docs/CROCHET_DSL.md) -------------
+# CrochetPARADE can attach a seam stitch to one layer only. These links carry
+# the folded partner layer, addressed as [row,pos] = exported row id and the
+# stitch's index in that row (turning chains included, as the export writes
+# them). Side 1: border row 51, pos 0..24 = L25..L1 against L26..L50.
+#! link [51,0] [26,15] both_layers
+#! link [51,1] [27,1] both_layers
+#! link [51,2] [28,15] both_layers
+#! link [51,3] [29,1] both_layers
+#! link [51,4] [30,15] both_layers
+#! link [51,5] [31,1] both_layers
+#! link [51,6] [32,15] both_layers
+#! link [51,7] [33,1] both_layers
+#! link [51,8] [34,15] both_layers
+#! link [51,9] [35,1] both_layers
+#! link [51,10] [36,15] both_layers
+#! link [51,11] [37,1] both_layers
+#! link [51,12] [38,15] both_layers
+#! link [51,13] [39,1] both_layers
+#! link [51,14] [40,15] both_layers
+#! link [51,15] [41,1] both_layers
+#! link [51,16] [42,15] both_layers
+#! link [51,17] [43,1] both_layers
+#! link [51,18] [44,15] both_layers
+#! link [51,19] [45,1] both_layers
+#! link [51,20] [46,15] both_layers
+#! link [51,21] [47,1] both_layers
+#! link [51,22] [48,15] both_layers
+#! link [51,23] [49,1] both_layers
+#! link [51,24] [50,15] both_layers
+# Side 2: border row 51, pos 40..64 = R1..R25 against R50..R26.
+#! link [51,40] [50,1] both_layers
+#! link [51,41] [49,15] both_layers
+#! link [51,42] [48,1] both_layers
+#! link [51,43] [47,15] both_layers
+#! link [51,44] [46,1] both_layers
+#! link [51,45] [45,15] both_layers
+#! link [51,46] [44,1] both_layers
+#! link [51,47] [43,15] both_layers
+#! link [51,48] [42,1] both_layers
+#! link [51,49] [41,15] both_layers
+#! link [51,50] [40,1] both_layers
+#! link [51,51] [39,15] both_layers
+#! link [51,52] [38,1] both_layers
+#! link [51,53] [37,15] both_layers
+#! link [51,54] [36,1] both_layers
+#! link [51,55] [35,15] both_layers
+#! link [51,56] [34,1] both_layers
+#! link [51,57] [33,15] both_layers
+#! link [51,58] [32,1] both_layers
+#! link [51,59] [31,15] both_layers
+#! link [51,60] [30,1] both_layers
+#! link [51,61] [29,15] both_layers
+#! link [51,62] [28,1] both_layers
+#! link [51,63] [27,15] both_layers
+#! link [51,64] [26,1] both_layers
+# Strap end: the 5 closing sl st at row 132 are worked into the back rim
+# (their export targets); these links sew each one to the strap row 80
+# stitch at the same column, which is where the sl st sits.
+#! link [132,0] [131,1] join
+#! link [132,1] [131,2] join
+#! link [132,2] [131,3] join
+#! link [132,3] [131,4] join
+#! link [132,4] [131,5] join
