@@ -1,6 +1,7 @@
-// The stitch graph -> mesh topology stage (docs/CROCHET_PLAN.md sections 6.1-6.4,
-// ticket T5.1) and its hygiene test (section 6.10, test 4) on every committed
-// fixture: faces, per-triangle rest shapes and the orientation. Reads only the
+// The stitch graph -> mesh stage (docs/CROCHET_PLAN.md sections 6.1-6.7, tickets
+// T5.1, T5.2): the hygiene test (section 6.10, test 4) on every committed
+// fixture (faces, per-triangle rest shapes, orientation) and the model packing
+// (materials, hinge modifiers, point seams, the mass test 6). Reads only the
 // committed exports under FL_PATTERNS_DIR and the yarn database: no node, no
 // CrochetPARADE checkout at test time.
 #include <algorithm>
@@ -13,7 +14,9 @@
 #include <vector>
 
 #include "check.hpp"
+#include "failoring/cloth.hpp"
 #include "failoring/crochet/mesh.hpp"
+#include "failoring/crochet/model.hpp"
 #include "failoring/crochet/pattern.hpp"
 
 using namespace fl;
@@ -349,6 +352,170 @@ static void handBuilt() {
     }
 }
 
+
+// --- T5.2: materials, hinge modifiers, seams, mass -----------------------
+
+constexpr Real kDegToRad = 3.14159265358979323846 / 180.0;
+
+// Hand the model to a solver like the later stages will (stand-in positions: the layout stage is T5.3)
+// and return the sum of its vertex masses.
+static Real solverMass(const CrochetModel& cm) {
+    IntrinsicMesh im = cm.mesh;
+    const int nv = static_cast<int>(cm.topo.vertexStitch.size());
+    im.x0.resize(nv);
+    for (int i = 0; i < nv; ++i) im.x0[i] = Vec3(1e-3 * i, 3e-4 * (i % 7), 0);
+    SolverParams sp;
+    sp.integrator = Integrator::XPBD;  // only finalize() matters here (masses): the cheapest step
+    sp.selfCollision = false;
+    sp.substeps = 1;
+    sp.gravity = Vec3(0, 0, 0);
+    ClothSolver solver(sp);
+    solver.addIntrinsicPanel(im, cm.materials, "model");
+    for (const SeamRequest& sr : cm.pointSeams) solver.addPointSeam(sr.a, sr.b, sr.share);
+    solver.step();  // the first step finalizes (masses, constraints)
+    Real total = 0;
+    for (int i = 0; i < nv; ++i) total += solver.vertexMass(i);
+    return total;
+}
+
+static int countHinges(const CrochetModel& cm, Real scale, Real restRad) {
+    int n = 0;
+    for (const HingeMod& h : cm.mesh.hingeMods)
+        n += std::fabs(h.bendScale - scale) < 1e-12 && std::fabs(h.restAngle - restRad) < 1e-12;
+    return n;
+}
+
+static void modelTests(const YarnBook& book) {
+    const Yarn* acrylic = book.find("acrylic_worsted");
+    const Yarn* cotton = book.find("cotton_worsted");
+    CHECK(acrylic != nullptr && cotton != nullptr);
+    if (acrylic == nullptr || cotton == nullptr) return;
+
+    const char* names[] = {"pouch",          "bag_round_plain", "bag_round_blo",   "bag_round_flo", "bag_round_slst",
+                           "bag_round_surface", "circle_plus5", "circle_plus6", "circle_plus8", "tube40", "facing"};
+    for (const char* name : names) {
+        const StitchGraph g = loadFixture(name);
+        const bool bag = std::string(name).rfind("bag_round", 0) == 0;
+        const Yarn& yarn = bag ? *cotton : *acrylic;
+        ModelOptions opt;
+        opt.hook_m = bag ? 4.5e-3 : 5.0e-3;
+        const CrochetModel cm = buildCrochetModel(g, yarn, opt);
+
+        // section 6.10 test 6: the solver's total vertex mass is the yarn model's (every stitch's length * lambda)
+        Real independent = 0;
+        for (const Stitch& s : g.st) {
+            const StitchType ty = s.type == "ch" ? StitchType::Ch : s.type == "slst" ? StitchType::SlSt : StitchType::Sc;
+            independent += stitchDims(yarn, opt.hook_m, 1.0, ty, Insertion::Both, nullptr).yarnLen * yarn.lambda() * 1e-3;
+        }
+        const Real mass = solverMass(cm);
+        CHECKP(std::fabs(mass / independent - 1) < 0.005, "%s: solver mass %.4f g vs the yarn model's %.4f g (%.4f %%)", name, mass * 1e3,
+               independent * 1e3, 100 * (mass / independent - 1));
+        CHECKP(std::fabs(cm.yarnMass / independent - 1) < 1e-9 && cm.warnings.empty(), "%s: model.yarnMass is that total, no warnings (%zu)", name,
+               cm.warnings.size());
+
+        // materials: a handful, all with lock terms, warp (wale) stiffer than weft (course), positive density
+        bool matsOk = !cm.materials.empty() && cm.materials.size() <= 14;
+        for (const FabricMaterial& f : cm.materials)
+            matsOk = matsOk && f.density > 0 && f.lockStrainWarp > 0 && f.lockStrainWeft > 0 && f.lockStiffnessRatio > 1 && f.tensileWarp > 0 && f.tensileWeft > 0;
+        CHECKP(matsOk, "%s: %zu materials, all with density and J-curve lock terms", name, cm.materials.size());
+        int badIdx = 0;
+        for (const int mi : cm.mesh.triMaterial) badIdx += mi < 0 || mi >= static_cast<int>(cm.materials.size());
+        CHECKP(badIdx == 0 && cm.mesh.triMaterial.size() == cm.mesh.tris.size() && cm.mesh.extraMass.size() == cm.topo.vertexStitch.size(),
+               "%s: one material per triangle, one extra-mass entry per vertex", name);
+
+        // seams: pouch 55 (50 both_layers + 5 join), bags 6 joins, others none; share = the seam stitch's width
+        const size_t wantSeams = std::string(name) == "pouch" ? 55 : bag ? 6 : 0;
+        const Real wsc = stitchDims(yarn, opt.hook_m, 1.0, StitchType::Sc, Insertion::Both, nullptr).w;
+        bool sharesOk = true;
+        for (const SeamRequest& sr : cm.pointSeams) sharesOk = sharesOk && sr.share > 0.5 * wsc && sr.share <= 1.0001 * wsc && sr.a != sr.b;
+        CHECKP(cm.pointSeams.size() == wantSeams && sharesOk, "%s: %zu point seams (want %zu), share = stitch width", name, cm.pointSeams.size(), wantSeams);
+
+        // hinge modifiers per construction (plan 4.4): rest angles go into the solver as -(plan angle) (kWsFoldSign)
+        const Real wsBlo = -25 * kDegToRad, wsFlo = +25 * kDegToRad;  // plan +25 deg (toward the WS) is -25 deg in the solver; flo is the opposite
+        const std::string n = name;
+        // The sl st rows that are polygons (the strap-end join: 5 sl sts on the pouch, 6 on a bag) get the sl st
+        // firmness on their base and top edges: 2 x (n - 1) modifiers. Closing sl sts of rounds are not polygons.
+        const size_t joinMods = n == "pouch" ? 8 : bag ? 10 : 0;
+        if (n == "facing") {
+            // 4 rows x 5: rows 1-2 blo, rows 3-4 flo, written worker-relative; the WS rows swap to the RS-relative value
+            CHECKP(cm.mesh.hingeMods.size() > 0, "facing: blo/flo rows give hinge modifiers (%zu)", cm.mesh.hingeMods.size());
+        } else if (n == "pouch" || n == "bag_round_plain" || n == "tube40" || n.rfind("circle", 0) == 0) {
+            CHECKP(cm.mesh.hingeMods.size() == joinMods && countHinges(cm, 1.5, 0) == static_cast<int>(joinMods),
+                   "%s: only the strap-end sl st join has hinge modifiers (%zu, want %zu at 1.5)", name, cm.mesh.hingeMods.size(), joinMods);
+        }
+        if (n == "bag_round_blo") {
+            CHECKP(cm.mesh.hingeMods.size() == 114 + joinMods && countHinges(cm, 0.30, wsBlo) == 114,
+                   "bag_round_blo: 114 blo hinges, bendScale 0.30, solver rest %.4f rad (%zu in all)", wsBlo, cm.mesh.hingeMods.size());
+        }
+        if (n == "bag_round_flo") {
+            CHECKP(cm.mesh.hingeMods.size() == 114 + joinMods && countHinges(cm, 0.35, wsFlo) == 114,
+                   "bag_round_flo: 114 flo hinges, bendScale 0.35, solver rest %.4f rad (%zu in all)", wsFlo, cm.mesh.hingeMods.size());
+        }
+        if (n == "bag_round_slst") {
+            // round 4 is blo sl st: its base edges get blo x slst, its top edges (round 5's base) the sl st firmness
+            CHECKP(cm.mesh.hingeMods.size() == 228 + joinMods && countHinges(cm, 0.30 * 1.5, wsBlo) == 114 &&
+                       countHinges(cm, 1.5, 0) == static_cast<int>(114 + joinMods),
+                   "bag_round_slst: 114 edges 0.30 x 1.5 with the blo angle + 114 edges 1.5 (%zu in all)", cm.mesh.hingeMods.size());
+        }
+        if (n == "bag_round_surface") {
+            int stiff = 0;
+            for (const FabricMaterial& f : cm.materials) stiff += f.id.find("+surface") != std::string::npos;
+            int stiffTris = 0;
+            for (const int mi : cm.mesh.triMaterial) stiffTris += cm.materials[mi].id.find("+surface") != std::string::npos;
+            CHECKP(cm.mesh.hingeMods.size() == 113 + joinMods && countHinges(cm, 0.70, 0) == 113 && stiff >= 1 && stiffTris == 226,
+                   "bag_round_surface: 113 surface edges at 0.70, %d triangles stiffened (courses x3, lock x0.5) in %d materials", stiffTris, stiff);
+            // the 114 dropped surface sl sts keep their yarn: it sits on the fabric vertices they were worked into
+            Real extra = 0;
+            for (const Real e : cm.mesh.extraMass) extra += e;
+            CHECKP(extra > 0, "bag_round_surface: surface sl st yarn is lumped extra mass (%.4f g)", extra * 1e3);
+        }
+        // every hinge modifier sits on a real mesh edge
+        std::set<std::uint64_t> meshEdges;
+        for (const auto& tr : cm.mesh.tris)
+            for (int k = 0; k < 3; ++k) meshEdges.insert(ekey(tr[k], tr[(k + 1) % 3]));
+        int offEdge = 0;
+        for (const HingeMod& h : cm.mesh.hingeMods) offEdge += meshEdges.count(ekey(h.a, h.b)) == 0;
+        CHECKP(offEdge == 0, "%s: every hinge modifier is on a mesh edge (%d off)", name, offEdge);
+    }
+
+    // unit checks on small graphs
+    {
+        // an increase triangle holds a whole stitch's yarn: density * area == yarnLen * lambda
+        StitchGraph g;
+        const int r0 = addRow(g, "round", false);
+        addSt(g, "ch", r0, {});
+        const int r1 = addRow(g, "round", false);
+        for (int i = 0; i < 3; ++i) addSt(g, "sc", r1, {0});
+        ModelOptions opt;
+        const CrochetModel cm = buildCrochetModel(g, *acrylic, opt);
+        const StitchDims sc = stitchDims(*acrylic, opt.hook_m, 1.0, StitchType::Sc, Insertion::Both, nullptr);
+        const StitchMech mech = stitchMech(*acrylic, opt.hook_m, 1.0, StitchType::Sc, Insertion::Both, nullptr);
+        const auto& r = cm.mesh.triRest[0];
+        const Real area = 0.5 * std::fabs(cross(r[1] - r[0], r[2] - r[0]));
+        const Real mass = cm.materials[cm.mesh.triMaterial[0]].density * area;
+        CHECKP(std::fabs(mass / (sc.yarnLen * acrylic->lambda() * 1e-3) - 1) < 1e-9 && cm.materials[0].density > 1.5 * mech.density,
+               "increase triangle: density %.3f kg/m^2 (nominal %.3f) x area = one stitch of yarn", cm.materials[0].density, mech.density);
+        // the toFabric warp = wale mapping and the lock terms arrive in the material
+        const FabricMaterial& f = cm.materials[0];
+        CHECKP(f.tensileWarp == mech.kWale && f.tensileWeft == mech.kCourse && f.lockStrainWarp == mech.lockWale &&
+                   f.lockStrainWeft == mech.lockCourse && f.lockStiffnessRatio == mech.lockRatio,
+               "material: warp = wale (%.0f N/m), weft = course (%.0f N/m), lock %.2f / %.2f x%.0f", f.tensileWarp, f.tensileWeft, f.lockStrainWarp,
+               f.lockStrainWeft, f.lockStiffnessRatio);
+    }
+    {
+        // a calibration hinge record replaces the starter table: blo -> bendScale 0.5, 40 deg
+        const StitchGraph g = loadFixture("bag_round_blo");
+        Calibration cal;
+        cal.hinge["blo"] = {0.5, 40.0};
+        ModelOptions opt;
+        opt.hook_m = 4.5e-3;
+        opt.calibration = &cal;
+        const CrochetModel cm = buildCrochetModel(g, *cotton, opt);
+        CHECKP(cm.mesh.hingeMods.size() == 124 && countHinges(cm, 0.5, -40 * kDegToRad) == 114,
+               "calibration: hinge['blo'] = {0.5, 40 deg} replaces the table (%zu mods)", cm.mesh.hingeMods.size());
+    }
+}
+
 int main() {
     std::printf("[crochet mesh] %s\n", FL_PATTERNS_DIR);
     const YarnBook book = loadYarnsFromFile(FL_YARNS_PATH);
@@ -360,6 +527,7 @@ int main() {
     const Real minArea = 0.01 * sc.w * sc.h;  // section 6.10 test 4: rest area > 1 % of w x h
 
     handBuilt();
+    modelTests(book);
 
     const char* names[] = {"pouch",          "bag_round_plain", "bag_round_blo",   "bag_round_flo", "bag_round_slst",
                            "bag_round_surface", "circle_plus5", "circle_plus6", "circle_plus8", "tube40", "facing"};

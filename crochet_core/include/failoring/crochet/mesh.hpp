@@ -68,6 +68,24 @@ struct MeshJump {
     int a = -1, b = -1;  // stitch ids, in made order
 };
 
+// One face polygon, as built (plan 6.2): the zipper's two polylines, as vertex
+// ids. top = p [chains between] s in working order, base = the path between the
+// targets. T5.2 reads them for the hinge rules (the base edges are the course
+// edges of the row that was worked into).
+struct MeshPolygon {
+    enum Kind { Pair, Closing, Decrease };
+    int source = -1;  // stitch id of the upper stitch (the triangles' source)
+    Kind kind = Pair;
+    std::vector<int> top, base;
+};
+
+// A pair of sl sts that lies on the fabric (no faces): the base edges (vertex
+// ids) it is worked into, which are already in two faces each.
+struct MeshSurfacePair {
+    int p = -1, s = -1;  // stitch ids
+    std::vector<int> base;
+};
+
 struct CrochetMesh {
     // Vertices.
     std::vector<int> vertexStitch;  // vertex -> stitch id (increasing)
@@ -80,6 +98,10 @@ struct CrochetMesh {
     std::vector<int> triSource;                // stitch id whose material the triangle gets
     std::vector<int> triComponent;             // connected-component index (through shared edges)
     int components = 0;
+
+    // How the faces were made (see MeshPolygon / MeshSurfacePair).
+    std::vector<MeshPolygon> polygons;
+    std::vector<MeshSurfacePair> surface;
 
     // Diagnostics. A fixture must have no warnings.
     std::vector<std::string> warnings;
