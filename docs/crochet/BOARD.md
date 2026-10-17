@@ -42,7 +42,7 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
 | T4.2 | Facing/RS, point seams, count checks (B) | T4.1 | done | default | 1 | 40b31b4 (merged 97173d6) | ★ §5.4: 172 PASS lines; facing.txt all 4 RS x loop combos; 11/11 exports byte-identical; 3 orchestrator mutations caught |
 | T5.1 | Faces (BFS base path, zipper), rest shapes, orientation | T4.2, T1.2 | done | default | 1 | 247f809 (merged 4bb4817) | ★ §6.10 test 4: 114 PASS lines on 11 fixtures; Euler 1, 1 component, 0 warnings; 9 orchestrator mutations caught; oval fixtures fixed (see Decisions) |
 | T5.2 | Materials, hinge mods, seams → IntrinsicMesh | T5.1, T3.1, T1.3, T1.5 | done | default | 1 | 80e6647 (merged 326f2b4) | §6.10 test 6: solver mass = yarn model on all 11 fixtures (0.0000 %); 7 mutations caught; kWsFoldSign = -1 to be confirmed by T5.4 test 5 |
-| T5.3 | Layouts (flat, fold, revolve, attached, arc; CP positions if A/B) | T5.2 | todo | | 0 | | layout PNGs under docs/crochet-shots/layout/ |
+| T5.3 | Layouts (flat, fold, revolve, attached, arc; CP positions if A/B) | T5.2 | done | default | 1 | aa2b4bc (merged ea7c26d) | 11 PNGs under docs/crochet-shots/layout/; native layout (no CP positions); 9 mutations caught |
 | T5.4 | Relaxation + mesh tests | T5.3 | todo | | 0 | | ★ §6.10 tests 1,2,3,5 (circle is the key one) |
 | T6.1 | Scenes hang_pin, hang_peg, settle loop | T5.4 | todo | | 0 | | §7.4 test 3 for the pouch |
 | T6.2 | RigidLoad: insert, release, fit check | T6.1, T1.6, T1.4 | todo | | 0 | | ★ §7.4 tests 1, 2, 4 |
@@ -134,3 +134,8 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
   polygons and so get the sl st hinge firmness even in the plain variants (pouch 8, each bag 10 modifiers).
   Plan "toward the WS" angles enter the solver negated (`kWsFoldSign = -1`; normals point to the RS and a
   positive BendC::rest bends toward the normal side) - T5.4's hinge-sign test is the empirical check.
+* 2026-10-17 — T5.3: native layouts, no CrochetPARADE positions (66 s bag layout, drifting tube radius, node needed
+  at run time). Everything is inferred from the graph: regions Foundation/Flat/Revolve/Rim/Strip; the fold from the
+  both_layers links (row sum 51 -> between rows 25 and 26); the strap arc from the join links. World frame: y up,
+  flat pieces hang in xy (RS to +z), revolve pieces rise from an xz base (RS up on the base, inside on the walls).
+  Risks for T5.4: the oval chain's rest edge is 0.85 w under 1.0 w stitches (may ruffle the spine).

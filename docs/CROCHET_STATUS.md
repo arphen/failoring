@@ -11,7 +11,7 @@ acceptance, with the measured numbers. Honest numbers; "not measured" where not 
 | 2 | Yarn data (§3) | yarns.json loads, unit tests | done (T2.1, 2026-10-16) |
 | 3 | Stitch model (§4) | gauge sanity and monotonicity tests | done (T3.1, 2026-10-16) |
 | 4 | DSL + graph (§5) | all fixtures compile with the stated counts, error-message tests | done (T4.0-T4.2, 2026-10-17) |
-| 5 | Mesh + layout + relax (§6) | flat/cup/ruffle circle, tube, swatch size, hinge sign, mass | in progress (T5.1, T5.2 done) |
+| 5 | Mesh + layout + relax (§6) | flat/cup/ruffle circle, tube, swatch size, hinge sign, mass | in progress (T5.1-T5.3 done) |
 | 6 | Scenes + load + metrics + CLI (§7) | strap analytic, force balance, settle, fit checks; PNG snapshots of all fixtures in docs/crochet-shots/ | todo |
 | 7 | Godot bindings + scene (§8) | crochet_api_check passes; the user can open, edit, run, and see the pouch hang on their Mac | todo |
 | 8 | Chart, lego, compare (§9) | five-variant comparison runs from one click; the table shows different corner angles | todo |
@@ -217,3 +217,14 @@ acceptance, with the measured numbers. Honest numbers; "not measured" where not 
   114 edges of round 4, slst 1.5 (base + top), surface 0.70 on 113 edges with 226 stiffened faces. Point
   seams: pouch 55, each bag 6, share = stitch width. Seven mutations caught.
 * Open: the WS fold enters the solver as a negative angle (kWsFoldSign = -1); T5.4 test 5 measures it.
+
+### 2026-10-17 — T5.3 layouts and layout snapshots (phase 5, item 3)
+
+* `layoutModel` (crochet_core/src/crochet_layout.cpp): flat rows (tridiagonal smoothing), revolve rounds
+  (plan rule), the pouch fold, rim rows, the strap arc; 11 snapshots in `docs/crochet-shots/layout/`.
+  Pouch: fold after row 25, back layer at z = -4.9 mm, strap 480.0 mm = 80 rows x 6.00 mm, seam gaps
+  <= 8.4 mm, 14 of 3159 neighbouring normals disagree (the fold crease). Bags: strap loop 561 mm of arc,
+  189 mm above the mouth, seam gaps <= 8.0 mm. Circles: +6/+8 flat, +5 a 21 mm cup, ring radii N w/2pi within 2 %.
+  Edge length / rest length: median 1.00 (circles +8: 1.26), p95 <= 1.63, worst 2.34 (bag oval caps / strap start).
+  Nine mutations caught. Native layouts: no CrochetPARADE positions.
+* Next: T5.4 relaxation + the §6.10 tests (the circle flat / cup / ruffle test is the key one).
