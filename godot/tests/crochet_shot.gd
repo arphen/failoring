@@ -9,6 +9,21 @@ func _ready() -> void:
 	var pat := OS.get_environment("FL_SHOT_PATTERN") if OS.has_environment("FL_SHOT_PATTERN") else "pouch"
 	c._load_fixture_named(pat)
 	c.compile_now()
+	if OS.has_environment("FL_SHOT_COMPARE"):   # the compare view: FL_SHOT_COMPARE=variants|ab, FL_SHOT_FRAMES frames each
+		var cv = c.compare_view
+		cv.visible = true
+		if OS.get_environment("FL_SHOT_COMPARE") == "variants":
+			cv.setup_variants()
+		else:
+			cv.setup_ab()
+		cv.run_sync(int(OS.get_environment("FL_SHOT_FRAMES")) if OS.has_environment("FL_SHOT_FRAMES") else 10)
+		for i in 6:
+			await get_tree().process_frame
+		var cout := OS.get_environment("FL_SHOT_OUT") if OS.has_environment("FL_SHOT_OUT") else "/tmp/crochet_shot.png"
+		get_viewport().get_texture().get_image().save_png(cout)
+		print("wrote ", cout, " compare ", cv.slots.size(), " slots")
+		get_tree().quit()
+		return
 	var scene := OS.get_environment("FL_SHOT_SCENE") if OS.has_environment("FL_SHOT_SCENE") else "hang_pin"
 	var load_id := OS.get_environment("FL_SHOT_LOAD") if OS.has_environment("FL_SHOT_LOAD") else "none"
 	if c.start_run(scene, load_id):

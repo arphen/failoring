@@ -13,7 +13,7 @@ acceptance, with the measured numbers. Honest numbers; "not measured" where not 
 | 4 | DSL + graph (§5) | all fixtures compile with the stated counts, error-message tests | done (T4.0-T4.2, 2026-10-17) |
 | 5 | Mesh + layout + relax (§6) | flat/cup/ruffle circle, tube, swatch size, hinge sign, mass | done (T5.1-T5.4, 2026-10-18) |
 | 6 | Scenes + load + metrics + CLI (§7) | strap analytic, force balance, settle, fit checks; PNG snapshots of all fixtures in docs/crochet-shots/ | in progress (T6.1-T6.4 done) |
-| 7 | Godot bindings + scene (§8) | crochet_api_check passes; the user can open, edit, run, and see the pouch hang on their Mac | in progress (T7.1-T7.4, T8.1-T8.3 done) |
+| 7 | Godot bindings + scene (§8) | crochet_api_check passes; the user can open, edit, run, and see the pouch hang on their Mac | in progress (T7.1-T7.4, T8.1-T8.4 done) |
 | 8 | Chart, lego, compare (§9) | five-variant comparison runs from one click; the table shows different corner angles | todo |
 | 9 | Calibration (§10) | a swatch record changes the result and the UI says "calibrated" | todo |
 | 10 | Yarn-level look (§12) | optional | not started |
@@ -306,3 +306,10 @@ acceptance, with the measured numbers. Honest numbers; "not measured" where not 
 * `#! override [row] | [row,pos] | [row,a-b] <loop|type>` in the pattern text (parser + docs in `pattern.hpp`); the chart's right-click
   menu appends the lines, the pattern recompiles, Ctrl+Z undoes. Pouch + `#! override [12] blo`: hinge modifiers 8 -> 22, same 1380
   stitches. `crochet_scene_check` 70 PASS, `test_crochet_parse` and `test_crochet_mesh` extended. Screenshot docs/crochet-shots/ui/edit_menu.png.
+
+### 2026-10-18 — T8.4 compare (phase 8, item 4)
+
+* "Compare" overlay (`crochet_compare.gd`): A vs B (other pattern, yarn or hook) or the five hinge-round variants of the bag, each piece on
+  its own worker thread, hung 0.5 m apart with labels, one table (A, B, B - A; bold where a key number differs). Shares
+  `crochet_cloth.gd` with the main view. `crochet_compare_check` 18 PASS (new), scene check 70 PASS, api check 26 PASS.
+  Screenshot docs/crochet-shots/ui/compare_variants.png. The physical numbers for the five variants are the T6.5 CLI runs.

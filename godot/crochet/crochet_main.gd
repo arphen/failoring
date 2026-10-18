@@ -9,7 +9,7 @@ const Studio = preload("res://studio.gd")
 const Look = preload("res://look.gd")
 const YARNS_PATH := "res://materials/yarns.json"
 const COMPILE_DELAY := 0.4
-const SURFACE_SHADER := preload("res://crochet/crochet_surface.gdshader")
+const Cloth = preload("res://crochet/crochet_cloth.gd")
 const HANG_Y := 1.35    # the hang point is put this high in the studio (metres)
 
 # ---- state
@@ -71,6 +71,7 @@ var _stitch_of_vertex := PackedInt32Array()
 var _vertex_of_stitch := PackedInt32Array()
 var _indices := PackedInt32Array()
 var _line_stitches := {}                      # pattern line (1-based) -> PackedInt32Array of stitch ids
+var compare_view: Control                     # crochet_compare.gd
 var edit_menu: PopupMenu                      # the right-click menu of the chart (plan 9.2)
 var _whole_row := false                       # "whole row" ticked in that menu
 const OVERRIDE_MODS := ["sc", "hdc", "dc", "tr", "slst", "blo", "flo", "both"]
@@ -145,6 +146,12 @@ func _build_ui() -> void:
 	split_a.add_child(split_b)
 	split_b.add_child(_build_view())
 	split_b.add_child(_build_right())
+	compare_view = Control.new()   # the A/B and variants view, hidden until "Compare"
+	compare_view.set_script(load("res://crochet/crochet_compare.gd"))
+	compare_view.main = self
+	compare_view.visible = false
+	add_child(compare_view)
+	compare_view.closed.connect(func() -> void: set_process(true))
 
 func _small(text: String, tip := "") -> Button:
 	var b := Button.new()
@@ -181,8 +188,8 @@ func _build_top_bar() -> Control:
 	stop_btn.disabled = true
 	stop_btn.pressed.connect(func() -> void: _stop_requested = true)
 	bar.add_child(stop_btn)
-	var compare := _small("Compare", "A/B comparison of two patterns or settings (a later step)")
-	compare.disabled = true
+	var compare := _small("Compare", "Two patterns or settings side by side, or the five hinge-round variants of the laptop bag")
+	compare.pressed.connect(func() -> void: compare_view.visible = true)
 	bar.add_child(compare)
 	phase_label = _label("")
 	phase_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -313,9 +320,8 @@ func _build_view() -> Control:
 	Look.camera(cam)
 	cam_pivot.add_child(cam)
 	cloth_node = MeshInstance3D.new()
-	_mat_rs = _cloth_material()
-	_mat_ws = _cloth_material()
-	_mat_ws.set_shader_parameter("side", 1.0)
+	_mat_rs = Cloth.make_material(0.0)
+	_mat_ws = Cloth.make_material(1.0)
 	stage.add_child(cloth_node)
 	load_node = MeshInstance3D.new()
 	load_node.visible = false
@@ -327,37 +333,9 @@ func _build_view() -> Control:
 	_apply_camera()
 	return view_container
 
-func _cloth_material() -> ShaderMaterial:
-	var m := ShaderMaterial.new()
-	m.shader = SURFACE_SHADER
-	return m
-
-# Fibre look (plan 8.3): cotton matte, acrylic with a slight sheen, wool fuzzy.
+# the yarn's fibre look on both shells
 func _apply_yarn_look() -> void:
-	var colour := Color(0.82, 0.32, 0.23)
-	var rough := 0.85
-	var sheen := 0.2
-	if pattern != null:
-		var info := pattern.get_yarn_info(pattern.get_yarn())
-		if info.size() > 0:
-			colour = Color.html(String(info.get("colour", "#b5523b")))
-			match String(info.get("fibre", "acrylic")):
-				"cotton":
-					rough = 0.9
-					sheen = 0.05
-				"wool":
-					rough = 1.0
-					sheen = 0.6
-				"tshirt":
-					rough = 0.7
-					sheen = 0.15
-				_:
-					rough = 0.6
-					sheen = 0.25
-	for m in [_mat_rs, _mat_ws]:
-		m.set_shader_parameter("albedo", colour)
-		m.set_shader_parameter("rough", rough)
-		m.set_shader_parameter("sheen", sheen)
+	Cloth.apply_look([_mat_rs, _mat_ws], pattern.get_yarn_info(pattern.get_yarn()) if pattern != null else {})
 
 func _build_right() -> Control:
 	var tabs := TabContainer.new()
@@ -850,47 +828,7 @@ func _update_mesh() -> void:
 	last_vertices = shifted
 	if DisplayServer.get_name() == "headless":
 		return  # the dummy renderer has no meshes to fill; tests read last_vertices
-	var normals := sim.get_normals()
-	var half := 0.5 * sim.get_thickness()
-	var indices := sim.get_indices()
-	var uv := sim.get_vertex_uv()
-	var col := highlight_colours(sim.get_vertex_colors())
-	# two shells: the right side outside (offset along the normal), the wrong side inside (offset against it, winding reversed)
-	var outer := PackedVector3Array()
-	var inner := PackedVector3Array()
-	var inner_n := PackedVector3Array()
-	outer.resize(shifted.size())
-	inner.resize(shifted.size())
-	inner_n.resize(shifted.size())
-	for i in shifted.size():
-		outer[i] = shifted[i] + normals[i] * half
-		inner[i] = shifted[i] - normals[i] * half
-		inner_n[i] = -normals[i]
-	var flipped := PackedInt32Array()
-	flipped.resize(indices.size())
-	for t in range(0, indices.size(), 3):
-		flipped[t] = indices[t]
-		flipped[t + 1] = indices[t + 2]
-		flipped[t + 2] = indices[t + 1]
-	var mesh := ArrayMesh.new()
-	var a0 := []
-	a0.resize(Mesh.ARRAY_MAX)
-	a0[Mesh.ARRAY_VERTEX] = outer
-	a0[Mesh.ARRAY_NORMAL] = normals
-	a0[Mesh.ARRAY_TEX_UV] = uv
-	a0[Mesh.ARRAY_COLOR] = col
-	a0[Mesh.ARRAY_INDEX] = indices
-	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, a0)
-	mesh.surface_set_material(0, _mat_rs)
-	var a1 := []
-	a1.resize(Mesh.ARRAY_MAX)
-	a1[Mesh.ARRAY_VERTEX] = inner
-	a1[Mesh.ARRAY_NORMAL] = inner_n
-	a1[Mesh.ARRAY_TEX_UV] = uv
-	a1[Mesh.ARRAY_COLOR] = col
-	a1[Mesh.ARRAY_INDEX] = flipped
-	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, a1)
-	mesh.surface_set_material(1, _mat_ws)
+	var mesh := Cloth.build_mesh(sim, shifted, highlight_colours(sim.get_vertex_colors()), _mat_rs, _mat_ws)
 	cloth_node.mesh = mesh
 	_update_props()
 
@@ -906,32 +844,7 @@ func _frame_camera(pos: PackedVector3Array) -> void:
 	_apply_camera()
 
 func _update_props() -> void:
-	var ld := sim.get_load()
-	if ld.size() > 0 and bool(ld.get("inserted", false)):
-		var size: Vector3 = ld["size"]
-		var box := BoxMesh.new()
-		box.size = size
-		load_node.mesh = box
-		var m := StandardMaterial3D.new()
-		m.albedo_color = Color(0.62, 0.63, 0.66)
-		m.metallic = 0.8
-		m.roughness = 0.35
-		load_node.material_override = m
-		var t := sim.get_load_transform()
-		load_node.transform = Transform3D(t.basis, t.origin + Vector3(0, _y_offset, 0))
-		load_node.visible = true
-	var peg := sim.get_peg()
-	if peg.size() > 0:
-		var cap := CapsuleMesh.new()
-		cap.radius = float(peg["radius"])
-		cap.height = float(peg["length"])
-		peg_node.mesh = cap
-		var pm := StandardMaterial3D.new()
-		pm.albedo_color = Color(0.4, 0.3, 0.2)
-		peg_node.material_override = pm
-		var c: Vector3 = peg["center"]
-		peg_node.transform = Transform3D(Basis(Vector3(0, 0, 1), PI * 0.5), Vector3(0, c.y + _y_offset, 0))
-		peg_node.visible = true
+	Cloth.place_props(sim, load_node, peg_node, Vector3(0, _y_offset, 0))
 
 # ------------------------------------------------------------------------------------------------ metrics
 
