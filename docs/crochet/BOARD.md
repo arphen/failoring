@@ -55,7 +55,7 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
 | T7.3 | Yarn/hook panel, metrics tab, scene/load menus, editor entry button | T7.2 | done | default | 1 | d0108db | headless test drives each control once: 26 PASS; the one editor.gd change is the Crochet button |
 | T7.4 | Surface shader, double-sided thickness | T7.2 | done | default | 1 | 66570c6 | shader compiles and renders in the real renderer (screenshot docs/crochet-shots/ui/pouch_hang_pin.png); crochet_api_check 26 PASS; mesh/shader not covered headless |
 | T8.1 | Chart view | T7.2 | done | default | 1 | c9c51fa | crochet_scene_check 38 PASS (1380 symbols for the pouch, hover/click/zoom); core chartPositions tested on pouch and bag; screenshots in docs/crochet-shots/ui |
-| T8.2 | Selection chart <-> 3D <-> pattern line | T8.1 | done | default | 1 | HASH | crochet_scene_check 51 PASS: chart click -> glow vertex + editor line, caret line -> stitches, ray pick; 2 mutations caught |
+| T8.2 | Selection chart <-> 3D <-> pattern line | T8.1 | done | default | 1 | 4a8857e | crochet_scene_check 51 PASS: chart click -> glow vertex + editor line, caret line -> stitches, ray pick; 2 mutations caught |
 | T8.3 | Lego overrides | T8.2 | todo | | 0 | | override gains a line, recompiles, hinges present |
 | T8.4 | Compare + five-variant run | T8.3 | todo | | 0 | | five runs, table with five corner angles |
 | T9.1 | Calibration wizard + records | T7.3 | todo | | 0 | | record changes stitchMech; UI says "calibrated" |
