@@ -59,7 +59,7 @@ struct Metrics {
     bool hasStrap = false;
     double strap_length_rest_cm = 0, strap_length_loaded_cm = 0, strap_elongation_pct = 0;
     // base
-    bool hasBase = false;
+    bool hasBase = false, hasCorner = false;  // hasCorner: there are faces both below and above the last increase round
     double base_sag_mm = 0, corner_angle_deg = 0;
     // strain of the last state
     double strain_wale_max = 0, strain_wale_p95 = 0, strain_course_max = 0, strain_course_p95 = 0;

@@ -39,25 +39,84 @@ void chunk(std::vector<unsigned char>& out, const char* type, const std::vector<
     put32(out, crc32(body.data(), body.size()));
 }
 
-// RGB, 8 bit; stored (uncompressed) deflate blocks, which every PNG reader accepts.
+// LSB-first bit writer for deflate.
+struct BitWriter {
+    std::vector<unsigned char> out;
+    std::uint32_t acc = 0;
+    int nbits = 0;
+    void put(std::uint32_t value, int n) {  // value's bits LSB first
+        acc |= value << nbits;
+        nbits += n;
+        while (nbits >= 8) {
+            out.push_back(static_cast<unsigned char>(acc & 0xff));
+            acc >>= 8;
+            nbits -= 8;
+        }
+    }
+    void putHuffman(std::uint32_t code, int n) {  // a Huffman code is sent most significant bit first
+        std::uint32_t r = 0;
+        for (int i = 0; i < n; ++i) r |= ((code >> i) & 1u) << (n - 1 - i);
+        put(r, n);
+    }
+    void flush() {
+        if (nbits > 0) out.push_back(static_cast<unsigned char>(acc & 0xff));
+        acc = 0;
+        nbits = 0;
+    }
+};
+
+// Fixed-Huffman literal/length symbol.
+void putLitLen(BitWriter& w, int sym) {
+    if (sym < 144) w.putHuffman(0x30 + sym, 8);
+    else if (sym < 256) w.putHuffman(0x190 + sym - 144, 9);
+    else if (sym < 280) w.putHuffman(sym - 256, 7);
+    else w.putHuffman(0xc0 + sym - 280, 8);
+}
+
+// Deflate with fixed Huffman codes and one kind of match: "the same as 3 bytes back" (the previous pixel of an RGB image),
+// which is what flat backgrounds and the zero runs of the Sub filter are made of. Small, dependency free, and shrinks a
+// snapshot to a few tens of kilobytes.
+std::vector<unsigned char> deflateRgb(const std::vector<unsigned char>& raw) {
+    BitWriter w;
+    w.put(1, 1);  // final block
+    w.put(1, 2);  // fixed Huffman
+    static const int lenBase[29] = {3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258};
+    static const int lenExtra[29] = {0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0};
+    const size_t n = raw.size();
+    size_t i = 0;
+    while (i < n) {
+        size_t len = 0;
+        if (i >= 3)
+            while (len < 258 && i + len < n && raw[i + len] == raw[i + len - 3]) ++len;
+        if (len >= 3) {
+            int c = 28;
+            while (lenBase[c] > static_cast<int>(len)) --c;
+            putLitLen(w, 257 + c);
+            if (lenExtra[c] > 0) w.put(static_cast<std::uint32_t>(len - lenBase[c]), lenExtra[c]);
+            w.putHuffman(2, 5);  // distance code 2 = distance 3, no extra bits
+            i += len;
+        } else {
+            putLitLen(w, raw[i]);
+            ++i;
+        }
+    }
+    putLitLen(w, 256);
+    w.flush();
+    return w.out;
+}
+
+// RGB, 8 bit, filter type 1 (Sub) per row, compressed with deflateRgb.
 std::vector<unsigned char> encodePng(const std::vector<unsigned char>& rgb, int w, int h) {
     std::vector<unsigned char> raw;
     raw.reserve(static_cast<size_t>(h) * (3 * w + 1));
     for (int y = 0; y < h; ++y) {
-        raw.push_back(0);
-        raw.insert(raw.end(), rgb.begin() + static_cast<size_t>(y) * 3 * w, rgb.begin() + static_cast<size_t>(y + 1) * 3 * w);
+        raw.push_back(1);
+        const unsigned char* row = &rgb[static_cast<size_t>(y) * 3 * w];
+        for (int x = 0; x < 3 * w; ++x) raw.push_back(static_cast<unsigned char>(row[x] - (x >= 3 ? row[x - 3] : 0)));
     }
     std::vector<unsigned char> z{0x78, 0x01};
-    for (size_t pos = 0; pos < raw.size();) {
-        const size_t n = std::min<size_t>(65535, raw.size() - pos);
-        z.push_back(pos + n == raw.size() ? 1 : 0);
-        z.push_back(static_cast<unsigned char>(n & 0xff));
-        z.push_back(static_cast<unsigned char>(n >> 8));
-        z.push_back(static_cast<unsigned char>(~n & 0xff));
-        z.push_back(static_cast<unsigned char>((~n >> 8) & 0xff));
-        z.insert(z.end(), raw.begin() + pos, raw.begin() + pos + n);
-        pos += n;
-    }
+    const std::vector<unsigned char> body = deflateRgb(raw);
+    z.insert(z.end(), body.begin(), body.end());
     std::uint32_t a = 1, b = 0;
     for (const unsigned char c : raw) {
         a = (a + c) % 65521;
