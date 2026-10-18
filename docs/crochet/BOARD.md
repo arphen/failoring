@@ -52,7 +52,7 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
 | T6.6 | Real-bag fixture (user measurements) | T6.5, user data | blocked | | 0 | | blocked: waiting for user data (asked at gate 1) |
 | T7.1 | GDExtension CrochetPattern, CrochetScene | T6.4 | done | default | 1 | fd0baf6 | crochet_api_check: 23 PASS headless; CrochetSession (stepper) shared with the CLI; 4 mutations caught |
 | T7.2 | Crochet scene skeleton: panes, CodeEdit live compile, worker thread | T7.1 | done | default | 1 | 706694d | headless crochet_scene_check: 15 PASS; not looked at on screen (headless only); 4 mutations caught |
-| T7.3 | Yarn/hook panel, metrics tab, scene/load menus, editor entry button | T7.2 | todo | | 0 | | headless test drives each menu once |
+| T7.3 | Yarn/hook panel, metrics tab, scene/load menus, editor entry button | T7.2 | done | default | 1 | d0108db | headless test drives each control once: 26 PASS; the one editor.gd change is the Crochet button |
 | T7.4 | Surface shader, double-sided thickness | T7.2 | todo | | 0 | | shader compiles; screenshot if possible |
 | T8.1 | Chart view | T7.2 | todo | | 0 | | headless: one symbol per stitch for the pouch |
 | T8.2 | Selection chart ↔ 3D ↔ pattern line | T8.1 | todo | | 0 | | select stitch 100 → vertex + line |
