@@ -5,6 +5,8 @@ extends Control
 
 signal stitch_hovered(id: int)
 signal stitch_selected(id: int)
+signal stitches_selected(ids: PackedInt32Array)   # a rectangle was dragged over them
+signal edit_requested(at: Vector2)                # right click (not a drag): the owner pops up its edit menu there
 
 const PAD := 18.0
 const COL_BG := Color(0.13, 0.14, 0.16)
@@ -29,6 +31,10 @@ var _bounds := Rect2()
 var _zoom := 1.0              # multiplies the fit scale
 var _pan := Vector2.ZERO      # pixels
 var _panning := false
+var _press_pos := Vector2.ZERO
+var _band_from := Vector2.ZERO
+var _banding := false
+var _band := Rect2()
 var _ellipse := PackedVector2Array()
 var _info: Label
 
@@ -80,7 +86,7 @@ func set_chart(chart: Dictionary) -> void:
 	fit()
 	_set_info(HINT)
 
-const HINT := "wheel: zoom   right-drag: pan   double-click: fit"
+const HINT := "wheel: zoom   drag: select   right-click: edit   right-drag: pan"
 
 func symbol_count() -> int:
 	return symbols.size()
@@ -127,6 +133,14 @@ func stitch_at(pt: Vector2) -> int:
 			best_d = d
 			best = int(s["id"])
 	return best
+
+# the stitches whose symbol is inside a rectangle of this control
+func stitches_in(rect: Rect2) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	for s in symbols:
+		if rect.has_point(to_screen(s["pos"])):
+			out.push_back(int(s["id"]))
+	return out
 
 func describe(id: int) -> String:
 	if id < 0 or id >= symbols.size():
@@ -176,6 +190,10 @@ func _gui_input(event: InputEvent) -> void:
 			_pan += event.relative
 			queue_redraw()
 			return
+		if _banding:
+			_band = Rect2(_band_from, event.position - _band_from).abs()
+			queue_redraw()
+			return
 		var h := stitch_at(event.position)
 		if h != hover:
 			hover = h
@@ -190,7 +208,26 @@ func _gui_input(event: InputEvent) -> void:
 			var id := stitch_at(event.position)
 			select_stitch(id)
 			stitch_selected.emit(id)
+			_banding = true   # a drag from here selects a rectangle of stitches instead
+			_band_from = event.position
+			_band = Rect2(event.position, Vector2.ZERO)
+		elif event.button_index == MOUSE_BUTTON_LEFT:
+			if _banding and _band.size.length() > 4.0:
+				var ids := stitches_in(_band)
+				set_highlight(ids)
+				stitches_selected.emit(ids)
+			_banding = false
+			queue_redraw()
 		elif event.button_index == MOUSE_BUTTON_MIDDLE or event.button_index == MOUSE_BUTTON_RIGHT:
+			if event.button_index == MOUSE_BUTTON_RIGHT:
+				if event.pressed:
+					_press_pos = event.position
+				elif event.position.distance_to(_press_pos) < 4.0:   # a click: the edit menu; a drag only panned
+					var hit := stitch_at(event.position)
+					if hit >= 0 and not highlight.has(hit):
+						select_stitch(hit)
+						stitch_selected.emit(hit)
+					edit_requested.emit(event.position)
 			_panning = event.pressed
 		elif event.pressed and (event.button_index == MOUSE_BUTTON_WHEEL_UP or event.button_index == MOUSE_BUTTON_WHEEL_DOWN):
 			var f := 1.15 if event.button_index == MOUSE_BUTTON_WHEEL_UP else 1.0 / 1.15
@@ -297,6 +334,9 @@ func _draw_t(c: Vector2, r: float, col: Color, w: float, slashes: int) -> void:
 		draw_line(c + Vector2(-r * 0.5, y + r * 0.3), c + Vector2(r * 0.5, y - r * 0.3), col, w)
 
 func _draw_marks() -> void:
+	if _banding and _band.size.length() > 4.0:
+		draw_rect(_band, Color(COL_SEL, 0.12))
+		draw_rect(_band, Color(COL_SEL, 0.7), false, 1.0)
 	var r := maxf(_scale() * 0.42, 5.0)
 	if hover >= 0 and not highlight.has(hover):
 		draw_arc(to_screen(symbols[hover]["pos"]), r, 0, TAU, 20, COL_HOVER, 1.5)

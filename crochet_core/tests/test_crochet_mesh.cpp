@@ -7,7 +7,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <fstream>
 #include <map>
+#include <sstream>
 #include <set>
 #include <string>
 #include <utility>
@@ -385,11 +387,44 @@ static int countHinges(const CrochetModel& cm, Real scale, Real restRad) {
     return n;
 }
 
+static std::string readText(const std::string& path) {
+    std::ifstream in(path);
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    return ss.str();
+}
+
 static void modelTests(const YarnBook& book) {
     const Yarn* acrylic = book.find("acrylic_worsted");
     const Yarn* cotton = book.find("cotton_worsted");
     CHECK(acrylic != nullptr && cotton != nullptr);
     if (acrylic == nullptr || cotton == nullptr) return;
+
+    {
+        // `#! override [12] blo` (plan T8.3): row 12 of the pouch worked BLO gets hinge modifiers along its base and nothing else changes
+        const std::string json = readText(exportPath("pouch")), text = readText(fixturePath("pouch"));
+        const StitchGraph g0 = importPattern(json, text), g1 = importPattern(json, text + "\n#! override [12] blo\n");
+        ModelOptions opt;
+        opt.hook_m = 5.0e-3;
+        const CrochetModel m0 = buildCrochetModel(g0, *acrylic, opt), m1 = buildCrochetModel(g1, *acrylic, opt);
+        int blo = 0;
+        for (const Stitch& s : g1.st) blo += s.row == 12 && s.loop == "blo";
+        int extra = 0;
+        Real scale = 0;
+        for (const HingeMod& h : m1.mesh.hingeMods) {
+            bool known = false;
+            for (const HingeMod& h0 : m0.mesh.hingeMods) known = known || (h0.a == h.a && h0.b == h.b && h0.bendScale == h.bendScale && h0.restAngle == h.restAngle);
+            if (!known) {
+                ++extra;
+                scale = h.bendScale;
+            }
+        }
+        // row 12 is a WS row: the BLO as written is the RS-relative FLO (bendScale 0.35); 15 stitches in a row sit on 14 base edges
+        CHECKP(g1.st.size() == g0.st.size() && m1.mesh.tris.size() == m0.mesh.tris.size() && blo == 15 && extra == 14 &&
+                   m1.mesh.hingeMods.size() == m0.mesh.hingeMods.size() + 14 && std::fabs(scale - 0.35) < 1e-12,
+               "override [12] blo on the pouch: 15 stitches blo, hinge modifiers %zu -> %zu (%d new, bendScale %.2f = FLO on the RS), same %zu triangles", m0.mesh.hingeMods.size(),
+               m1.mesh.hingeMods.size(), extra, scale, m1.mesh.tris.size());
+    }
 
     const char* names[] = {"pouch",          "bag_round_plain", "bag_round_blo",   "bag_round_flo", "bag_round_slst",
                            "bag_round_surface", "circle_plus5", "circle_plus6", "circle_plus8", "tube40", "facing"};

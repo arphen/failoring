@@ -277,6 +277,21 @@ bool parseRowAddress(const std::string& tok, int* row) {
     return wholeNumber(tok.substr(1, tok.size() - 2), row);
 }
 
+// `[row]`, `[row,pos]` or `[row,a-b]`, the `#! override` address: a whole row, one stitch or the stitches a..b of a row (indices as in
+// `[row,pos]`). lo = hi = -1 for the whole row.
+bool parseOverrideAddress(const std::string& tok, int* row, int* lo, int* hi) {
+    if (tok.size() < 3 || tok.front() != '[' || tok.back() != ']') return false;
+    const std::string inner = tok.substr(1, tok.size() - 2);
+    const size_t comma = inner.find(',');
+    *lo = *hi = -1;
+    if (comma == std::string::npos) return wholeNumber(inner, row);
+    if (!wholeNumber(inner.substr(0, comma), row)) return false;
+    const std::string span = inner.substr(comma + 1);
+    const size_t dash = span.find('-');
+    if (dash == std::string::npos) return wholeNumber(span, lo) && (*hi = *lo, true);
+    return wholeNumber(span.substr(0, dash), lo) && wholeNumber(span.substr(dash + 1), hi) && *lo <= *hi;
+}
+
 std::string addressText(int row, int pos) {
     return "[" + std::to_string(row) + "," + std::to_string(pos) + "]";
 }
@@ -313,7 +328,7 @@ void applyExtensionLines(const std::string& text, StitchGraph& g) {
         if (line.size() < 2 || line[0] != '#' || line[1] != '!') continue;
         const std::vector<std::string> tok = tokensOf(line.substr(2));
         if (tok.empty())
-            extFail(lineNo, "missing keyword (expected `link [row,pos] [row,pos] <kind>` or `count [row] N`)");
+            extFail(lineNo, "missing keyword (expected `link [row,pos] [row,pos] <kind>`, `count [row] N` or `override <address> <modifier>`)");
         if (tok[0] == "count") {
             if (tok.size() != 3)
                 extFail(lineNo, "expected `count [row] N`, got " + std::to_string(tok.size() - 1) +
@@ -335,8 +350,36 @@ void applyExtensionLines(const std::string& text, StitchGraph& g) {
                                     " stitches, the pattern says " + std::to_string(want));
             continue;
         }
+        if (tok[0] == "override") {
+            // the "lego" edits of the chart (plan 9.2): a loop (as written, worker-relative) or a stitch type for a row, a range or one stitch.
+            // Only type and insertion change, never the stitches, their targets or their counts; chains are left alone.
+            if (tok.size() != 3)
+                extFail(lineNo, "expected `override [row] <modifier>`, `override [row,pos] <modifier>` or `override [row,a-b] <modifier>`, got " +
+                                    std::to_string(tok.size() - 1) + " argument(s) after the keyword");
+            int row = 0, lo = -1, hi = -1;
+            if (!parseOverrideAddress(tok[1], &row, &lo, &hi))
+                extFail(lineNo, "cannot parse address '" + tok[1] + "' (expected [row], [row,pos] or [row,a-b] with a <= b)");
+            const std::string& mod = tok[2];
+            const bool loopMod = isLoop(mod);
+            const bool typeMod = mod == "sc" || mod == "hdc" || mod == "dc" || mod == "tr" || mod == "slst";
+            if (!loopMod && !typeMod)
+                extFail(lineNo, "unknown modifier '" + mod + "' (expected a loop both|blo|flo|fpost|bpost|space or a stitch sc|hdc|dc|tr|slst)");
+            if (row >= static_cast<int>(g.rows.size()))
+                extFail(lineNo, "row " + rowAddressText(row) + " does not exist (rows are 0.." + std::to_string(static_cast<int>(g.rows.size()) - 1) + ")");
+            int named = 0, changed = 0;
+            for (Stitch& st : g.st) {
+                if (st.row != row || (lo >= 0 && (st.index < lo || st.index > hi))) continue;
+                ++named;
+                if (st.type == "ch") continue;
+                (loopMod ? st.loop : st.type) = mod;
+                ++changed;
+            }
+            if (named == 0) extFail(lineNo, "address " + tok[1] + " does not name a stitch");
+            if (changed == 0) extFail(lineNo, "address " + tok[1] + " names only chains, which an override cannot change");
+            continue;
+        }
         if (tok[0] != "link")
-            extFail(lineNo, "unknown keyword '" + tok[0] + "' (T4.2 implements 'link' and 'count')");
+            extFail(lineNo, "unknown keyword '" + tok[0] + "' (expected 'link', 'count' or 'override')");
         if (tok.size() != 4)
             extFail(lineNo, "expected `link [row,pos] [row,pos] <kind>`, got " + std::to_string(tok.size() - 1) +
                                 " argument(s) after the keyword");

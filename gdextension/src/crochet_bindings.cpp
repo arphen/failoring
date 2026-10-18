@@ -167,6 +167,7 @@ Dictionary CrochetPattern::get_summary() const {
     const fl::Yarn* y = book_.find(yarn_id_);
     d["skeins"] = y != nullptr && y->metres > 0 ? yarn / y->metres : 0.0;
     d["hook_mm"] = hook_mm_ > 0 ? hook_mm_ : (y != nullptr ? y->hookMm : 0.0);
+    d["hinge_mods"] = static_cast<int>(model_.mesh.hingeMods.size());  // edges with their own bending (BLO/FLO rows, joins)
     d["vertices"] = static_cast<int>(model_.topo.vertexStitch.size());
     d["faces"] = static_cast<int>(model_.mesh.tris.size());
     // the size of the layout (before the relaxation): the body's extents

@@ -22,10 +22,11 @@
 // Extension lines: every line in the pattern file whose first two characters
 // are `#!` is one. CrochetPARADE treats `#` as a comment start, so these lines
 // are invisible to its parser, and comment lines never shift row numbers or
-// source-line numbers (the export's `line` values are stable). Two keywords:
+// source-line numbers (the export's `line` values are stable). Three keywords:
 //
 //   #! link [row,pos] [row,pos] <kind>     kind = both_layers | join
 //   #! count [row] N
+//   #! override <address> <modifier>       address = [row] | [row,pos] | [row,a-b]
 //
 // [row,pos] addresses a stitch by its exported row id and its index within
 // that row, exactly the values in the JSON. Both addresses must name existing
@@ -44,6 +45,13 @@
 // stitches, the pattern says <N>`; a nonexistent row, arity or address errors
 // throw before that. Every error carries the physical line number and the
 // offending keyword, token or address.
+//
+// `#! override` is the "lego" edit of the chart (plan 9.2): it sets the loop (both | blo | flo | fpost |
+// bpost | space, as written, i.e. worker-relative) or the type (sc | hdc | dc | tr | slst) of every stitch of
+// the row, of the stitch at [row,pos], or of the stitches a..b (indices as in `[row,pos]`) of the row. Lines
+// apply in written order, the last one wins. It never changes which stitches exist, what they are worked into
+// or how many there are, so counts and links stay valid; chains are skipped (an address that names only
+// chains is an error, as is one that names no stitch, an unknown modifier or a range with a > b).
 #include <string>
 
 #include "failoring/crochet/graph.hpp"

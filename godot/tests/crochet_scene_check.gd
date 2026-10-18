@@ -57,6 +57,123 @@ func _line_checks(c) -> void:
 	ch._gui_input(mb)
 	check("select: a click on empty chart clears the selection", c.selection.size() == 0 and ch.highlight.size() == 0 and ch.selected == -1)
 
+func _ids_of(ch, row: int, lo := 0, hi := 1 << 30) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	for sy in ch.symbols:
+		if int(sy["row"]) == row and int(sy["index"]) >= lo and int(sy["index"]) <= hi:
+			out.push_back(int(sy["id"]))
+	return out
+
+# lego edits (plan T8.3): the chart's menu adds `#! override` lines to the pattern text, the recompile shows them
+func _lego_checks(c) -> void:
+	var ch = c.chart_holder
+	var original: String = c.editor.text
+	var hinges0 := int(c.pattern.get_summary()["hinge_mods"])
+	var yarn0 := float(c.pattern.get_summary()["yarn_m"])
+	# a whole row: row 12 BLO
+	c.select_stitches(_ids_of(ch, 12), "chart")
+	check("lego: row 12 (turning chain and 15 sc) takes a whole-row BLO", c.apply_override("blo", true))
+	check("lego: the text gains `#! override [12] blo` at its end, the rest untouched", c.editor.text.begins_with(original) and c.editor.text.ends_with("#! override [12] blo\n") and c.editor.text.length() == original.length() + 21)
+	c.compile_now()
+	var hinges1 := int(c.pattern.get_summary()["hinge_mods"])
+	check("lego: it recompiles, same 1380 stitches, hinge modifiers %d -> %d" % [hinges0, hinges1], c.error_text() == "" and c.summary_text().begins_with("1380 stitches") and hinges1 == hinges0 + 14)
+	check("lego: the recompile clears the selection", c.selection.size() == 0 and ch.highlight.size() == 0)
+	c.editor.undo()
+	check("lego: undo in the editor takes the edit out of the text", c.editor.text == original)
+	c.compile_now()
+	check("lego: ...and the hinge modifiers go back (%d)" % int(c.pattern.get_summary()["hinge_mods"]), int(c.pattern.get_summary()["hinge_mods"]) == hinges0)
+	# a range: row 20, stitches 3-7, dc
+	c.select_stitches(_ids_of(ch, 20, 3, 7), "chart")
+	c.apply_override("dc", false)
+	check("lego: a range becomes `[20,3-7] dc`", c.editor.text.ends_with("#! override [20,3-7] dc\n"))
+	c.compile_now()
+	var dcs := 0
+	for sid in _ids_of(ch, 20, 3, 7):
+		dcs += 1 if ch.symbols[sid]["type"] == "dc" else 0
+	check("lego: after the recompile those 5 are dc in the chart (%d) and the yarn grows (%.2f m -> %.2f m)" % [dcs, yarn0, float(c.pattern.get_summary()["yarn_m"])], c.error_text() == "" and dcs == 5 and float(c.pattern.get_summary()["yarn_m"]) > yarn0)
+	c.editor.undo()
+	c.compile_now()
+	# runs of neighbours, a single stitch
+	var ids := PackedInt32Array()
+	for i in [2, 3, 4, 9, 10]:
+		ids.append_array(_ids_of(ch, 20, i, i))
+	c.select_stitches(ids, "chart")
+	check("lego: two runs of neighbours give two lines", c.override_lines("flo", false) == ["#! override [20,2-4] flo", "#! override [20,9-10] flo"])
+	c.select_stitches(_ids_of(ch, 6, 5, 5), "chart")
+	check("lego: one stitch gives `[6,5]`", c.override_lines("flo", false) == ["#! override [6,5] flo"])
+	# chains cannot be changed
+	c.select_stitches(_ids_of(ch, 0), "chart")
+	var before: String = c.editor.text
+	check("lego: only chains selected: nothing is written, a message says so", not c.apply_override("blo", true) and c.editor.text == before and c.error_text().contains("chains"))
+	c.error_label.text = ""
+	# the menu
+	c.select_stitches(_ids_of(ch, 12), "chart")
+	c._build_edit_menu()
+	check("lego: the menu has a header, 8 modifiers, a separator and the whole-row tick (%d items)" % c.edit_menu.item_count, c.edit_menu.item_count == 11 and c.edit_menu.get_item_text(c.edit_menu.get_item_index(2)).contains("dc") and c.edit_menu.is_item_checkable(c.edit_menu.get_item_index(100)))
+	c._on_edit_menu(100)
+	check("lego: ticking the whole row keeps the menu state", c._whole_row and c.edit_menu.is_item_checked(c.edit_menu.get_item_index(100)))
+	c._on_edit_menu(5)
+	check("lego: choosing BLO in the menu writes the whole-row line", c.editor.text.ends_with("#! override [12] blo\n"))
+	c._on_edit_menu(100)
+	c.editor.undo()
+	# right click and a rectangle in the chart
+	ch.size = Vector2(400, 600)
+	ch.fit()
+	c.compile_now()
+	var asked := []
+	ch.edit_requested.connect(func(p): asked.append(p))
+	var id := _ids_of(ch, 12, 5, 5)[0]
+	var at: Vector2 = ch.stitch_screen_pos(id)
+	var rb := InputEventMouseButton.new()
+	rb.button_index = MOUSE_BUTTON_RIGHT
+	rb.pressed = true
+	rb.position = at
+	ch._gui_input(rb)
+	rb.pressed = false
+	ch._gui_input(rb)
+	check("lego: a right click on a stitch selects it and asks for the menu", asked.size() == 1 and c.selection == PackedInt32Array([id]))
+	rb.pressed = true
+	ch._gui_input(rb)
+	var drag := InputEventMouseMotion.new()
+	drag.position = at + Vector2(30, 0)
+	drag.relative = Vector2(30, 0)
+	ch._gui_input(drag)
+	rb.pressed = false
+	rb.position = at + Vector2(30, 0)
+	ch._gui_input(rb)
+	check("lego: a right drag pans and does not ask for the menu", asked.size() == 1 and ch._pan.x == 30.0)
+	ch.fit()
+	var p1: Vector2 = ch.stitch_screen_pos(_ids_of(ch, 10, 1, 1)[0])
+	var p2: Vector2 = ch.stitch_screen_pos(_ids_of(ch, 12, 8, 8)[0])
+	var a := p1.min(p2) - Vector2(3, 3)   # the rectangle from the stitch of row 10 to the stitch of row 12, a little wider
+	var b := p1.max(p2) + Vector2(3, 3)
+	var rect := Rect2(a, b - a)
+	var want := PackedInt32Array()
+	for sy in ch.symbols:
+		if rect.has_point(ch.stitch_screen_pos(int(sy["id"]))):
+			want.push_back(int(sy["id"]))
+	var lb := InputEventMouseButton.new()
+	lb.button_index = MOUSE_BUTTON_LEFT
+	lb.pressed = true
+	lb.position = a
+	ch._gui_input(lb)
+	var mv := InputEventMouseMotion.new()
+	mv.position = b
+	ch._gui_input(mv)
+	lb.pressed = false
+	lb.position = b
+	ch._gui_input(lb)
+	check("lego: dragging a rectangle selects the stitches in it (%d)" % want.size(), want.size() > 20 and ch.highlight == want and c.selection == want)
+	var rows_hit := {}
+	for sid in want:
+		rows_hit[int(ch.symbols[sid]["row"])] = true
+	var n_before: int = c.editor.get_line_count()
+	c.apply_override("flo", false)
+	check("lego: a rectangle over %d rows writes one line per row" % rows_hit.size(), c.editor.get_line_count() - n_before == rows_hit.size() and c.editor.text.contains("#! override [11,"))
+	c.editor.undo()
+	c.compile_now()
+	check("lego: after undo the text is the original again", c.editor.text == original)
+
 # selection with a run: the stitch glows on the cloth, a ray finds the stitch (plan T8.2)
 func _scene_selection_checks(c) -> void:
 	var ch = c.chart_holder
@@ -164,6 +281,7 @@ func _ready() -> void:
 	check("the run button is enabled", not c.run_btn.disabled)
 	_chart_checks(c)
 	await _line_checks(c)
+	_lego_checks(c)
 	# a bad pattern: the error comes with its line, the run is blocked
 	c.load_text("ch,sc,xyz@[3,4]\n")
 	check("a bad pattern reports an error (%s)" % [c.error_text()], c.error_text().length() > 0 and c.summary_text() == "Does not compile")

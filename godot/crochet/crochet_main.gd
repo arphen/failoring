@@ -71,6 +71,11 @@ var _stitch_of_vertex := PackedInt32Array()
 var _vertex_of_stitch := PackedInt32Array()
 var _indices := PackedInt32Array()
 var _line_stitches := {}                      # pattern line (1-based) -> PackedInt32Array of stitch ids
+var edit_menu: PopupMenu                      # the right-click menu of the chart (plan 9.2)
+var _whole_row := false                       # "whole row" ticked in that menu
+const OVERRIDE_MODS := ["sc", "hdc", "dc", "tr", "slst", "blo", "flo", "both"]
+const OVERRIDE_LABELS := ["Single crochet (sc)", "Half double (hdc)", "Double (dc)", "Treble (tr)", "Slip stitch (sl st)", "Back loop only (BLO)", "Front loop only (FLO)", "Both loops"]
+const WHOLE_ROW_ID := 100
 
 func _ready() -> void:
 	_use_worker = DisplayServer.get_name() != "headless" or OS.has_environment("FL_THREAD")
@@ -362,6 +367,12 @@ func _build_right() -> Control:
 	chart_holder.name = "Chart"
 	tabs.add_child(chart_holder)
 	chart_holder.stitch_selected.connect(_on_chart_selected)
+	chart_holder.stitches_selected.connect(_on_chart_band)
+	chart_holder.edit_requested.connect(_on_chart_edit_requested)
+	edit_menu = PopupMenu.new()
+	edit_menu.hide_on_checkable_item_selection = false
+	edit_menu.id_pressed.connect(_on_edit_menu)
+	add_child(edit_menu)
 	var mbox := VBoxContainer.new()
 	mbox.name = "Metrics"
 	metrics_text = RichTextLabel.new()
@@ -569,6 +580,85 @@ func select_stitches(ids: PackedInt32Array, source: String) -> void:
 
 func _on_chart_selected(id: int) -> void:
 	select_stitches(PackedInt32Array([id]) if id >= 0 else PackedInt32Array(), "chart")
+
+func _on_chart_band(ids: PackedInt32Array) -> void:
+	select_stitches(ids, "chart")
+
+# ------------------------------------------------------------------------------------------------ lego edits (plan 9.2)
+# The edit menu adds `#! override` lines to the end of the pattern text, so the text stays the one source of truth (and Ctrl+Z in the
+# editor undoes an edit); the change shows when the pattern recompiles. Only type and insertion change, never the stitch counts.
+
+func _on_chart_edit_requested(at: Vector2) -> void:
+	if selection.is_empty():
+		return
+	_build_edit_menu()
+	edit_menu.popup(Rect2i(Vector2i(chart_holder.get_screen_position() + at), Vector2i.ZERO))
+
+func _build_edit_menu() -> void:
+	edit_menu.clear()
+	var rows := {}
+	for id in selection:
+		rows[int(chart_holder.symbols[id]["row"])] = true
+	edit_menu.add_separator("%d stitches, %s" % [selection.size(), ("row %d" % rows.keys()[0]) if rows.size() == 1 else ("%d rows" % rows.size())])
+	for i in OVERRIDE_MODS.size():
+		edit_menu.add_item(OVERRIDE_LABELS[i], i)
+	edit_menu.add_separator()
+	edit_menu.add_check_item("Make the whole row like this", WHOLE_ROW_ID)
+	edit_menu.set_item_checked(edit_menu.get_item_index(WHOLE_ROW_ID), _whole_row)
+
+func _on_edit_menu(id: int) -> void:
+	if id == WHOLE_ROW_ID:
+		_whole_row = not _whole_row
+		edit_menu.set_item_checked(edit_menu.get_item_index(WHOLE_ROW_ID), _whole_row)
+	elif id >= 0 and id < OVERRIDE_MODS.size():
+		apply_override(OVERRIDE_MODS[id], _whole_row)
+
+func _range_line(row: int, a: int, b: int, modifier: String) -> String:
+	return "#! override [%d,%d] %s" % [row, a, modifier] if a == b else "#! override [%d,%d-%d] %s" % [row, a, b, modifier]
+
+# the `#! override` lines for the selected stitches: one per row (whole_row) or one per run of neighbouring stitches; chains are left out
+func override_lines(modifier: String, whole_row: bool) -> Array[String]:
+	var by_row := {}
+	for id in selection:
+		var sy: Dictionary = chart_holder.symbols[id]
+		if String(sy["type"]) == "ch":
+			continue
+		if not by_row.has(int(sy["row"])):
+			by_row[int(sy["row"])] = []
+		by_row[int(sy["row"])].append(int(sy["index"]))
+	var rows := by_row.keys()
+	rows.sort()
+	var lines: Array[String] = []
+	for r in rows:
+		if whole_row:
+			lines.append("#! override [%d] %s" % [r, modifier])
+			continue
+		var idx: Array = by_row[r]
+		idx.sort()
+		var a: int = idx[0]
+		var b: int = idx[0]
+		for k in range(1, idx.size()):
+			if idx[k] == b + 1:
+				b = idx[k]
+			else:
+				lines.append(_range_line(r, a, b, modifier))
+				a = idx[k]
+				b = idx[k]
+		lines.append(_range_line(r, a, b, modifier))
+	return lines
+
+# append the override lines for the selection to the pattern text (one undo step); false when there is nothing to change
+func apply_override(modifier: String, whole_row: bool) -> bool:
+	var lines := override_lines(modifier, whole_row)
+	if lines.is_empty():
+		error_label.text = "Select stitches in the chart first (chains cannot be changed)"
+		return false
+	var last := editor.get_line_count() - 1
+	var tail := editor.get_line(last)
+	editor.begin_complex_operation()
+	editor.insert_text(("\n" if tail != "" else "") + "\n".join(lines) + "\n", last, tail.length())
+	editor.end_complex_operation()
+	return true
 
 # the pattern line of a stitch: caret there, the whole line selected
 func _show_line(line: int) -> void:

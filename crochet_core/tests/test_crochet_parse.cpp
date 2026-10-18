@@ -570,6 +570,35 @@ int main() {
         CHECKP(has(c6, "cannot parse count 'x'"), "count: non-integer count value (%s)", c6.c_str());
     }
 
+    {
+        // `#! override`: a row, a range, one stitch; loops (as written) and types; the stitches themselves do not change
+        const StitchGraph base = importPattern(tinyJson());
+        const StitchGraph a = importPattern(tinyJson(), "#! override [1] blo\n");
+        CHECKP(a.st[2].loop == "blo" && a.st[3].loop == "blo" && a.st[2].loopRs == "blo" && a.st[0].loop == "space" && a.st[1].loop == "space",
+               "override: [1] blo sets both sc, the chains keep their loop (%s %s)", a.st[2].loop.c_str(), a.st[0].loop.c_str());
+        const StitchGraph b = importPattern(tinyJson(), "#! override [1,1] flo\n");
+        CHECKP(b.st[2].loop == "both" && b.st[3].loop == "flo", "override: [1,1] flo sets the one stitch (%s %s)", b.st[2].loop.c_str(), b.st[3].loop.c_str());
+        const StitchGraph c = importPattern(tinyJson(), "#! override [1,0-1] hdc\n#! override [1,1] dc\n");
+        CHECKP(c.st[2].type == "hdc" && c.st[3].type == "dc", "override: a range sets the type, a later line wins (%s %s)", c.st[2].type.c_str(), c.st[3].type.c_str());
+        bool same = a.st.size() == base.st.size() && a.rows.size() == base.rows.size() && a.links.size() == base.links.size();
+        for (size_t i = 0; same && i < a.st.size(); ++i) same = a.st[i].targets == base.st[i].targets && a.st[i].row == base.st[i].row && a.st[i].index == base.st[i].index;
+        CHECKP(same, "override: stitches, rows, targets and addresses are untouched");
+        const std::string o1 = importError(tinyJson(), "#! override [0] blo\n");
+        CHECKP(has(o1, "line 1: address [0] names only chains"), "override: chains only (%s)", o1.c_str());
+        const std::string o2 = importError(tinyJson(), "x\n#! override [1,5] blo\n");
+        CHECKP(has(o2, "line 2: address [1,5] does not name a stitch"), "override: no such stitch (%s)", o2.c_str());
+        const std::string o3 = importError(tinyJson(), "#! override [9] blo\n");
+        CHECKP(has(o3, "line 1: row [9] does not exist"), "override: no such row (%s)", o3.c_str());
+        const std::string o4 = importError(tinyJson(), "#! override [1] zigzag\n");
+        CHECKP(has(o4, "line 1: unknown modifier 'zigzag'"), "override: unknown modifier (%s)", o4.c_str());
+        const std::string o5 = importError(tinyJson(), "#! override [1]\n");
+        CHECKP(has(o5, "line 1: expected `override [row] <modifier>`") && has(o5, "got 1 argument(s)"), "override: arity (%s)", o5.c_str());
+        const std::string o6 = importError(tinyJson(), "#! override 1 blo\n");
+        CHECKP(has(o6, "cannot parse address '1'"), "override: address without brackets (%s)", o6.c_str());
+        const std::string o7 = importError(tinyJson(), "#! override [1,1-0] blo\n");
+        CHECKP(has(o7, "cannot parse address '[1,1-0]'"), "override: a range with a > b (%s)", o7.c_str());
+    }
+
     // ---- point seams resolved from the links (plan section 6.7) -------------
     {
         const StitchGraph g = loadFixture("pouch");

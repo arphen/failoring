@@ -56,7 +56,7 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
 | T7.4 | Surface shader, double-sided thickness | T7.2 | done | default | 1 | 66570c6 | shader compiles and renders in the real renderer (screenshot docs/crochet-shots/ui/pouch_hang_pin.png); crochet_api_check 26 PASS; mesh/shader not covered headless |
 | T8.1 | Chart view | T7.2 | done | default | 1 | c9c51fa | crochet_scene_check 38 PASS (1380 symbols for the pouch, hover/click/zoom); core chartPositions tested on pouch and bag; screenshots in docs/crochet-shots/ui |
 | T8.2 | Selection chart <-> 3D <-> pattern line | T8.1 | done | default | 1 | 4a8857e | crochet_scene_check 51 PASS: chart click -> glow vertex + editor line, caret line -> stitches, ray pick; 2 mutations caught |
-| T8.3 | Lego overrides | T8.2 | todo | | 0 | | override gains a line, recompiles, hinges present |
+| T8.3 | Lego overrides | T8.2 | done | default | 1 | HASH | `#! override [row]/[row,pos]/[row,a-b] <mod>` in the parser; chart menu appends lines; pouch row 12 BLO: hinge mods 8 -> 22; scene check 70 PASS |
 | T8.4 | Compare + five-variant run | T8.3 | todo | | 0 | | five runs, table with five corner angles |
 | T9.1 | Calibration wizard + records | T7.3 | todo | | 0 | | record changes stitchMech; UI says "calibrated" |
 | T9.2 | Hinge auto-fit (bisection) | T9.1 | todo | | 0 | | recovers a known bendScale within 5 % |
@@ -163,3 +163,6 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
   GDScript). `CrochetPattern.compile` runs the node exporter itself (PATH widened for Homebrew) and reads the `#!` lines from the same text.
   GDExtension work is done on `crochet/main` in the main checkout (the compiled godot-cpp lives in `build-gd/`); `godot/bin/libfailoring.dylib`
   stays an uncommitted local build product.
+* 2026-10-18 — T8.3 `override` is a `#!` extension line, not the `.fcro` statement of §5.2/§9.2: `#! override [row] <mod>`,
+  `[row,pos]`, `[row,a-b]` with the addresses of `#! count`/`#! link`. A loop modifier is worker-relative like the pattern text.
+  "Surface sl st on this row" is not an override (it adds stitches) and is not in the menu.

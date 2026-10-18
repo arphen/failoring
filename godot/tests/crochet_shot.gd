@@ -32,6 +32,8 @@ func _ready() -> void:
 	if focus >= 0:
 		c.chart_holder.focus(focus, float(OS.get_environment("FL_SHOT_CHART_ZOOM")) if OS.has_environment("FL_SHOT_CHART_ZOOM") else 10.0)
 		c.chart_holder.select_stitch(focus)
+	if OS.has_environment("FL_SHOT_MENU"):   # the chart's edit menu over the current selection
+		c._on_chart_edit_requested(Vector2(60, 300))
 	for i in 4:
 		await get_tree().process_frame
 	var out := OS.get_environment("FL_SHOT_OUT") if OS.has_environment("FL_SHOT_OUT") else "/tmp/crochet_shot.png"
