@@ -48,7 +48,8 @@ add_library(crochet_core STATIC
   crochet_core/src/crochet_mesh.cpp
   crochet_core/src/crochet_model.cpp
   crochet_core/src/crochet_layout.cpp
-  crochet_core/src/snapshot.cpp)
+  crochet_core/src/snapshot.cpp
+  crochet_core/src/crochet_relax.cpp)
 target_include_directories(crochet_core PUBLIC crochet_core/include)
 target_link_libraries(crochet_core PUBLIC cloth_core)
 target_compile_options(crochet_core PRIVATE -Wall -Wextra)
@@ -105,6 +106,14 @@ target_link_libraries(test_crochet_layout PRIVATE crochet_core)
 target_include_directories(test_crochet_layout PRIVATE cloth_core/tests)
 target_compile_definitions(test_crochet_layout PRIVATE FL_PATTERNS_DIR="${FL_PATTERNS_DIR}" FL_YARNS_PATH="${FL_YARNS_PATH}")
 add_test(NAME test_crochet_layout COMMAND test_crochet_layout)
+
+# crochet_core test: relaxation of the layouts and the geometry tests of plan section 6.10 (swatch, circle,
+# tube, hinge sign, pouch). Runs real simulations (~1.5 min, the pouch relaxation dominates).
+add_executable(test_crochet_relax crochet_core/tests/test_crochet_relax.cpp)
+target_link_libraries(test_crochet_relax PRIVATE crochet_core)
+target_include_directories(test_crochet_relax PRIVATE cloth_core/tests)
+target_compile_definitions(test_crochet_relax PRIVATE FL_PATTERNS_DIR="${FL_PATTERNS_DIR}" FL_YARNS_PATH="${FL_YARNS_PATH}")
+add_test(NAME test_crochet_relax COMMAND test_crochet_relax)
 
 # Native timing (not in ctest): cmake -DFL_BENCH=ON, then build/bench_native.
 option(FL_BENCH "Build the native timing benchmark (bench_native), not run by ctest" OFF)
