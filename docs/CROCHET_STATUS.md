@@ -12,7 +12,7 @@ acceptance, with the measured numbers. Honest numbers; "not measured" where not 
 | 3 | Stitch model (§4) | gauge sanity and monotonicity tests | done (T3.1, 2026-10-16) |
 | 4 | DSL + graph (§5) | all fixtures compile with the stated counts, error-message tests | done (T4.0-T4.2, 2026-10-17) |
 | 5 | Mesh + layout + relax (§6) | flat/cup/ruffle circle, tube, swatch size, hinge sign, mass | done (T5.1-T5.4, 2026-10-18) |
-| 6 | Scenes + load + metrics + CLI (§7) | strap analytic, force balance, settle, fit checks; PNG snapshots of all fixtures in docs/crochet-shots/ | todo |
+| 6 | Scenes + load + metrics + CLI (§7) | strap analytic, force balance, settle, fit checks; PNG snapshots of all fixtures in docs/crochet-shots/ | in progress (T6.1 done) |
 | 7 | Godot bindings + scene (§8) | crochet_api_check passes; the user can open, edit, run, and see the pouch hang on their Mac | todo |
 | 8 | Chart, lego, compare (§9) | five-variant comparison runs from one click; the table shows different corner angles | todo |
 | 9 | Calibration (§10) | a swatch record changes the result and the UI says "calibrated" | todo |
@@ -243,3 +243,10 @@ acceptance, with the measured numbers. Honest numbers; "not measured" where not 
   chain edge rest length 0.85 w -> the stitch width, relaxation Newton iterations 12 -> 30. See reports/T5.4.md.
 * Regression: 17 of 20, the three baseline failures unchanged (FAIL lines byte-identical), dump bit-identical,
   `cloth_core/` untouched. Six mutations caught. Merged. **Phase 5 is done.**
+
+### 2026-10-18 — T6.1 hang_pin / hang_peg scenes (phase 6, item 1)
+
+* `CrochetScene`: the pouch hangs by a pin (middle two strap rows) and from a peg (capsule inside the loop, friction
+  mode 2) and settles in 239 / 276 frames (KE < 1e-8 J for 30 frames), Newton cap 0 of 478 / 552 substeps, 0 self
+  intersections, 3.88 mm clearance to the peg, 38.8 cm from the strap apex to the lowest point (strap 24 + body 15).
+  The hung pouch stays centred on the peg (z = -0.1 cm). Snapshots in docs/crochet-shots/scenes/. Three mutations caught.
