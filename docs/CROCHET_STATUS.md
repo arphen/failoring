@@ -11,7 +11,7 @@ acceptance, with the measured numbers. Honest numbers; "not measured" where not 
 | 2 | Yarn data (§3) | yarns.json loads, unit tests | done (T2.1, 2026-10-16) |
 | 3 | Stitch model (§4) | gauge sanity and monotonicity tests | done (T3.1, 2026-10-16) |
 | 4 | DSL + graph (§5) | all fixtures compile with the stated counts, error-message tests | done (T4.0-T4.2, 2026-10-17) |
-| 5 | Mesh + layout + relax (§6) | flat/cup/ruffle circle, tube, swatch size, hinge sign, mass | in progress (T5.1-T5.3 done) |
+| 5 | Mesh + layout + relax (§6) | flat/cup/ruffle circle, tube, swatch size, hinge sign, mass | done (T5.1-T5.4, 2026-10-18) |
 | 6 | Scenes + load + metrics + CLI (§7) | strap analytic, force balance, settle, fit checks; PNG snapshots of all fixtures in docs/crochet-shots/ | todo |
 | 7 | Godot bindings + scene (§8) | crochet_api_check passes; the user can open, edit, run, and see the pouch hang on their Mac | todo |
 | 8 | Chart, lego, compare (§9) | five-variant comparison runs from one click; the table shows different corner angles | todo |
@@ -228,3 +228,18 @@ acceptance, with the measured numbers. Honest numbers; "not measured" where not 
   Edge length / rest length: median 1.00 (circles +8: 1.26), p95 <= 1.63, worst 2.34 (bag oval caps / strap start).
   Nine mutations caught. Native layouts: no CrochetPARADE positions.
 * Next: T5.4 relaxation + the §6.10 tests (the circle flat / cup / ruffle test is the key one).
+
+### 2026-10-18 — T5.4 relaxation and the geometry tests (phase 5 accepted)
+
+* `relaxModel` (gravity 0, seams ramped over 60 frames, damping x5, self collision, Newton budget 30): every
+  fixture tested relaxes before the frame cap, Newton cap hits 0.
+  * Test 1: 20 x 20 swatch 130.00 mm x 120.00 mm = 20 w x 20 h (0.00 % / 0.00 %).
+  * Test 2 (the key one): circle +6 sc flat (out-of-plane 0.00 % of the 46.5 mm radius), +5 a cup 43.3 % deep (93.5 % of
+    the vertices on one side of the rim plane), +8 ruffles (rim sign changes 4, deviation 74 %).
+  * Test 3: tube40 circumference of rounds 4 / 8 / 12 within +0.11 % / -0.08 % / -1.61 % of 40 w.
+  * Test 5: BLO on a RS row turns the top part +25.6 deg toward the WS, FLO -25.7 deg (want +-25 +- 3).
+  * Pouch: 192 frames, KE 1.0e-9 J, largest seam gap 0.580 mm. Bag (not in ctest): 175 frames, 180 s, seam gap 17 um.
+* Tuned constants (before -> after, reason): `compressionRatio` 0.2 -> 0.1 (the +6 circle ruffled with 0.2), foundation
+  chain edge rest length 0.85 w -> the stitch width, relaxation Newton iterations 12 -> 30. See reports/T5.4.md.
+* Regression: 17 of 20, the three baseline failures unchanged (FAIL lines byte-identical), dump bit-identical,
+  `cloth_core/` untouched. Six mutations caught. Merged. **Phase 5 is done.**

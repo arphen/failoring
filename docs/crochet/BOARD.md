@@ -43,7 +43,7 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
 | T5.1 | Faces (BFS base path, zipper), rest shapes, orientation | T4.2, T1.2 | done | default | 1 | 247f809 (merged 4bb4817) | ★ §6.10 test 4: 114 PASS lines on 11 fixtures; Euler 1, 1 component, 0 warnings; 9 orchestrator mutations caught; oval fixtures fixed (see Decisions) |
 | T5.2 | Materials, hinge mods, seams → IntrinsicMesh | T5.1, T3.1, T1.3, T1.5 | done | default | 1 | 80e6647 (merged 326f2b4) | §6.10 test 6: solver mass = yarn model on all 11 fixtures (0.0000 %); 7 mutations caught; kWsFoldSign = -1 to be confirmed by T5.4 test 5 |
 | T5.3 | Layouts (flat, fold, revolve, attached, arc; CP positions if A/B) | T5.2 | done | default | 1 | aa2b4bc (merged ea7c26d) | 11 PNGs under docs/crochet-shots/layout/; native layout (no CP positions); 9 mutations caught |
-| T5.4 | Relaxation + mesh tests | T5.3 | todo | | 0 | | ★ §6.10 tests 1,2,3,5 (circle is the key one) |
+| T5.4 | Relaxation + mesh tests | T5.3 | done | default | 1 | 8da3456 (merged 1564b8d) | ★ §6.10 tests 1,2,3,5: swatch 130.00 x 120.00 mm; circle +6 flat 0.00 %, +5 cup 43 %, +8 ruffle; hinge +25.6 / -25.7 deg; pouch seam gap 0.58 mm; 6 mutations caught |
 | T6.1 | Scenes hang_pin, hang_peg, settle loop | T5.4 | todo | | 0 | | §7.4 test 3 for the pouch |
 | T6.2 | RigidLoad: insert, release, fit check | T6.1, T1.6, T1.4 | todo | | 0 | | ★ §7.4 tests 1, 2, 4 |
 | T6.3 | Metrics | T6.1 | todo | | 0 | | §7.5 keys; 90° fold reads 90±1 |
@@ -139,3 +139,8 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
   both_layers links (row sum 51 -> between rows 25 and 26); the strap arc from the join links. World frame: y up,
   flat pieces hang in xy (RS to +z), revolve pieces rise from an xz base (RS up on the base, inside on the walls).
   Risks for T5.4: the oval chain's rest edge is 0.85 w under 1.0 w stitches (may ruffle the spine).
+* 2026-10-18 — T5.4 forced three changes, all recorded where the constant lives: `compressionRatio` 0.2 -> 0.1 (with 0.2 the
+  +6 circle ruffles +-10 % from a 0.3 mm perturbation because w/h = 1.083 gives 3 % excess rim; 0.07-0.15 works, +5 cup and
+  +8 ruffle too); foundation chain edges stretched to the width of the stitch worked into them (the 0.85 w chain made every
+  oval base a keel); relaxation Newton budget 30 (12 hit the cap in 82 % of the pouch's substeps). Test 5 confirmed
+  `kWsFoldSign = -1` (BLO turns +25.6 deg toward the WS, FLO -25.7).
