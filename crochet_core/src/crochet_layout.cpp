@@ -186,6 +186,7 @@ private:
     std::vector<Region> regions_;
     LayoutReport report_;
     std::map<int, int> regionOfRow_;
+    Real revolveTop_ = 0;  // y of the last ring of the revolve region just placed
 
     int vtx(int stitch) const { return t_.stitchVertex[stitch] >= 0 ? t_.stitchVertex[stitch] : t_.dropTo[stitch]; }
     void place(int v, const Vec3& p) { pos_[v] = p; placed_[v] = 1; }
@@ -431,6 +432,10 @@ private:
                 }
         // chains of the foundation are in front; the layer behind keeps its x, so the mouth (rows 1 and 50) is on top
         report_.foldAfterRow = k;
+        report_.openingRows = {reg.rows.front(), reg.rows.back()};
+        Real y1 = 0;
+        for (const int s : rowKept_[reg.rows.front()]) y1 += pos_[t_.stitchVertex[s]].y;
+        report_.depth = y1 / rowKept_[reg.rows.front()].size() - yFold;
     }
 
     // ---- Revolve ----
@@ -443,6 +448,8 @@ private:
             const Vec3 n = firstNormal(vs);
             if (n.y > 0 || mirror == 1) {
                 if (n.y <= 0) report_.warnings.push_back("revolve region at row " + std::to_string(reg.rows.front()) + " has no right-side normal toward +y");
+                report_.openingRows = {reg.rows.back()};
+                report_.depth = revolveTop_;
                 return mirror != 0;
             }
         }
@@ -540,6 +547,7 @@ private:
             st = nx;
             prevR = nx.r;
         }
+        revolveTop_ = y;
     }
 
     void placeRingVertex(int stitch, const Stadium& st, Real u, Real y, Real zs) {

@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <memory>
 #include <vector>
 
 #include "check.hpp"
@@ -55,6 +56,97 @@ int main() {
     if (acrylic == nullptr) FINISH();
     const char* shotDir = std::getenv("FL_SCENE_SHOTS");
 
+    // --- 7.4 test 1: strap stretch, analytic. A 5 sc x 60 row strip, top held, a 1 kg weight on the bottom row
+    {
+        StitchGraph sg;
+        auto addRow = [&](bool turned) {
+            Row r;
+            r.id = static_cast<int>(sg.rows.size());
+            r.piece = "main";
+            r.kind = "row";
+            r.turned = turned;
+            sg.rows.push_back(r);
+            return r.id;
+        };
+        auto addSt = [&](const char* type, int row, std::vector<int> targets) {
+            Stitch st;
+            st.id = static_cast<int>(sg.st.size());
+            st.type = type;
+            st.piece = "main";
+            st.row = row;
+            for (const Stitch& q : sg.st) st.index += q.row == row;
+            st.index += 1;
+            st.loop = std::string(type) == "ch" ? "space" : "both";
+            st.loopRs = st.loop;
+            st.targets = std::move(targets);
+            st.prev = sg.st.empty() ? -1 : static_cast<int>(sg.st.size()) - 1;
+            sg.st.push_back(st);
+            return st.id;
+        };
+        const int cols = 5, rows = 60;
+        const int r0 = addRow(true);
+        for (int i = 0; i <= cols; ++i) addSt("ch", r0, {});
+        std::vector<int> prev;
+        for (int c = cols - 1; c >= 0; --c) prev.push_back(c);
+        for (int r = 1; r <= rows; ++r) {
+            const int row = addRow(true);
+            std::vector<int> cur;
+            if (r > 1) addSt("ch", row, {});
+            for (int c = 0; c < cols; ++c) cur.push_back(addSt("sc", row, {r == 1 ? prev[c] : prev[cols - 1 - c]}));
+            prev = cur;
+        }
+        ModelOptions mo2;
+        CrochetModel sm = buildCrochetModel(sg, *acrylic, mo2);
+        layoutModel(sm, sg);
+        // the weight: 1 kg shared by the 5 stitch tops of the bottom row (each vertex is a stitch cell)
+        const Real boxKg = 1.0;
+        int bottomRow = rows;
+        std::vector<int> bottom, top;
+        for (const Stitch& st : sg.st) {
+            const int v = sm.topo.stitchVertex[st.id];
+            if (v < 0) continue;
+            if (st.row == bottomRow) bottom.push_back(v);
+            if (st.row == 0) top.push_back(v);
+        }
+        for (const int v : bottom) sm.mesh.extraMass[v] += boxKg / bottom.size();
+        SolverParams sp;
+        sp.newtonIterations = 30;
+        std::unique_ptr<ClothSolver> solver = makeSolver(sm, sp);
+        for (const int v : top) solver->pinVertex(v);
+        int calm = 0, frames = 0;
+        while (frames < 2000 && calm < 30) {
+            solver->step();
+            ++frames;
+            calm = solver->kineticEnergy() < 1e-10 ? calm + 1 : 0;
+        }
+        Real yTop = 0, yBottom = 0;
+        for (const int v : top) yTop += solver->positions()[v].y / top.size();
+        for (const int v : bottom) yBottom += solver->positions()[v].y / bottom.size();
+        const Real simulated = (yTop - yBottom) - rows * sm.dims[sg.st[6].id].h;
+        // analytic: row r carries the box plus the yarn below it; strain from the J-curve (plan 2.3)
+        const StitchMech mech = stitchMech(*acrylic, mo2.hook_m, 1.0, StitchType::Sc, Insertion::Both, nullptr);
+        // The mesh has one vertex per stitch top, so a strip of 5 stitches is 4 cells wide: the width that carries the load is
+        // (cols - 1) w. (The half stitch at each free edge carries nothing in this model: the same load on the 5 w of the
+        // fabric would give a 4 % smaller elongation in the stiff branch, up to 25 % in the soft one; see reports/T6.2.md.)
+        const Real wStrip = (cols - 1) * sm.dims[sg.st[6].id].w, hRow = sm.dims[sg.st[6].id].h;
+        Real rowMass = 0;  // yarn of one row: 5 sc and the turning chain
+        for (const Stitch& st : sg.st)
+            if (st.row == 2) rowMass += sm.dims[st.id].yarnLen * acrylic->lambda() * 1e-3;
+        Real analytic = 0;
+        for (int r = 1; r <= rows; ++r) {
+            const Real below = (rows - r) * rowMass + 0.5 * rowMass;  // rows below this row plus half of its own
+            const Real T = (boxKg + below) * 9.81 / wStrip;           // N/m
+            const Real kLock = mech.kWale * mech.lockWale;
+            const Real eps = T <= kLock ? T / mech.kWale : mech.lockWale + (T - kLock) / (mech.lockRatio * mech.kWale);
+            analytic += eps * hRow;
+        }
+        std::printf("   strap: %d frames, KE %.1e J; T at the bottom %.1f N/m over the %.1f mm of mesh width (lock at %.1f N/m), strain there %.3f\n", frames, solver->kineticEnergy(), boxKg * 9.81 / wStrip, wStrip * 1e3,
+                    mech.kWale * mech.lockWale, mech.lockWale + (boxKg * 9.81 / wStrip - mech.kWale * mech.lockWale) / (mech.lockRatio * mech.kWale));
+        std::printf("   strap: simulated elongation %.3f mm, analytic %.3f mm (%.2f %%), calm %d\n", simulated * 1e3, analytic * 1e3, 100 * (simulated / analytic - 1), calm);
+        CHECKP(calm >= 30 && std::fabs(simulated / analytic - 1) < 0.03, "strap 5 x 60 under 1 kg: elongation %.2f mm vs analytic %.2f mm within 3 %% (%.2f %%)", simulated * 1e3, analytic * 1e3,
+               100 * (simulated / analytic - 1));
+    }
+
     // the relaxed pouch, shared by the scenes
     StitchGraph g = loadFixture("pouch");
     ModelOptions mo;
@@ -92,11 +184,13 @@ int main() {
                "tilted model: hung by the strap (pins at x = %.1e, z = %.1e), the body %.1f cm below the pins", pin.x, pin.z, (pin.y - body.y) * 100);
     }
 
+    std::unique_ptr<CrochetScene> pinScene;  // the settled hang_pin pouch, kept for the load test
     for (const SceneKind kind : {SceneKind::HangPin, SceneKind::HangPeg}) {
         const bool pin = kind == SceneKind::HangPin;
         SceneOptions so;
         so.kind = kind;
-        CrochetScene scene(cm, g, layout, so);
+        auto scenePtr = std::make_unique<CrochetScene>(cm, g, layout, so);
+        CrochetScene& scene = *scenePtr;
         const std::vector<Vec3> start = scene.solver().positions();
         const SceneStats st = scene.settle();
         const Shape sh = shapeOf(scene.solver().positions());
@@ -119,6 +213,67 @@ int main() {
             CHECKP(moved < 1e-9, "pouch hang_pin: the pinned rows did not move (%.1e m)", moved);
         }
         if (shotDir != nullptr) writeSnapshotPng(std::string(shotDir) + "/pouch_" + name + ".png", scene.solver().positions(), cm.mesh.tris);
+        if (pin) pinScene = std::move(scenePtr);
     }
+
+    // --- 7.4 test 2: force balance. A 0.3 kg phone-sized box in the pouch hung by the pin: the pins carry the weight of the
+    // cloth plus the box (the pin reactions are the gradient of the potential energy of the constraints; the box rests on
+    // the cloth through contact forces, which are external to it)
+    {
+        const LoadSpec phone = loadPreset("box:70x140x9_mm:0.3");
+        const FitResult fit = fitCheck(cm, g, layout, phone);
+        CHECKP(fit.known && fit.fits && fit.tight, "pouch + 70 x 140 x 9 mm phone: %s", fit.message.c_str());
+        RigidLoad load(*pinScene, phone);
+        const bool inserted = load.insert();
+        CHECKP(inserted, "phone inserted in %d frames (%s)", load.stats().insertFrames, load.stats().stopReason.c_str());
+        const bool released = load.release();
+        const LoadStats& ls = load.stats();
+        CHECKP(released && ls.netForceFraction < 0.02, "phone released: settled in %d frames, |F_net| = %.3f of its weight, speed %.2f mm/s", ls.releaseFrames, ls.netForceFraction, ls.speed * 1e3);
+        const std::vector<Vec3> reactions = pinScene->pinReactions();
+        Real sumY = 0;
+        for (const Vec3& r : reactions) sumY += r.y;
+        Real mCloth = 0;
+        for (int v = 0; v < pinScene->solver().vertexCount(); ++v) mCloth += pinScene->solver().vertexMass(v);
+        const Real expected = (mCloth + phone.mass) * 9.81;
+        CHECKP(std::fabs(sumY / expected - 1) < 0.02, "force balance: pin reactions %.4f N = (cloth %.4f kg + box %.3f kg) g = %.4f N within 2 %% (%.2f %%)", sumY, mCloth, phone.mass, expected,
+               100 * (sumY / expected - 1));
+        const ClothSolver& sv = pinScene->solver();
+        Real rim = 0;
+        for (const int v : pinScene->mouth()) rim += sv.positions()[v].y / pinScene->mouth().size();
+        const Real top = load.center().y + 0.5 * phone.height;
+        CHECKP(std::fabs(load.center().x) < 0.02 && std::fabs(load.center().z) < 0.02 && top < rim + 0.01,
+               "phone sits in the pouch: centre (%.1f, %.1f) mm off axis, its top %.1f mm below the rim", load.center().x * 1e3, load.center().z * 1e3, (rim - top) * 1e3);
+        CHECKP(pinScene->solver().selfIntersections() == 0 && pinScene->solver().contactDiag().iterCapHits * 100 < pinScene->solver().contactDiag().substeps,
+               "loaded pouch: %d self intersections, Newton cap in %lld of %lld substeps", pinScene->solver().selfIntersections(), pinScene->solver().contactDiag().iterCapHits,
+               pinScene->solver().contactDiag().substeps);
+        if (shotDir != nullptr) writeSnapshotPng(std::string(shotDir) + "/pouch_phone.png", pinScene->solver().positions(), cm.mesh.tris);
+    }
+
+    // --- 7.4 test 4: the fit check. The pouch cannot take a MacBook Air 13; the bag of section 11.2 can
+    {
+        const FitResult pouchFit = fitCheck(cm, g, layout, loadPreset("mba13"));
+        CHECKP(pouchFit.known && !pouchFit.fits && pouchFit.shortfall > 0.15, "pouch + MBA13: fits = false, %s", pouchFit.message.c_str());
+        StitchGraph bagG = loadFixture("bag_round_plain");
+        ModelOptions bo;
+        bo.hook_m = 4.5e-3;
+        CrochetModel bagCm = buildCrochetModel(bagG, *book.find("cotton_worsted"), bo);
+        const LayoutReport bagLayout = layoutModel(bagCm, bagG);
+        const FitResult bagFit = fitCheck(bagCm, bagG, bagLayout, loadPreset("mba13"));
+        CHECKP(bagFit.known && bagFit.fits && !bagFit.tight, "bag + MBA13: fits = true, %s", bagFit.message.c_str());
+        const FitResult mbp16 = fitCheck(bagCm, bagG, bagLayout, loadPreset("mbp16"));
+        std::printf("   bag + MBP16: %s\n", mbp16.message.c_str());
+        // rest inside of the bag: half the 114-stitch circumference, and 41 wall rounds + the base
+        const StitchDims scd = bagCm.dims[bagG.st[60].id];
+        CHECKP(std::fabs(bagFit.innerWidth / (57 * scd.w) - 1) < 1e-6 && bagFit.innerDepth > 0.20 && bagFit.innerDepth < 0.27,
+               "bag inside: %.1f cm wide (57 stitch widths), %.1f cm deep", bagFit.innerWidth * 100, bagFit.innerDepth * 100);
+        bool threw = false;
+        try { loadPreset("laptop"); } catch (const std::invalid_argument&) { threw = true; }
+        bool threw2 = false;
+        try { loadPreset("box:12x34_mm:1"); } catch (const std::invalid_argument&) { threw2 = true; }
+        const LoadSpec custom = loadPreset("box:300x200x10_mm:1.5");
+        CHECKP(threw && threw2 && std::fabs(custom.width - 0.3) < 1e-12 && std::fabs(custom.mass - 1.5) < 1e-12 && custom.cornerRadius <= 0.5 * custom.thickness,
+               "load presets: unknown names and malformed boxes throw, box:300x200x10_mm:1.5 parses");
+    }
+
     FINISH();
 }
