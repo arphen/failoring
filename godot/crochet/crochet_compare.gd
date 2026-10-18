@@ -7,6 +7,7 @@ extends Control
 const Studio = preload("res://studio.gd")
 const Look = preload("res://look.gd")
 const Cloth = preload("res://crochet/crochet_cloth.gd")
+const Orbit = preload("res://crochet/crochet_orbit.gd")
 const YARNS_PATH := "res://materials/yarns.json"
 const SPACING := 0.5
 const HANG_Y := 1.35
@@ -52,6 +53,8 @@ var _use_worker := true
 var _stop := false
 var sub_view: SubViewport
 var stage: Node3D
+var orbit := Orbit.new()   # the camera (crochet_orbit.gd), the same as in the editor
+var view_container: SubViewportContainer
 var cam_pivot: Node3D
 var cam: Camera3D
 var table_text: RichTextLabel
@@ -60,11 +63,6 @@ var status_label: Label
 var b_pattern: OptionButton
 var b_yarn: OptionButton
 var b_hook: SpinBox
-var _yaw := 0.25
-var _pitch := -0.12
-var _dist := 2.2
-var _target := Vector3(0, 1.0, 0)
-var _dragging := false
 var _fixtures: Array = []
 var _yarn_ids: Array = []
 
@@ -162,6 +160,10 @@ func _build_ui() -> void:
 	sub_view.own_world_3d = true
 	vc.add_child(sub_view)
 	vc.gui_input.connect(_on_view_input)
+	view_container = vc
+	vc.resized.connect(func() -> void:
+		if orbit.cam != null and not orbit.user_moved:
+			_place_slots())   # the pane's shape decides how far back the camera must stand
 	split.add_child(vc)
 	stage = Node3D.new()
 	sub_view.add_child(stage)
@@ -171,12 +173,14 @@ func _build_ui() -> void:
 	stage.add_child(env)
 	var studio := Studio.build(stage)
 	env.environment.sky = studio["sky"]
-	cam_pivot = Node3D.new()
-	stage.add_child(cam_pivot)
-	cam = Camera3D.new()
-	Look.camera(cam)
-	cam_pivot.add_child(cam)
-	_apply_camera()
+	for fx in studio["fixtures"]:   # the lamps still light the piece; their stands are not in its way (the editor hides them too)
+		(fx as Node3D).visible = false
+	orbit.setup(stage, Look)
+	orbit.yaw = 0.25
+	orbit.pitch = -0.12
+	cam_pivot = orbit.pivot
+	cam = orbit.cam
+	_place_slots()
 	var right := VBoxContainer.new()
 	right.custom_minimum_size = Vector2(660, 0)
 	split.add_child(right)
@@ -203,27 +207,8 @@ func _list_fixtures() -> Array:
 func _repo_root() -> String:
 	return ProjectSettings.globalize_path("res://").path_join("..").simplify_path()
 
-func _apply_camera() -> void:
-	cam_pivot.position = _target
-	cam_pivot.rotation = Vector3(_pitch, _yaw, 0)
-	cam.position = Vector3(0, 0, _dist)
-
 func _on_view_input(event: InputEvent) -> void:
-	if event is InputEventMouseButton:
-		var mb := event as InputEventMouseButton
-		if mb.button_index == MOUSE_BUTTON_LEFT or mb.button_index == MOUSE_BUTTON_RIGHT:
-			_dragging = mb.pressed
-		elif mb.button_index == MOUSE_BUTTON_WHEEL_UP and mb.pressed:
-			_dist = maxf(0.4, _dist * 0.9)
-			_apply_camera()
-		elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN and mb.pressed:
-			_dist = minf(12.0, _dist / 0.9)
-			_apply_camera()
-	elif event is InputEventMouseMotion and _dragging:
-		var mm := event as InputEventMouseMotion
-		_yaw -= mm.relative.x * 0.006
-		_pitch = clampf(_pitch - mm.relative.y * 0.006, -1.4, 1.4)
-		_apply_camera()
+	orbit.handle(event, view_container.size)
 
 # ------------------------------------------------------------------------------------------------ slots
 
@@ -274,9 +259,10 @@ func _place_slots() -> void:
 	for i in n:
 		slots[i].node.position = Vector3((i - 0.5 * (n - 1)) * SPACING, 0, 0)
 		slots[i].tag.position = Vector3(0, HANG_Y + 0.12, 0)
-	_dist = maxf(2.4, 1.2 + n * 0.75)
-	_target = Vector3(0, 1.0, 0)
-	_apply_camera()
+	# the camera takes in the row of pieces, from the hang point down to a bag's depth
+	var half := maxf(0.0, 0.5 * (n - 1)) * SPACING + 0.3
+	if not orbit.user_moved:
+		orbit.frame(Vector3(-half, HANG_Y - 0.55, -0.3), Vector3(half, HANG_Y + 0.2, 0.3), float(view_container.size.x) / maxf(1.0, float(view_container.size.y)))
 
 func slot_offset(i: int) -> Vector3:
 	return slots[i].node.position

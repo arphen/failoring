@@ -328,3 +328,20 @@ acceptance, with the measured numbers. Honest numbers; "not measured" where not 
   matches the measured one. Known bendScale 0.1, 0.3, 0.6 (rest 0) and 0.2 (rest 60) are recovered within 0.1 % from their simulated droops (bar 5 %),
   11-13 runs of about 1 s. Wizard step 5 stores `hinge.<construction>` in the record. One finding: a KE-based stop is too early for heavily damped
   creeping runs (see the T9.2 report); the droop run stops on the droop. `test_crochet_hinge_fit` (new), `crochet_calibrate_check` 33 PASS.
+
+### 2026-10-18 — viewer fixes: cameras and lamps (user report from a first hands-on session)
+
+* **Editor 3D view off-centre** (the user: "the camera poses totally miss the object, offset to the left"). Not the camera: the 3D image
+  (`TextureRect`) could not be smaller than its texture, and the texture renders at on-screen pixels, so at a window scale above 1 (1600 x 900: 1.15x)
+  the image overflowed its pane, anchored top left, and the subject came out low and to the right and cropped. `expand_mode = EXPAND_IGNORE_SIZE`.
+  `camera_check` has the case (a viewport 25 % larger than the pane); the mutant without the fix fails it.
+* **Lamps did nothing.** The "Lamps" button only showed the stands; the lights were on all along. Now a menu: one switch per lamp (light, glow of its
+  diffuser, its share of the studio sky: `Studio.set_lamp`), "all on / all off", and "show lamps and stands". A lamp switched off keeps 2 % of its
+  energy (`Studio.LAMP_FLOOR`): with every spot at exactly 0 the SDFGI turned the whole room black, windows and bulbs too (found by
+  `tests/look_shot.gd`, new `FL_LAMPS_OFF`). `look_check` 4 new, `camera_check` 6 new.
+* **Crochet camera** (the user: "horrible, the zoom is all messed up, the fov feels claustrophobic"). `crochet/crochet_orbit.gd`, shared by the editor
+  and the compare overlay (which had two copies of the same flawed one): 55 degrees vertical instead of the studio's 27 degree lens; framing fits the
+  bounding sphere to the pane's shape (it ignored the pane, so a tall pouch with its strap was cut off); the wheel is a constant ratio per notch and
+  zooms towards the pointer; right / middle / shift+left drag pans; pinch zooms and two-finger scroll pans (as in the editor); near plane 1 cm (was 5);
+  the camera stays in the room; a finished run no longer reframes over a camera the user set (new "Fit" button frames the piece again); the lamp
+  stands are hidden. `crochet_orbit_check` (new, 29), `crochet_scene_check` and `crochet_compare_check` pass; 3 mutants killed.

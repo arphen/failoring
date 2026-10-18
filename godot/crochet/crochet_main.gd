@@ -11,6 +11,7 @@ const YARNS_PATH := "res://materials/yarns.json"
 const COMPILE_DELAY := 0.4
 const Cloth = preload("res://crochet/crochet_cloth.gd")
 const Records = preload("res://crochet/crochet_records.gd")
+const Orbit = preload("res://crochet/crochet_orbit.gd")
 const HANG_Y := 1.35    # the hang point is put this high in the studio (metres)
 
 # ---- state
@@ -52,6 +53,7 @@ var chart_holder: Control
 var view_container: SubViewportContainer
 var sub_view: SubViewport
 var stage: Node3D
+var orbit := Orbit.new()   # the camera: pose, limits, mouse and trackpad handling (crochet_orbit.gd)
 var cam_pivot: Node3D
 var cam: Camera3D
 var cloth_node: MeshInstance3D
@@ -60,12 +62,8 @@ var _mat_ws: ShaderMaterial
 var load_node: MeshInstance3D
 var peg_node: MeshInstance3D
 var _debounce: Timer
-var _yaw := 0.4
-var _pitch := -0.15
-var _dist := 1.4
-var _target := Vector3(0, 1.0, 0)
-var _dragging := false
-var _press_pos := Vector2.ZERO
+var _frame_lo := Vector3(1, 1, 1)    # the box the camera last framed (the Fit button frames it again); empty until the first one
+var _frame_hi := Vector3(-1, -1, -1)
 var selection := PackedInt32Array()           # the selected stitch ids (a stitch, or all the stitches of a pattern line)
 var _synced_line := -1                        # the editor line we moved the caret to ourselves; its caret event is not a user's click
 var _stitch_of_vertex := PackedInt32Array()
@@ -210,11 +208,11 @@ func _build_top_bar() -> Control:
 		var b := _small(v[0])
 		var yaw: float = v[1]
 		var pitch: float = v[2]
-		b.pressed.connect(func() -> void:
-			_yaw = yaw
-			_pitch = pitch
-			_apply_camera())
+		b.pressed.connect(func() -> void: orbit.set_view(yaw, pitch))
 		bar.add_child(b)
+	var fit := _small("Fit", "Frame the whole piece again. Mouse: left-drag orbits, right-drag or shift+left-drag pans, the wheel zooms towards the pointer")
+	fit.pressed.connect(fit_view)
+	bar.add_child(fit)
 	var back := _small("Back to editor")
 	back.pressed.connect(func() -> void: get_tree().change_scene_to_file("res://editor.tscn"))
 	bar.add_child(back)
@@ -326,11 +324,11 @@ func _build_view() -> Control:
 	stage.add_child(env)
 	var studio := Studio.build(stage)
 	env.environment.sky = studio["sky"]
-	cam_pivot = Node3D.new()
-	stage.add_child(cam_pivot)
-	cam = Camera3D.new()
-	Look.camera(cam)
-	cam_pivot.add_child(cam)
+	for fx in studio["fixtures"]:   # the lamps still light the piece; their stands are not in its way (the editor hides them too)
+		(fx as Node3D).visible = false
+	orbit.setup(stage, Look)
+	cam_pivot = orbit.pivot
+	cam = orbit.cam
 	cloth_node = MeshInstance3D.new()
 	_mat_rs = Cloth.make_material(0.0)
 	_mat_ws = Cloth.make_material(1.0)
@@ -342,7 +340,6 @@ func _build_view() -> Control:
 	peg_node.visible = false
 	stage.add_child(peg_node)
 	view_container.gui_input.connect(_on_view_input)
-	_apply_camera()
 	return view_container
 
 # the yarn's fibre look on both shells
@@ -375,32 +372,8 @@ func _build_right() -> Control:
 
 # ------------------------------------------------------------------------------------------------ camera
 
-func _apply_camera() -> void:
-	cam_pivot.position = _target
-	cam_pivot.rotation = Vector3(_pitch, _yaw, 0)
-	cam.position = Vector3(0, 0, _dist)
-
 func _on_view_input(event: InputEvent) -> void:
-	if event is InputEventMouseButton:
-		var mb := event as InputEventMouseButton
-		if mb.button_index == MOUSE_BUTTON_LEFT or mb.button_index == MOUSE_BUTTON_RIGHT:
-			_dragging = mb.pressed
-			if mb.button_index == MOUSE_BUTTON_LEFT:
-				if mb.pressed:
-					_press_pos = mb.position
-				elif mb.position.distance_to(_press_pos) < 4.0:   # a click, not a camera drag
-					pick_at(mb.position)
-		elif mb.button_index == MOUSE_BUTTON_WHEEL_UP and mb.pressed:
-			_dist = maxf(0.3, _dist * 0.9)
-			_apply_camera()
-		elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN and mb.pressed:
-			_dist = minf(8.0, _dist / 0.9)
-			_apply_camera()
-	elif event is InputEventMouseMotion and _dragging:
-		var mm := event as InputEventMouseMotion
-		_yaw -= mm.relative.x * 0.006
-		_pitch = clampf(_pitch - mm.relative.y * 0.006, -1.4, 1.4)
-		_apply_camera()
+	orbit.handle(event, view_container.size, pick_at)
 
 # ------------------------------------------------------------------------------------------------ pattern text and compile
 
@@ -822,7 +795,8 @@ func _run_job(n: int) -> void:
 	sim.step(n)
 
 func _finish_run() -> void:
-	if sim != null and sim.get_positions().size() > 0:
+	# the settled piece may be taller than the one that was laid down: frame it again, unless the user has set the camera themselves
+	if sim != null and sim.get_positions().size() > 0 and not orbit.user_moved:
 		_frame_camera(sim.get_positions())
 	_running = false
 	run_btn.disabled = pattern == null
@@ -868,10 +842,15 @@ func _frame_camera(pos: PackedVector3Array) -> void:
 	for p in pos:
 		lo = lo.min(p)
 		hi = hi.max(p)
-	var size := (hi - lo).length()
-	_target = (lo + hi) * 0.5 + Vector3(0, _y_offset, 0)
-	_dist = maxf(0.9, size * 2.6)
-	_apply_camera()
+	_frame_lo = lo + Vector3(0, _y_offset, 0)
+	_frame_hi = hi + Vector3(0, _y_offset, 0)
+	fit_view()
+
+# Frames the piece again, whatever the user did with the camera.
+func fit_view() -> void:
+	if _frame_hi.x < _frame_lo.x:
+		return
+	orbit.frame(_frame_lo, _frame_hi, float(view_container.size.x) / maxf(1.0, float(view_container.size.y)))
 
 func _update_props() -> void:
 	Cloth.place_props(sim, load_node, peg_node, Vector3(0, _y_offset, 0))

@@ -206,14 +206,24 @@ func _scene_selection_checks(c) -> void:
 	var p3: Vector3 = c.last_vertices[c._vertex_of_stitch[row3]]
 	check("pick: a ray from the front through a row 3 vertex finds its stitch (%d)" % row3, c.pick_ray(p3 + Vector3(0, 0, 1), Vector3(0, 0, -1)) == row3)
 	check("pick: a ray that misses the cloth finds nothing", c.pick_ray(Vector3(0, 0, 5), Vector3(0, 0, 1)) == -1)
-	c._yaw = 0.0   # an earlier check left the camera on the side view, edge-on to the flat pouch
-	c._pitch = 0.0
-	c._apply_camera()
+	c.orbit.set_view(0.0, 0.0)   # an earlier check left the camera on the side view, edge-on to the flat pouch
 	var at: Vector2 = c.cam.unproject_position(p3)
 	var got: int = c.pick_at(at)
 	check("pick: a click on the point where the camera sees that vertex selects it (%d, selection %s)" % [got, c.selection], got == row3 and c.selection == PackedInt32Array([row3]) and c.editor.get_caret_line() + 1 == int(ch.symbols[row3]["line"]))
 	c.pick_at(Vector2(-2000, -2000))
 	check("pick: a click beside the cloth clears the selection", c.selection.size() == 0 and c.highlight_vertices().size() == 0)
+	# camera: the user's zoom survives the end of a run, and Fit frames the piece again
+	c.orbit.zoom_at(2.0, Vector2(100, 100), c.view_container.size)
+	var d_zoomed: float = c.orbit.dist
+	var tgt_before: Vector3 = c.orbit.target
+	c._finish_run()
+	check("camera: a finished run does not reframe over the user's own camera", c.orbit.user_moved and is_equal_approx(c.orbit.dist, d_zoomed) and c.orbit.target == tgt_before)
+	for b in c.find_children("*", "Button", true, false):
+		if (b as Button).text == "Fit":
+			(b as Button).pressed.emit()
+	check("camera: Fit frames the piece again (distance %.2f -> %.2f)" % [d_zoomed, c.orbit.dist], c.orbit.dist < d_zoomed * 0.9 and not c.orbit.user_moved)
+	c._finish_run()
+	check("camera: a finished run frames the settled piece when the user has not touched the camera", not c.orbit.user_moved)
 
 # chart view (plan T8.1): one symbol per stitch, placed with row 1 at the bottom, hover/click/zoom
 func _chart_checks(c) -> void:
@@ -320,11 +330,11 @@ func _ready() -> void:
 	check("scene menu: hang from hook = hang_peg, hang from hand = hang_pin", c.scene_opt.get_item_metadata(0) == "hang_peg" and c.scene_opt.get_item_metadata(1) == "hang_pin")
 	check("load menu: 5 entries, none first, MBA13 second", c.load_opt.item_count == 5 and c.load_opt.get_item_metadata(0) == "none" and c.load_opt.get_item_metadata(1) == "mba13")
 	check("a circle cannot hang (no strap): the run is refused with a message", not c.start_run("hang_pin", "none") and c.error_text().contains("strap"))
-	var yaw_before: float = c._yaw
+	var yaw_before: float = c.orbit.yaw
 	for b in c.find_children("*", "Button", true, false):
 		if (b as Button).text == "Side":
 			(b as Button).pressed.emit()
-	check("camera buttons move the camera (yaw %.2f -> %.2f)" % [yaw_before, c._yaw], abs(c._yaw - yaw_before) > 0.1)
+	check("camera buttons move the camera (yaw %.2f -> %.2f)" % [yaw_before, c.orbit.yaw], abs(c.orbit.yaw - yaw_before) > 0.1)
 	check("Open and Save as exist and open dialogs", c.find_children("*", "Button", true, false).any(func(b): return (b as Button).text == "Open") and c.find_children("*", "Button", true, false).any(func(b): return (b as Button).text == "Save as"))
 	var ed_src := FileAccess.get_file_as_string("res://editor.gd")
 	check("the editor has the Crochet button that opens res://crochet/crochet.tscn", ed_src.contains("CrochetBtn") and ed_src.contains("res://crochet/crochet.tscn") and load("res://editor.gd") != null)
