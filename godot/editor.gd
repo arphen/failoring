@@ -4573,6 +4573,7 @@ func _show_view_texture() -> void:
 	view_image = TextureRect.new()
 	view_image.name = "Image"
 	view_image.texture = sub_view.get_texture()
+	view_image.expand_mode = TextureRect.EXPAND_IGNORE_SIZE   # else the rect cannot be smaller than the texture: it overflowed the pane (up to 1.15x at 1600x900) and the view looked off-centre and cropped
 	view_image.stretch_mode = TextureRect.STRETCH_SCALE
 	view_image.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	view_image.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -4689,17 +4690,7 @@ func _build_view_chips() -> Control:
 		stb.pressed.connect(func() -> void: _stage_button(mode))
 		flow.add_child(stb)
 	flow.add_child(VSeparator.new())
-	var gear := Button.new()
-	gear.name = "GearBtn"
-	gear.text = "Lamps"
-	gear.toggle_mode = true
-	gear.button_pressed = false
-	gear.focus_mode = Control.FOCUS_NONE
-	gear.add_theme_font_size_override("font_size", 12)
-	gear.tooltip_text = "Show the photographer's lamps and stands (key softbox, fill, rims). The light stays; only the fixtures are hidden."
-	gear.toggled.connect(func(on: bool) -> void: _show_gear(on))
-	flow.add_child(gear)
-	_show_gear(false)
+	flow.add_child(_build_lamps_menu())
 	return panel
 
 
@@ -4719,7 +4710,76 @@ func _stage_button(mode: int) -> void:
 		set_stage("", mode == 1)
 
 
-# The softboxes, strips and the V-flat are lamps of a photo studio: hidden by default, the atelier is lit by the same lights.
+# The softboxes, strips and the V-flat are the lamps of a photo studio. The menu switches each one on or off (its light, the glow of
+# its diffuser and its share of the sky: the picture changes) and shows or hides their fixtures, which are hidden by default so
+# that they are not in the way of the camera. The room's own lights (pendants, windows) stay on.
+const LAMP_SHOW_ID := 100
+const LAMP_ALL_ON_ID := 101
+const LAMP_ALL_OFF_ID := 102
+var lamp_on := {}                  # lamp id -> is it on
+var _lamps_menu: MenuButton
+
+
+func _build_lamps_menu() -> MenuButton:
+	var mb := MenuButton.new()
+	mb.name = "LampsMenu"
+	mb.text = "Lamps"
+	mb.flat = false   # a MenuButton is flat by default; the chips beside it are not
+	mb.focus_mode = Control.FOCUS_NONE
+	mb.add_theme_font_size_override("font_size", 12)
+	mb.tooltip_text = "Switch the photographer's lamps on and off (key softbox, fill, rims, top light), and show their stands. The room's own lights stay on."
+	var pm := mb.get_popup()
+	pm.hide_on_checkable_item_selection = false
+	pm.add_theme_font_size_override("font_size", 13)
+	pm.add_check_item("Show lamps and stands", LAMP_SHOW_ID)
+	pm.add_separator()
+	for i in Studio.LAMPS.size():
+		var lamp: Dictionary = Studio.LAMPS[i]
+		lamp_on[String(lamp["id"])] = true
+		pm.add_check_item(String(lamp["label"]), i)
+		pm.set_item_checked(pm.get_item_index(i), true)
+	pm.add_separator()
+	pm.add_item("All lamps on", LAMP_ALL_ON_ID)
+	pm.add_item("All lamps off", LAMP_ALL_OFF_ID)
+	pm.id_pressed.connect(_on_lamps_menu)
+	_lamps_menu = mb
+	_show_gear(false)
+	if OS.has_environment("FL_GEAR"):   # look work: start with the lamps shown
+		_on_lamps_menu(LAMP_SHOW_ID)
+	if OS.has_environment("FL_LAMPS_OFF"):   # look work: FL_LAMPS_OFF=key,rim_l starts with those lamps off
+		for lid in OS.get_environment("FL_LAMPS_OFF").split(","):
+			if lamp_on.has(lid):
+				set_lamp_on(String(lid), false)
+	return mb
+
+
+func _on_lamps_menu(id: int) -> void:
+	var pm := _lamps_menu.get_popup()
+	if id == LAMP_SHOW_ID:
+		var show := not pm.is_item_checked(pm.get_item_index(id))
+		pm.set_item_checked(pm.get_item_index(id), show)
+		_show_gear(show)
+	elif id == LAMP_ALL_ON_ID or id == LAMP_ALL_OFF_ID:
+		for lamp in Studio.LAMPS:
+			set_lamp_on(String(lamp["id"]), id == LAMP_ALL_ON_ID)
+	elif id >= 0 and id < Studio.LAMPS.size():
+		var lid := String(Studio.LAMPS[id]["id"])
+		set_lamp_on(lid, not bool(lamp_on.get(lid, true)))
+
+
+# Switches the lamp `id` (a Studio.LAMPS id) on or off and keeps the menu's tick in step.
+func set_lamp_on(id: String, on: bool) -> void:
+	if studio.is_empty() or not lamp_on.has(id):
+		return
+	lamp_on[id] = on
+	Studio.set_lamp(studio, id, on)
+	if _lamps_menu != null:
+		var pm := _lamps_menu.get_popup()
+		for i in Studio.LAMPS.size():
+			if String(Studio.LAMPS[i]["id"]) == id:
+				pm.set_item_checked(pm.get_item_index(i), on)
+
+
 func _show_gear(on: bool) -> void:
 	if studio.is_empty():
 		return
