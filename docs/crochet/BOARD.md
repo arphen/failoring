@@ -45,7 +45,7 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
 | T5.3 | Layouts (flat, fold, revolve, attached, arc; CP positions if A/B) | T5.2 | done | default | 1 | aa2b4bc (merged ea7c26d) | 11 PNGs under docs/crochet-shots/layout/; native layout (no CP positions); 9 mutations caught |
 | T5.4 | Relaxation + mesh tests | T5.3 | done | default | 1 | 8da3456 (merged 1564b8d) | ★ §6.10 tests 1,2,3,5: swatch 130.00 x 120.00 mm; circle +6 flat 0.00 %, +5 cup 43 %, +8 ruffle; hinge +25.6 / -25.7 deg; pouch seam gap 0.58 mm; 6 mutations caught |
 | T6.1 | Scenes hang_pin, hang_peg, settle loop | T5.4 | done | default | 1 | d8b0ca0 (merged 7ad26f5) | §7.4 test 3 for the pouch: settles in 239 / 276 frames, Newton cap 0, 0 self intersections, peg clearance +3.88 mm; 3 mutations caught |
-| T6.2 | RigidLoad: insert, release, fit check | T6.1, T1.6, T1.4 | todo | | 0 | | ★ §7.4 tests 1, 2, 4 |
+| T6.2 | RigidLoad: insert, release, fit check | T6.1, T1.6, T1.4 | done | default | 1 | 9fbb244 (merged 1f4edbd) | ★ §7.4 tests 1, 2, 4: strap +0.30 %, force balance +0.62 %, pouch+MBA13 fits=false, bag+MBA13 fits=true; 4 mutations caught |
 | T6.3 | Metrics | T6.1 | todo | | 0 | | §7.5 keys; 90° fold reads 90±1 |
 | T6.4 | crochet_cli + PNG snapshots | T6.3 | todo | | 0 | | all fixtures via CLI; PNGs in docs/crochet-shots/ |
 | T6.5 | Five-variant report (USER GATE §14.9) | T6.2, T6.4 | todo | | 0 | | table + snapshots in CROCHET_STATUS.md |
@@ -146,3 +146,10 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
   `kWsFoldSign = -1` (BLO turns +25.6 deg toward the WS, FLO -25.7).
 * 2026-10-18 — T6.1: "up" = body centroid -> middle of the strap; hang_pin pins the two middle strap rows; hang_peg puts the
   capsule INSIDE the strap loop 2 cm under its inner apex (the plan's "2 cm above the strap's top" cannot hang a strap).
+* 2026-10-18 — T6.2: the plan's release damping c = 8/s leaves the box bobbing +-2 cm on the pouch (the cloth + strap is a soft spring
+  and the explicit coupling lags); 80/s settles (contact -> weight), now the default. Newton budget 60 once a load is in.
+  Rounded-box corner radius = min(10 mm, 0.9 x half thickness) (a rounded box needs r < half its thickness).
+  **OPEN (free-edge half cells):** the mesh has one vertex per stitch top, so a strip of n stitches is n-1 cells wide and the
+  half stitch at each free edge carries no load: a 5-wide strap is 4/5 as strong (elongation +4 % in the stiff branch, up to
+  +25 % in the soft one). Test 1's analytic uses the load-bearing mesh width (n-1) w. A stiffer boundary-triangle correction
+  would fix it; not done (affects only narrow straps).

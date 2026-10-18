@@ -12,7 +12,7 @@ acceptance, with the measured numbers. Honest numbers; "not measured" where not 
 | 3 | Stitch model (§4) | gauge sanity and monotonicity tests | done (T3.1, 2026-10-16) |
 | 4 | DSL + graph (§5) | all fixtures compile with the stated counts, error-message tests | done (T4.0-T4.2, 2026-10-17) |
 | 5 | Mesh + layout + relax (§6) | flat/cup/ruffle circle, tube, swatch size, hinge sign, mass | done (T5.1-T5.4, 2026-10-18) |
-| 6 | Scenes + load + metrics + CLI (§7) | strap analytic, force balance, settle, fit checks; PNG snapshots of all fixtures in docs/crochet-shots/ | in progress (T6.1 done) |
+| 6 | Scenes + load + metrics + CLI (§7) | strap analytic, force balance, settle, fit checks; PNG snapshots of all fixtures in docs/crochet-shots/ | in progress (T6.1, T6.2 done) |
 | 7 | Godot bindings + scene (§8) | crochet_api_check passes; the user can open, edit, run, and see the pouch hang on their Mac | todo |
 | 8 | Chart, lego, compare (§9) | five-variant comparison runs from one click; the table shows different corner angles | todo |
 | 9 | Calibration (§10) | a swatch record changes the result and the UI says "calibrated" | todo |
@@ -250,3 +250,12 @@ acceptance, with the measured numbers. Honest numbers; "not measured" where not 
   mode 2) and settles in 239 / 276 frames (KE < 1e-8 J for 30 frames), Newton cap 0 of 478 / 552 substeps, 0 self
   intersections, 3.88 mm clearance to the peg, 38.8 cm from the strap apex to the lowest point (strap 24 + body 15).
   The hung pouch stays centred on the peg (z = -0.1 cm). Snapshots in docs/crochet-shots/scenes/. Three mutations caught.
+
+### 2026-10-18 — T6.2 RigidLoad and the fit check (phase 6, item 2)
+
+* Pouch hung by the pin with a 70 x 140 x 9 mm, 0.3 kg box: inserted in 175 frames, released and settled in 638 frames
+  (|F_net| 0.014 m g), pin reactions 3.1793 N vs (cloth 0.0221 + box 0.300 kg) g = 3.1598 N (+0.62 %, bar 2 %), 0 self
+  intersections, Newton cap 0 of 2104. Strap 5 x 60 sc under 1 kg: elongation 63.74 mm vs analytic 63.55 mm (+0.30 %).
+  Fit check: pouch + MBA13 `fits: false` (20.7 cm too wide), bag + MBA13 `fits: true` (93 % of the 34.5 x 23.0 cm inside).
+* Tuned (before -> after): release damping 8/s -> 80/s (8 and 30 leave the box bobbing), rounded-box corner radius
+  10 mm -> min(10 mm, 0.9 half thickness). Open: free-edge half cells (narrow straps ~4-25 % too soft), see BOARD.md.
