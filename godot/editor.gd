@@ -584,6 +584,12 @@ func _build_ui() -> void:
 	demo.text = "Demo"
 	demo.pressed.connect(_demo_toggle)
 	box.add_child(demo)
+	var crochet := Button.new()
+	crochet.name = "CrochetBtn"
+	crochet.text = "Crochet"
+	crochet.tooltip_text = "Crochet mode: write a pattern, simulate the piece, compare bags"
+	crochet.pressed.connect(func() -> void: get_tree().change_scene_to_file("res://crochet/crochet.tscn"))
+	box.add_child(crochet)
 	var save := Button.new()
 	save.name = "SaveBtn"
 	save.text = "Save pattern"

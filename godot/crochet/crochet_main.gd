@@ -527,7 +527,7 @@ func run_frames(n: int) -> void:
 		left -= k
 	_update_mesh()
 	_update_labels()
-	if sim.is_done():
+	if sim.is_done() or _stop_requested:
 		_finish_run()
 
 func _process(_delta: float) -> void:
