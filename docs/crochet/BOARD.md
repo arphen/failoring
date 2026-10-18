@@ -50,7 +50,7 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
 | T6.4 | crochet_cli + PNG snapshots | T6.3 | done | default | 1 | 80067cf (merged bd68990) | tool + runCrochet; exit codes 0/2/1 tested; circles, tube, facing run from the CLI with snapshots (docs/crochet-shots/); pouch + bags run with the MBA13 load under T6.5 |
 | T6.5 | Five-variant report (USER GATE §14.9) | T6.2, T6.4 | todo | | 0 | | table + snapshots in CROCHET_STATUS.md |
 | T6.6 | Real-bag fixture (user measurements) | T6.5, user data | blocked | | 0 | | blocked: waiting for user data (asked at gate 1) |
-| T7.1 | GDExtension CrochetPattern, CrochetScene | T6.4 | todo | | 0 | | crochet_api_check passes headless |
+| T7.1 | GDExtension CrochetPattern, CrochetScene | T6.4 | done | default | 1 | fd0baf6 | crochet_api_check: 23 PASS headless; CrochetSession (stepper) shared with the CLI; 4 mutations caught |
 | T7.2 | Crochet scene skeleton: panes, CodeEdit live compile, worker thread | T7.1 | todo | | 0 | | headless: load pouch, compile, run 200 frames |
 | T7.3 | Yarn/hook panel, metrics tab, scene/load menus, editor entry button | T7.2 | todo | | 0 | | headless test drives each menu once |
 | T7.4 | Surface shader, double-sided thickness | T7.2 | todo | | 0 | | shader compiles; screenshot if possible |
@@ -159,3 +159,7 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
 * 2026-10-18 — T6.4: pattern input is the CrochetPARADE text (committed export beside it, else node); scene `auto` hangs by the strap
   when there is one. The PNG writer got a small dependency-free deflate (1.5 MB -> 36-150 KB per snapshot). OBJ outputs are
   gitignored (regenerate with tools/crochet/run_fixtures.sh).
+* 2026-10-18 — T7.1: the run is a stepper class (`CrochetSession`) used by both the CLI and the bindings (nothing of §7 is reimplemented in
+  GDScript). `CrochetPattern.compile` runs the node exporter itself (PATH widened for Homebrew) and reads the `#!` lines from the same text.
+  GDExtension work is done on `crochet/main` in the main checkout (the compiled godot-cpp lives in `build-gd/`); `godot/bin/libfailoring.dylib`
+  stays an uncommitted local build product.
