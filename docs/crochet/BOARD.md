@@ -47,7 +47,7 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
 | T6.1 | Scenes hang_pin, hang_peg, settle loop | T5.4 | done | default | 1 | d8b0ca0 (merged 7ad26f5) | §7.4 test 3 for the pouch: settles in 239 / 276 frames, Newton cap 0, 0 self intersections, peg clearance +3.88 mm; 3 mutations caught |
 | T6.2 | RigidLoad: insert, release, fit check | T6.1, T1.6, T1.4 | done | default | 1 | 9fbb244 (merged 1f4edbd) | ★ §7.4 tests 1, 2, 4: strap +0.30 %, force balance +0.62 %, pouch+MBA13 fits=false, bag+MBA13 fits=true; 4 mutations caught |
 | T6.3 | Metrics | T6.1 | done | default | 1 | 1bc609c (merged 9ca6a20) | all 31 keys of §7.5 (null when not applicable); 90 deg fold reads 90.53; 5 mutations caught |
-| T6.4 | crochet_cli + PNG snapshots | T6.3 | todo | | 0 | | all fixtures via CLI; PNGs in docs/crochet-shots/ |
+| T6.4 | crochet_cli + PNG snapshots | T6.3 | done | default | 1 | 80067cf (merged bd68990) | tool + runCrochet; exit codes 0/2/1 tested; circles, tube, facing run from the CLI with snapshots (docs/crochet-shots/); pouch + bags run with the MBA13 load under T6.5 |
 | T6.5 | Five-variant report (USER GATE §14.9) | T6.2, T6.4 | todo | | 0 | | table + snapshots in CROCHET_STATUS.md |
 | T6.6 | Real-bag fixture (user measurements) | T6.5, user data | blocked | | 0 | | blocked: waiting for user data (asked at gate 1) |
 | T7.1 | GDExtension CrochetPattern, CrochetScene | T6.4 | todo | | 0 | | crochet_api_check passes headless |
@@ -156,3 +156,6 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
 * 2026-10-18 — T6.3: base = rounds up to and including the last increase round; corner_angle = 180 - mean turning angle between the
   faces below and above the base-to-wall row; drop = highest point to lowest; gape = mouth extent along the horizontal axis of least
   extent; strap length = row-centroid centre line. Numbers that do not apply are `null`.
+* 2026-10-18 — T6.4: pattern input is the CrochetPARADE text (committed export beside it, else node); scene `auto` hangs by the strap
+  when there is one. The PNG writer got a small dependency-free deflate (1.5 MB -> 36-150 KB per snapshot). OBJ outputs are
+  gitignored (regenerate with tools/crochet/run_fixtures.sh).

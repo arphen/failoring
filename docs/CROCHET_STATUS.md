@@ -12,7 +12,7 @@ acceptance, with the measured numbers. Honest numbers; "not measured" where not 
 | 3 | Stitch model (§4) | gauge sanity and monotonicity tests | done (T3.1, 2026-10-16) |
 | 4 | DSL + graph (§5) | all fixtures compile with the stated counts, error-message tests | done (T4.0-T4.2, 2026-10-17) |
 | 5 | Mesh + layout + relax (§6) | flat/cup/ruffle circle, tube, swatch size, hinge sign, mass | done (T5.1-T5.4, 2026-10-18) |
-| 6 | Scenes + load + metrics + CLI (§7) | strap analytic, force balance, settle, fit checks; PNG snapshots of all fixtures in docs/crochet-shots/ | in progress (T6.1-T6.3 done) |
+| 6 | Scenes + load + metrics + CLI (§7) | strap analytic, force balance, settle, fit checks; PNG snapshots of all fixtures in docs/crochet-shots/ | in progress (T6.1-T6.4 done) |
 | 7 | Godot bindings + scene (§8) | crochet_api_check passes; the user can open, edit, run, and see the pouch hang on their Mac | todo |
 | 8 | Chart, lego, compare (§9) | five-variant comparison runs from one click; the table shows different corner angles | todo |
 | 9 | Calibration (§10) | a swatch record changes the result and the UI says "calibrated" | todo |
@@ -266,3 +266,10 @@ acceptance, with the measured numbers. Honest numbers; "not measured" where not 
   (bar 90 +- 1); a flat swatch 180.0000. Stretched strap: wale strain p95 0.1808 vs the J-curve 0.1764. Hung pouch: 39.8 m / 22.09 g
   of yarn (0.221 skein), drop 38.8 cm, height 15.3 cm, gape 2.54 cm, strap 47.4 cm at rest and 47.8 cm loaded (+0.83 %).
   Five mutations caught.
+
+### 2026-10-18 — T6.4 crochet_cli (phase 6, item 4)
+
+* `crochet_cli <pattern> --scene auto|hang_pin|hang_peg|none --load none|mba13|mbp14|mbp16|box:LxWxH_mm:kg ...` writes
+  JSON / OBJ with stitch ids / rest OBJ / PNG snapshots; exit 0 settled, 2 not settled, 1 error (tested). Circle +5/+6/+8,
+  tube and the facing swatch run from the tool and settle; snapshots in docs/crochet-shots/. The PNG writer compresses
+  (1.5 MB -> 36-150 KB). The pouch and the five bags with the MBA13 load are the T6.5 runs.
