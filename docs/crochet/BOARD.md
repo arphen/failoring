@@ -46,7 +46,7 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
 | T5.4 | Relaxation + mesh tests | T5.3 | done | default | 1 | 8da3456 (merged 1564b8d) | ★ §6.10 tests 1,2,3,5: swatch 130.00 x 120.00 mm; circle +6 flat 0.00 %, +5 cup 43 %, +8 ruffle; hinge +25.6 / -25.7 deg; pouch seam gap 0.58 mm; 6 mutations caught |
 | T6.1 | Scenes hang_pin, hang_peg, settle loop | T5.4 | done | default | 1 | d8b0ca0 (merged 7ad26f5) | §7.4 test 3 for the pouch: settles in 239 / 276 frames, Newton cap 0, 0 self intersections, peg clearance +3.88 mm; 3 mutations caught |
 | T6.2 | RigidLoad: insert, release, fit check | T6.1, T1.6, T1.4 | done | default | 1 | 9fbb244 (merged 1f4edbd) | ★ §7.4 tests 1, 2, 4: strap +0.30 %, force balance +0.62 %, pouch+MBA13 fits=false, bag+MBA13 fits=true; 4 mutations caught |
-| T6.3 | Metrics | T6.1 | todo | | 0 | | §7.5 keys; 90° fold reads 90±1 |
+| T6.3 | Metrics | T6.1 | done | default | 1 | 1bc609c (merged 9ca6a20) | all 31 keys of §7.5 (null when not applicable); 90 deg fold reads 90.53; 5 mutations caught |
 | T6.4 | crochet_cli + PNG snapshots | T6.3 | todo | | 0 | | all fixtures via CLI; PNGs in docs/crochet-shots/ |
 | T6.5 | Five-variant report (USER GATE §14.9) | T6.2, T6.4 | todo | | 0 | | table + snapshots in CROCHET_STATUS.md |
 | T6.6 | Real-bag fixture (user measurements) | T6.5, user data | blocked | | 0 | | blocked: waiting for user data (asked at gate 1) |
@@ -153,3 +153,6 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
   half stitch at each free edge carries no load: a 5-wide strap is 4/5 as strong (elongation +4 % in the stiff branch, up to
   +25 % in the soft one). Test 1's analytic uses the load-bearing mesh width (n-1) w. A stiffer boundary-triangle correction
   would fix it; not done (affects only narrow straps).
+* 2026-10-18 — T6.3: base = rounds up to and including the last increase round; corner_angle = 180 - mean turning angle between the
+  faces below and above the base-to-wall row; drop = highest point to lowest; gape = mouth extent along the horizontal axis of least
+  extent; strap length = row-centroid centre line. Numbers that do not apply are `null`.
