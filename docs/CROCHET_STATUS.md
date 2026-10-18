@@ -311,5 +311,5 @@ acceptance, with the measured numbers. Honest numbers; "not measured" where not 
 
 * "Compare" overlay (`crochet_compare.gd`): A vs B (other pattern, yarn or hook) or the five hinge-round variants of the bag, each piece on
   its own worker thread, hung 0.5 m apart with labels, one table (A, B, B - A; bold where a key number differs). Shares
-  `crochet_cloth.gd` with the main view. `crochet_compare_check` 18 PASS (new), scene check 70 PASS, api check 26 PASS.
+  `crochet_cloth.gd` with the main view. `crochet_compare_check` 21 PASS (new), scene check 70 PASS, api check 26 PASS.
   Screenshot docs/crochet-shots/ui/compare_variants.png. The physical numbers for the five variants are the T6.5 CLI runs.

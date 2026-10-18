@@ -57,7 +57,7 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
 | T8.1 | Chart view | T7.2 | done | default | 1 | c9c51fa | crochet_scene_check 38 PASS (1380 symbols for the pouch, hover/click/zoom); core chartPositions tested on pouch and bag; screenshots in docs/crochet-shots/ui |
 | T8.2 | Selection chart <-> 3D <-> pattern line | T8.1 | done | default | 1 | 4a8857e | crochet_scene_check 51 PASS: chart click -> glow vertex + editor line, caret line -> stitches, ray pick; 2 mutations caught |
 | T8.3 | Lego overrides | T8.2 | done | default | 1 | fe015a4 | `#! override [row]/[row,pos]/[row,a-b] <mod>` in the parser; chart menu appends lines; pouch row 12 BLO: hinge mods 8 -> 22; scene check 70 PASS |
-| T8.4 | Compare + five-variant run | T8.3 | done | default | 1 | d4c81ba | crochet_compare_check 18 PASS: A/B and five variants in a row 0.5 m apart, table with five corner angles (plumbing only, 4 frames each); threaded path not exercised in tests |
+| T8.4 | Compare + five-variant run | T8.3 | done | default | 1 | d4c81ba | crochet_compare_check 21 PASS: A/B and five variants in a row 0.5 m apart, table with five corner angles (plumbing only, 4 frames each), threaded run and Stop |
 | T9.1 | Calibration wizard + records | T7.3 | todo | | 0 | | record changes stitchMech; UI says "calibrated" |
 | T9.2 | Hinge auto-fit (bisection) | T9.1 | todo | | 0 | | recovers a known bendScale within 5 % |
 

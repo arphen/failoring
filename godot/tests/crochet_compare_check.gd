@@ -73,5 +73,25 @@ func _ready() -> void:
 	check("the table has five corner angles: %s" % [corner], ok)
 	var code5: String = cv.table_bbcode()
 	check("five pieces: one column each, no difference column", code5.contains("[b]sl st round[/b]") and not code5.contains("B - A"))
+	# the threaded path (what the real window uses): two pouches on their own threads, then Stop
+	cv.clear_slots()
+	cv.b_yarn.select(0)
+	cv.b_hook.value = 0.0
+	cv.setup_ab()
+	cv._use_worker = true
+	cv.max_parallel = 2
+	cv.start()
+	var waited := 0.0
+	while waited < 240.0 and not (cv.slots[0].frames >= 20 and cv.slots[1].frames >= 20):
+		await get_tree().create_timer(0.2).timeout
+		waited += 0.2
+	check("threads: both pieces compiled, built and stepped on their own threads (%d and %d frames after %.0f s)" % [cv.slots[0].frames, cv.slots[1].frames, waited], cv.slots[0].frames >= 20 and cv.slots[1].frames >= 20 and cv.running)
+	check("threads: the status line names the phase of each (%s)" % cv.status_label.text, cv.status_label.text.contains("A:") and cv.status_label.text.contains("B:") and cv.status_label.text.contains("frames"))
+	cv.stop()
+	waited = 0.0
+	while waited < 60.0 and cv.running:
+		await get_tree().create_timer(0.2).timeout
+		waited += 0.2
+	check("threads: Stop ends both, each with the numbers it has", not cv.running and cv.slots[0].state == "done" and cv.slots[1].state == "done" and cv.values_of("yarn_m")[0] is float and cv.values_of("yarn_m")[1] is float)
 	print("RESULT: %d failed" % fails)
 	get_tree().quit(1 if fails > 0 else 0)
