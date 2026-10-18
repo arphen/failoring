@@ -23,6 +23,7 @@ CrochetSession::CrochetSession(StitchGraph graph, const Yarn& yarn, const ModelO
     if (wantLoad_) loadSpec_ = loadPreset(settings.load);  // throws std::invalid_argument naming the problem
     model_ = buildCrochetModel(graph_, yarn_, model);
     layout_ = layoutModel(model_, graph_);
+    uv_ = fl::stitchUv(model_, graph_, layout_);
     bool hasStrap = false;
     for (const LayoutRegion& r : layout_.regions) hasStrap = hasStrap || r.type == LayoutRegion::Strip;
     hang_ = settings.scene == "hang_pin" || settings.scene == "hang_peg" || (settings.scene == "auto" && hasStrap);

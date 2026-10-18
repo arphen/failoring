@@ -813,6 +813,21 @@ private:
 
 }  // namespace
 
+std::vector<Vec2> stitchUv(const CrochetModel& model, const StitchGraph& g, const LayoutReport& layout) {
+    std::vector<Vec2> out(g.st.size());
+    for (const Stitch& s : g.st) out[s.id] = Vec2(s.index, s.row);
+    if (model.dims.empty() || model.mesh.x0.empty()) return out;
+    for (const LayoutRegion& r : layout.regions) {
+        if (r.type != LayoutRegion::Flat) continue;
+        for (const Stitch& s : g.st) {
+            const int v = model.topo.stitchVertex[s.id];
+            if (s.row < r.firstRow || s.row > r.lastRow || v < 0) continue;
+            out[s.id] = Vec2(-model.mesh.x0[v].x / model.dims[s.id].w, -model.mesh.x0[v].y / model.dims[s.id].h);
+        }
+    }
+    return out;
+}
+
 LayoutReport layoutModel(CrochetModel& model, const StitchGraph& g, const LayoutOptions& opt) {
     return Layouter(model, g, opt).run();
 }

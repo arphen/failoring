@@ -8,7 +8,9 @@
 
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
+#include <godot_cpp/variant/packed_color_array.hpp>
 #include <godot_cpp/variant/packed_int32_array.hpp>
+#include <godot_cpp/variant/packed_vector2_array.hpp>
 #include <godot_cpp/variant/packed_string_array.hpp>
 #include <godot_cpp/variant/packed_vector3_array.hpp>
 #include <godot_cpp/variant/string.hpp>
@@ -83,6 +85,9 @@ public:
     PackedInt32Array get_indices() const;
     PackedVector3Array get_normals() const;
     PackedInt32Array get_stitch_of_vertex() const;
+    PackedVector2Array get_vertex_uv() const;       // stitch coordinates (u along the row, v up the rows) for the surface shader
+    PackedColorArray get_vertex_colors() const;     // r = stitch type, g = insertion, b = 1 on a RS row (all 0..1)
+    double get_thickness() const;                   // m, the fabric thickness for the shell
     Dictionary get_metrics() const;
     Transform3D get_load_transform() const;
     Dictionary get_load() const;  // {name, size: Vector3 (width, height, thickness), mass, fits, tight, message}

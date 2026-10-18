@@ -45,6 +45,7 @@ public:
     const StitchGraph& graph() const { return graph_; }
     const CrochetModel& model() const { return model_; }
     const LayoutReport& layout() const { return layout_; }
+    const std::vector<Vec2>& stitchUv() const { return uv_; }  // per stitch, from the layout before the relaxation
     const Yarn& yarn() const { return yarn_; }
     // The positions of the current state: the relaxation's while relaxing, the scene's after.
     const std::vector<Vec3>& positions() const;
@@ -73,6 +74,7 @@ private:
     Yarn yarn_;
     CrochetModel model_;
     LayoutReport layout_;
+    std::vector<Vec2> uv_;
     SessionSettings settings_;
     Phase phase_ = Phase::Relax;
     std::unique_ptr<RelaxRun> relax_;

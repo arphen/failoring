@@ -76,6 +76,10 @@ struct LayoutReport {
     std::vector<std::string> warnings;
 };
 
+// Surface coordinates for texturing (stitch units): u runs along the row, v up the rows. Flat pieces use their physical columns
+// (so the cells of turned rows line up), everything else the index in the row and the row. One entry per stitch id.
+std::vector<Vec2> stitchUv(const CrochetModel& model, const StitchGraph& g, const LayoutReport& layout);
+
 // Fill model.mesh.x0 and model.mesh.layoutUV (one entry per vertex). Never
 // throws on a pattern it cannot place; it places what it can and warns.
 LayoutReport layoutModel(CrochetModel& model, const StitchGraph& g, const LayoutOptions& opt = {});

@@ -48,6 +48,11 @@ func _ready() -> void:
 	check("phase moved on from relax (%s)" % [sc.phase()], sc.phase() == "hang")
 	check("indices: 2204 triangles", sc.get_indices().size() == 2204 * 3)
 	check("normals and stitch ids per vertex", sc.get_normals().size() == 1250 and sc.get_stitch_of_vertex().size() == 1250)
+	check("vertex uv, colours and thickness for the shader", sc.get_vertex_uv().size() == 1250 and sc.get_vertex_colors().size() == 1250 and abs(sc.get_thickness() - 0.00475) < 0.0005)
+	var colr := sc.get_vertex_colors()
+	check("vertex colours are in 0..1 and carry the RS facing (row 1 is RS)", colr[0].r > 0.0 and colr[0].r <= 1.0 and colr[0].b == 1.0)
+	var shader := load("res://crochet/crochet_surface.gdshader") as Shader
+	check("the surface shader loads and declares its inputs", shader != null and shader.code.contains("shader_type spatial") and shader.code.contains("uniform vec4 albedo") and shader.code.contains("COLOR.r"))
 	var m := sc.get_metrics()
 	check("metrics: all 31 keys", m.size() == 31 and m.has("yarn_m") and m.has("drop_cm") and m.has("strain_wale_max") and m.has("final_kinetic_energy"))
 	check("metrics: numbers that do not apply are null (no load)", m["fits"] == null and m["corner_angle_deg"] == null and m["drop_cm"] != null)

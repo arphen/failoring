@@ -9,6 +9,7 @@ const Studio = preload("res://studio.gd")
 const Look = preload("res://look.gd")
 const YARNS_PATH := "res://materials/yarns.json"
 const COMPILE_DELAY := 0.4
+const SURFACE_SHADER := preload("res://crochet/crochet_surface.gdshader")
 const HANG_Y := 1.35    # the hang point is put this high in the studio (metres)
 
 # ---- state
@@ -23,6 +24,7 @@ var _run_thread: Thread
 var _running := false
 var _stop_requested := false
 var _chunk := 2          # frames per worker job; adapts to keep a job near 150 ms
+var _fixed_chunk := false
 var _use_worker := false
 var _yarns: Array = []
 var _frames_total := 0
@@ -52,6 +54,8 @@ var stage: Node3D
 var cam_pivot: Node3D
 var cam: Camera3D
 var cloth_node: MeshInstance3D
+var _mat_rs: ShaderMaterial
+var _mat_ws: ShaderMaterial
 var load_node: MeshInstance3D
 var peg_node: MeshInstance3D
 var _debounce: Timer
@@ -72,8 +76,14 @@ func _ready() -> void:
 	_debounce.wait_time = COMPILE_DELAY
 	_debounce.timeout.connect(_on_debounce)
 	add_child(_debounce)
+	if OS.has_environment("FL_CHUNK"):
+		_chunk = maxi(1, int(OS.get_environment("FL_CHUNK")))
+		_fixed_chunk = true
 	if not OS.has_environment("FL_NO_DEFAULT"):
-		_load_fixture_named("pouch")
+		_load_fixture_named(OS.get_environment("FL_PATTERN") if OS.has_environment("FL_PATTERN") else "pouch")
+	if OS.has_environment("FL_AUTORUN"):  # "hang_pin,mba13": start a run right away (screenshots, demos)
+		var parts := OS.get_environment("FL_AUTORUN").split(",")
+		start_run(parts[0], parts[1] if parts.size() > 1 else "none")
 
 func _exit_tree() -> void:
 	_stop_requested = true
@@ -290,7 +300,9 @@ func _build_view() -> Control:
 	Look.camera(cam)
 	cam_pivot.add_child(cam)
 	cloth_node = MeshInstance3D.new()
-	cloth_node.material_override = _cloth_material()
+	_mat_rs = _cloth_material()
+	_mat_ws = _cloth_material()
+	_mat_ws.set_shader_parameter("side", 1.0)
 	stage.add_child(cloth_node)
 	load_node = MeshInstance3D.new()
 	load_node.visible = false
@@ -302,13 +314,37 @@ func _build_view() -> Control:
 	_apply_camera()
 	return view_container
 
-func _cloth_material() -> StandardMaterial3D:
-	var m := StandardMaterial3D.new()
-	m.albedo_color = Color(0.82, 0.5, 0.25)
-	m.roughness = 0.85
-	m.cull_mode = BaseMaterial3D.CULL_DISABLED
-	m.vertex_color_use_as_albedo = false
+func _cloth_material() -> ShaderMaterial:
+	var m := ShaderMaterial.new()
+	m.shader = SURFACE_SHADER
 	return m
+
+# Fibre look (plan 8.3): cotton matte, acrylic with a slight sheen, wool fuzzy.
+func _apply_yarn_look() -> void:
+	var colour := Color(0.82, 0.32, 0.23)
+	var rough := 0.85
+	var sheen := 0.2
+	if pattern != null:
+		var info := pattern.get_yarn_info(pattern.get_yarn())
+		if info.size() > 0:
+			colour = Color.html(String(info.get("colour", "#b5523b")))
+			match String(info.get("fibre", "acrylic")):
+				"cotton":
+					rough = 0.9
+					sheen = 0.05
+				"wool":
+					rough = 1.0
+					sheen = 0.6
+				"tshirt":
+					rough = 0.7
+					sheen = 0.15
+				_:
+					rough = 0.6
+					sheen = 0.25
+	for m in [_mat_rs, _mat_ws]:
+		m.set_shader_parameter("albedo", colour)
+		m.set_shader_parameter("rough", rough)
+		m.set_shader_parameter("sheen", sheen)
 
 func _build_right() -> Control:
 	var tabs := TabContainer.new()
@@ -500,11 +536,13 @@ func start_run(scene_id: String, load_id: String) -> bool:
 		sim = null
 		return false
 	error_label.text = ""
+	_apply_yarn_look()
 	_running = true
 	_stop_requested = false
 	_frames_total = 0
 	_have_offset = false
-	_chunk = 2
+	if not _fixed_chunk:
+		_chunk = 2
 	run_btn.disabled = true
 	stop_btn.disabled = false
 	load_node.visible = false
@@ -543,6 +581,9 @@ func _process(_delta: float) -> void:
 			if _run_thread.is_alive():
 				return
 			_run_thread.wait_to_finish()
+			if not _fixed_chunk:  # keep a job near 150 ms: the view refreshes between jobs
+				var ms := float(maxi(1, Time.get_ticks_msec() - _started_msec))
+				_chunk = clampi(int(round(float(_chunk) * 150.0 / ms)), 1, 40)
 			_frames_total += _chunk
 			_update_mesh()
 			_update_labels()
@@ -567,6 +608,8 @@ func _run_job(n: int) -> void:
 	sim.step(n)
 
 func _finish_run() -> void:
+	if sim != null and sim.get_positions().size() > 0:
+		_frame_camera(sim.get_positions())
 	_running = false
 	run_btn.disabled = pattern == null
 	stop_btn.disabled = true
@@ -599,15 +642,49 @@ func _update_mesh() -> void:
 	for i in pos.size():
 		shifted[i] = pos[i] + Vector3(0, _y_offset, 0)
 	last_vertices = shifted
-	var arrays := []
-	arrays.resize(Mesh.ARRAY_MAX)
-	arrays[Mesh.ARRAY_VERTEX] = shifted
-	arrays[Mesh.ARRAY_NORMAL] = sim.get_normals()
-	arrays[Mesh.ARRAY_INDEX] = sim.get_indices()
 	if DisplayServer.get_name() == "headless":
 		return  # the dummy renderer has no meshes to fill; tests read last_vertices
+	var normals := sim.get_normals()
+	var half := 0.5 * sim.get_thickness()
+	var indices := sim.get_indices()
+	var uv := sim.get_vertex_uv()
+	var col := sim.get_vertex_colors()
+	# two shells: the right side outside (offset along the normal), the wrong side inside (offset against it, winding reversed)
+	var outer := PackedVector3Array()
+	var inner := PackedVector3Array()
+	var inner_n := PackedVector3Array()
+	outer.resize(shifted.size())
+	inner.resize(shifted.size())
+	inner_n.resize(shifted.size())
+	for i in shifted.size():
+		outer[i] = shifted[i] + normals[i] * half
+		inner[i] = shifted[i] - normals[i] * half
+		inner_n[i] = -normals[i]
+	var flipped := PackedInt32Array()
+	flipped.resize(indices.size())
+	for t in range(0, indices.size(), 3):
+		flipped[t] = indices[t]
+		flipped[t + 1] = indices[t + 2]
+		flipped[t + 2] = indices[t + 1]
 	var mesh := ArrayMesh.new()
-	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	var a0 := []
+	a0.resize(Mesh.ARRAY_MAX)
+	a0[Mesh.ARRAY_VERTEX] = outer
+	a0[Mesh.ARRAY_NORMAL] = normals
+	a0[Mesh.ARRAY_TEX_UV] = uv
+	a0[Mesh.ARRAY_COLOR] = col
+	a0[Mesh.ARRAY_INDEX] = indices
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, a0)
+	mesh.surface_set_material(0, _mat_rs)
+	var a1 := []
+	a1.resize(Mesh.ARRAY_MAX)
+	a1[Mesh.ARRAY_VERTEX] = inner
+	a1[Mesh.ARRAY_NORMAL] = inner_n
+	a1[Mesh.ARRAY_TEX_UV] = uv
+	a1[Mesh.ARRAY_COLOR] = col
+	a1[Mesh.ARRAY_INDEX] = flipped
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, a1)
+	mesh.surface_set_material(1, _mat_ws)
 	cloth_node.mesh = mesh
 	_update_props()
 
@@ -619,7 +696,7 @@ func _frame_camera(pos: PackedVector3Array) -> void:
 		hi = hi.max(p)
 	var size := (hi - lo).length()
 	_target = (lo + hi) * 0.5 + Vector3(0, _y_offset, 0)
-	_dist = maxf(0.6, size * 1.6)
+	_dist = maxf(0.9, size * 2.6)
 	_apply_camera()
 
 func _update_props() -> void:

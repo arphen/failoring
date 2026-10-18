@@ -363,6 +363,40 @@ PackedInt32Array CrochetScene::get_stitch_of_vertex() const {
     return out;
 }
 
+PackedVector2Array CrochetScene::get_vertex_uv() const {
+    PackedVector2Array out;
+    if (session_ == nullptr) return out;
+    const std::vector<fl::Vec2>& uv = session_->stitchUv();
+    for (const int s : session_->model().topo.vertexStitch) out.push_back(Vector2(static_cast<float>(uv[s].x), static_cast<float>(uv[s].y)));
+    return out;
+}
+
+PackedColorArray CrochetScene::get_vertex_colors() const {
+    PackedColorArray out;
+    if (session_ == nullptr) return out;
+    const fl::StitchGraph& g = session_->graph();
+    for (const int s : session_->model().topo.vertexStitch) {
+        const fl::Stitch& st = g.st[s];
+        float type = 0.f;
+        if (st.type == "ch") type = 0.2f;
+        else if (st.type == "slst") type = 0.4f;
+        else if (st.type == "sc") type = 0.6f;
+        else if (st.type == "hdc") type = 0.7f;
+        else if (st.type == "dc") type = 0.8f;
+        else if (st.type == "tr") type = 1.0f;
+        const float ins = st.loopRs == "blo" ? 0.33f : st.loopRs == "flo" ? 0.66f : st.loopRs == "space" ? 1.0f : 0.f;
+        out.push_back(Color(type, ins, st.rs ? 1.f : 0.f, 1.f));
+    }
+    return out;
+}
+
+double CrochetScene::get_thickness() const {
+    double t = 0;
+    if (session_ != nullptr)
+        for (const fl::FabricMaterial& m : session_->model().materials) t = std::max<double>(t, m.thickness);
+    return t;
+}
+
 Dictionary CrochetScene::get_metrics() const {
     Dictionary d;
     if (session_ == nullptr) return d;
@@ -433,6 +467,9 @@ void CrochetScene::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_indices"), &CrochetScene::get_indices);
     ClassDB::bind_method(D_METHOD("get_normals"), &CrochetScene::get_normals);
     ClassDB::bind_method(D_METHOD("get_stitch_of_vertex"), &CrochetScene::get_stitch_of_vertex);
+    ClassDB::bind_method(D_METHOD("get_vertex_uv"), &CrochetScene::get_vertex_uv);
+    ClassDB::bind_method(D_METHOD("get_vertex_colors"), &CrochetScene::get_vertex_colors);
+    ClassDB::bind_method(D_METHOD("get_thickness"), &CrochetScene::get_thickness);
     ClassDB::bind_method(D_METHOD("get_metrics"), &CrochetScene::get_metrics);
     ClassDB::bind_method(D_METHOD("get_load_transform"), &CrochetScene::get_load_transform);
     ClassDB::bind_method(D_METHOD("get_load"), &CrochetScene::get_load);
