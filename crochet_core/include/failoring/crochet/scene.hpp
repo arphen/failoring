@@ -52,11 +52,16 @@ public:
     CrochetScene(const CrochetModel& model, const StitchGraph& g, const LayoutReport& layout, const SceneOptions& opt = {});
 
     SceneStats settle();  // step until settled or maxFrames; adds to the frame count of earlier calls
+    // Advance up to `frames` frames (the editor shows progress between calls); stops when settled. Returns settled().
+    bool advance(int frames);
+    bool settled() const { return stats_.settled; }
+    int maxFrames() const { return opt_.maxFrames; }
     ClothSolver& solver() { return *solver_; }
     const ClothSolver& solver() const { return *solver_; }
     const std::vector<int>& pinned() const { return pinned_; }
     const SceneStats& stats() const { return stats_; }
     const std::shared_ptr<Collider>& peg() const { return peg_; }       // the hang_peg capsule, null for hang_pin
+    Real pegCenterY() const { return pegY_; }                           // height of the peg axis (hang_peg)
     const std::vector<int>& mouth() const { return mouth_; }            // vertices of the opening rim (layout.openingRows)
     const std::vector<int>& body() const { return body_; }              // vertices that are not strap
     // The pin reactions: force each pinned vertex needs to hold the settled state, as the gradient of the potential
@@ -69,6 +74,7 @@ private:
     std::unique_ptr<ClothSolver> solver_;
     std::vector<int> pinned_, mouth_, body_;
     std::shared_ptr<Collider> peg_;
+    Real pegY_ = 0;
     SceneStats stats_;
     int calmFrames_ = 0;
 };
@@ -119,6 +125,10 @@ public:
     // Descend at 5 cm/s from 1 cm above the mouth until the bottom face is 1 cm above the lowest cloth point of the body,
     // or the vertical contact force on the box exceeds its weight, or maxFrames.
     bool insert(int maxFrames = 1500);
+    // The same in steps: insertSteps(n) runs up to n frames of the descent and returns true once it has stopped; releaseSteps(n) up
+    // to n frames of the release and returns true once settled. stats() keeps the totals.
+    bool insertSteps(int frames);
+    bool releaseSteps(int frames);
     // Two-way coupled release; true when it settled before maxFrames.
     bool release(int maxFrames = 1500);
     const LoadStats& stats() const { return stats_; }
@@ -136,6 +146,7 @@ private:
     std::shared_ptr<RoundedBoxCollider> box_;
     Vec3 c_, v_{0, 0, 0}, contact_{0, 0, 0};
     int calm_ = 0;  // consecutive calm frames of the release
+    bool insertDone_ = false;
     Real damping_ = 80;  // the plan says 8: measured on the pouch, 8 and 30 leave the box bobbing +-2 cm, 80 settles in ~330 frames
     LoadStats stats_;
     Real dt_ = 1.0 / 60.0;

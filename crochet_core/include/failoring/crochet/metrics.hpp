@@ -48,6 +48,15 @@ struct MetricsInput {
     Real maxContactPressure = 0;  // Pa
 };
 
+// One named result: a number, a boolean, a string, an object of integers (worst_*_strain_at) or null (does not apply).
+struct MetricEntry {
+    enum Kind { Null, Number, Bool, Text, Position } kind = Null;
+    std::string name;
+    double number = 0;           // Number, Bool (0 or 1)
+    std::string text;            // Text
+    int row = -1, stitch = -1;   // Position
+};
+
 struct Metrics {
     // yarn
     double yarn_m = 0, mass_g = 0, skeins = 0;
@@ -73,6 +82,8 @@ struct Metrics {
     long long frames = 0, newton_iterations = 0, cap_hits = 0, line_search_failures = 0;
     double final_kinetic_energy = 0;
 
+    // Every key of plan section 7.5 in the order of the JSON; toJson is these entries as text.
+    std::vector<MetricEntry> entries() const;
     std::string toJson() const;
 };
 

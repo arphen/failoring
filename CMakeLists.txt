@@ -52,6 +52,7 @@ add_library(crochet_core STATIC
   crochet_core/src/crochet_relax.cpp
   crochet_core/src/crochet_scene.cpp
   crochet_core/src/crochet_metrics.cpp
+  crochet_core/src/crochet_session.cpp
   crochet_core/src/crochet_run.cpp)
 target_include_directories(crochet_core PUBLIC crochet_core/include)
 target_link_libraries(crochet_core PUBLIC cloth_core)

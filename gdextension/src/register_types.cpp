@@ -1,6 +1,7 @@
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/godot.hpp>
 
+#include "crochet_bindings.h"
 #include "failoring_sim.h"
 
 using namespace godot;
@@ -8,6 +9,8 @@ using namespace godot;
 static void initialize_failoring(ModuleInitializationLevel level) {
     if (level != MODULE_INITIALIZATION_LEVEL_SCENE) return;
     GDREGISTER_CLASS(FailoringSim);
+    GDREGISTER_CLASS(CrochetPattern);
+    GDREGISTER_CLASS(CrochetScene);
 }
 static void uninitialize_failoring(ModuleInitializationLevel level) { (void)level; }
 

@@ -115,30 +115,32 @@ CrochetScene::CrochetScene(const CrochetModel& model, const StitchGraph& g, cons
         // the peg inside the loop, pegGap below the inner apex of the strap (the middle rows' height minus half a fabric thickness)
         const Real inner = hangY - 0.5 * thickness;
         const Real yc = inner - opt.pegGap - opt.pegRadius;
+        pegY_ = yc;
         peg_ = std::make_shared<CapsuleCollider>(Vec3(-0.5 * opt.pegLength, yc, 0), Vec3(0.5 * opt.pegLength, yc, 0), opt.pegRadius);
         solver_->setCollider(peg_);
     }
 }
 
-SceneStats CrochetScene::settle() {
-    for (int f = 0; f < opt_.maxFrames; ++f) {
+bool CrochetScene::advance(int frames) {
+    for (int f = 0; f < frames && !stats_.settled; ++f) {
         solver_->step();
         ++stats_.frames;
         stats_.kineticEnergy = solver_->kineticEnergy();
         calmFrames_ = stats_.kineticEnergy < opt_.keTarget ? calmFrames_ + 1 : 0;
-        if (calmFrames_ >= opt_.settleFrames) {
-            stats_.settled = true;
-            break;
-        }
+        if (calmFrames_ >= opt_.settleFrames) stats_.settled = true;
     }
     stats_.substeps = solver_->contactDiag().substeps;
     stats_.newtonIterations = solver_->contactDiag().newtonIters;
     stats_.iterCapHits = solver_->contactDiag().iterCapHits;
+    return stats_.settled;
+}
+
+SceneStats CrochetScene::settle() {
+    advance(opt_.maxFrames);
     stats_.selfIntersections = solver_->selfIntersections();
     stats_.minClearance = solver_->collider() ? solver_->minBodyClearance() : std::numeric_limits<Real>::infinity();
     return stats_;
 }
-
 
 std::vector<Vec3> CrochetScene::pinReactions() {
     std::vector<Vec3> out;
@@ -296,35 +298,41 @@ void RigidLoad::frame(const Vec3& dc) {
     contact_ = forceFromCloth();
 }
 
-bool RigidLoad::insert(int maxFrames) {
+bool RigidLoad::insertSteps(int frames) {
     const Real speed = 0.05;  // m/s, plan 7.3
     const Real weight = spec_.mass * 9.81;
-    stats_.stopReason = "frame cap";
-    for (int f = 0; f < maxFrames; ++f) {
+    if (insertDone_) return true;
+    for (int f = 0; f < frames; ++f) {
         // the lowest cloth point of the body: the stop height
         Real lowest = 1e300;
         for (const int v : scene_.body()) lowest = std::min(lowest, scene_.solver().positions()[v].y);
         const Real bottom = c_.y - 0.5 * spec_.height;
         if (bottom <= lowest + 0.01) {
             stats_.stopReason = "bottom face 1 cm above the lowest cloth point";
-            stats_.inserted = true;
+            stats_.inserted = insertDone_ = true;
             break;
         }
-        if (f > 0 && contact_.y > weight) {
+        if (stats_.insertFrames > 0 && contact_.y > weight) {
             stats_.stopReason = "vertical contact force above the box weight";
-            stats_.inserted = true;
+            stats_.inserted = insertDone_ = true;
             break;
         }
         frame(Vec3(0, -speed * dt_, 0));
         ++stats_.insertFrames;
     }
     stats_.center = c_;
+    return insertDone_;
+}
+
+bool RigidLoad::insert(int maxFrames) {
+    stats_.stopReason = "frame cap";
+    insertSteps(maxFrames);
     return stats_.inserted;
 }
 
-bool RigidLoad::release(int maxFrames) {
+bool RigidLoad::releaseSteps(int frames) {
     const Real weight = spec_.mass * 9.81;
-    for (int f = 0; f < maxFrames; ++f) {
+    for (int f = 0; f < frames && !stats_.released; ++f) {
         const Vec3 force = Vec3(0, -weight, 0) + contact_;
         v_ += force * (dt_ / spec_.mass);
         v_ *= std::exp(-damping_ * dt_);
@@ -337,13 +345,12 @@ bool RigidLoad::release(int maxFrames) {
         stats_.netForceFraction = length(net) / weight;
         stats_.speed = length(v_);
         calm_ = (stats_.netForceFraction < 0.02 && stats_.speed < 1e-3) ? calm_ + 1 : 0;
-        if (calm_ >= 30) {
-            stats_.released = true;
-            break;
-        }
+        if (calm_ >= 30) stats_.released = true;
     }
     stats_.center = c_;
     return stats_.released;
 }
+
+bool RigidLoad::release(int maxFrames) { return releaseSteps(maxFrames); }
 
 }  // namespace fl

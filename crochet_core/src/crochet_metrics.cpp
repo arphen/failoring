@@ -320,42 +320,92 @@ Metrics computeMetrics(const MetricsInput& in) {
     return m;
 }
 
+std::vector<MetricEntry> Metrics::entries() const {
+    std::vector<MetricEntry> out;
+    auto number = [&](const char* k, bool has, double v) {
+        MetricEntry e;
+        e.name = k;
+        if (has) {
+            e.kind = MetricEntry::Number;
+            e.number = v;
+        }
+        out.push_back(e);
+    };
+    auto boolean = [&](const char* k, bool has, bool v) {
+        MetricEntry e;
+        e.name = k;
+        if (has) {
+            e.kind = MetricEntry::Bool;
+            e.number = v ? 1 : 0;
+        }
+        out.push_back(e);
+    };
+    auto position = [&](const char* k, int row, int stitch) {
+        MetricEntry e;
+        e.name = k;
+        e.kind = MetricEntry::Position;
+        e.row = row;
+        e.stitch = stitch;
+        out.push_back(e);
+    };
+    number("yarn_m", true, yarn_m);
+    number("mass_g", true, mass_g);
+    number("skeins", true, skeins);
+    number("flat_width_cm", true, flat_width_cm);
+    number("flat_depth_cm", true, flat_depth_cm);
+    number("flat_height_cm", true, flat_height_cm);
+    number("drop_cm", hasHang, drop_cm);
+    number("bag_height_cm", hasHang, bag_height_cm);
+    number("opening_gape_cm", hasHang, opening_gape_cm);
+    number("strap_length_rest_cm", hasStrap, strap_length_rest_cm);
+    number("strap_length_loaded_cm", hasStrap && hasHang, strap_length_loaded_cm);
+    number("strap_elongation_pct", hasStrap && hasHang, strap_elongation_pct);
+    number("base_sag_mm", hasBase, base_sag_mm);
+    number("corner_angle_deg", hasCorner, corner_angle_deg);
+    number("strain_wale_max", true, strain_wale_max);
+    number("strain_wale_p95", true, strain_wale_p95);
+    number("strain_course_max", true, strain_course_max);
+    number("strain_course_p95", true, strain_course_p95);
+    position("worst_wale_strain_at", worst_wale_row, worst_wale_stitch);
+    position("worst_course_strain_at", worst_course_row, worst_course_stitch);
+    number("load_tilt_deg", hasLoad, load_tilt_deg);
+    number("load_top_above_rim_cm", hasLoad, load_top_above_rim_cm);
+    number("max_contact_pressure_kPa", hasLoad, max_contact_pressure_kPa);
+    boolean("fits", hasLoad, fits);
+    boolean("tight_fit", hasLoad, tight);
+    {
+        MetricEntry e;
+        e.name = "fit_message";
+        if (hasLoad) {
+            e.kind = MetricEntry::Text;
+            e.text = fit_message;
+        }
+        out.push_back(e);
+    }
+    number("frames", true, static_cast<double>(frames));
+    number("newton_iterations", true, static_cast<double>(newton_iterations));
+    number("cap_hits", true, static_cast<double>(cap_hits));
+    number("line_search_failures", true, static_cast<double>(line_search_failures));
+    number("final_kinetic_energy", true, final_kinetic_energy);
+    return out;
+}
+
 std::string Metrics::toJson() const {
     std::ostringstream o;
-    auto key = [&](const char* k, const std::string& v, bool last = false) { o << "  \"" << k << "\": " << v << (last ? "\n" : ",\n"); };
-    auto opt = [&](bool has, double x) { return has ? num(x) : std::string("null"); };
     o << "{\n";
-    key("yarn_m", num(yarn_m));
-    key("mass_g", num(mass_g));
-    key("skeins", num(skeins));
-    key("flat_width_cm", num(flat_width_cm));
-    key("flat_depth_cm", num(flat_depth_cm));
-    key("flat_height_cm", num(flat_height_cm));
-    key("drop_cm", opt(hasHang, drop_cm));
-    key("bag_height_cm", opt(hasHang, bag_height_cm));
-    key("opening_gape_cm", opt(hasHang, opening_gape_cm));
-    key("strap_length_rest_cm", opt(hasStrap, strap_length_rest_cm));
-    key("strap_length_loaded_cm", opt(hasStrap && hasHang, strap_length_loaded_cm));
-    key("strap_elongation_pct", opt(hasStrap && hasHang, strap_elongation_pct));
-    key("base_sag_mm", opt(hasBase, base_sag_mm));
-    key("corner_angle_deg", opt(hasCorner, corner_angle_deg));
-    key("strain_wale_max", num(strain_wale_max));
-    key("strain_wale_p95", num(strain_wale_p95));
-    key("strain_course_max", num(strain_course_max));
-    key("strain_course_p95", num(strain_course_p95));
-    key("worst_wale_strain_at", "{\"row\": " + std::to_string(worst_wale_row) + ", \"stitch\": " + std::to_string(worst_wale_stitch) + "}");
-    key("worst_course_strain_at", "{\"row\": " + std::to_string(worst_course_row) + ", \"stitch\": " + std::to_string(worst_course_stitch) + "}");
-    key("load_tilt_deg", opt(hasLoad, load_tilt_deg));
-    key("load_top_above_rim_cm", opt(hasLoad, load_top_above_rim_cm));
-    key("max_contact_pressure_kPa", opt(hasLoad, max_contact_pressure_kPa));
-    key("fits", hasLoad ? (fits ? "true" : "false") : "null");
-    key("tight_fit", hasLoad ? (tight ? "true" : "false") : "null");
-    key("fit_message", hasLoad ? "\"" + esc(fit_message) + "\"" : "null");
-    key("frames", std::to_string(frames));
-    key("newton_iterations", std::to_string(newton_iterations));
-    key("cap_hits", std::to_string(cap_hits));
-    key("line_search_failures", std::to_string(line_search_failures));
-    key("final_kinetic_energy", num(final_kinetic_energy), true);
+    const std::vector<MetricEntry> es = entries();
+    for (size_t i = 0; i < es.size(); ++i) {
+        const MetricEntry& e = es[i];
+        o << "  \"" << e.name << "\": ";
+        switch (e.kind) {
+            case MetricEntry::Null: o << "null"; break;
+            case MetricEntry::Number: o << num(e.number); break;
+            case MetricEntry::Bool: o << (e.number != 0 ? "true" : "false"); break;
+            case MetricEntry::Text: o << "\"" << esc(e.text) << "\""; break;
+            case MetricEntry::Position: o << "{\"row\": " << e.row << ", \"stitch\": " << e.stitch << "}"; break;
+        }
+        o << (i + 1 < es.size() ? ",\n" : "\n");
+    }
     o << "}\n";
     return o.str();
 }

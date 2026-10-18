@@ -18,7 +18,7 @@ std::unique_ptr<ClothSolver> makeSolver(const CrochetModel& model, const SolverP
     return solver;
 }
 
-RelaxResult relaxModel(CrochetModel& model, const RelaxOptions& opt) {
+RelaxRun::RelaxRun(const CrochetModel& model, const RelaxOptions& opt) : opt_(opt) {
     SolverParams sp;
     sp.gravity = Vec3(0, 0, 0);
     sp.dampingScale = opt.dampingScale;
@@ -32,23 +32,35 @@ RelaxResult relaxModel(CrochetModel& model, const RelaxOptions& opt) {
         std::uniform_real_distribution<Real> u(-1, 1);
         for (Vec3& p : start) p += Vec3(u(rng), u(rng), u(rng)) * opt.noise;
     }
-    std::unique_ptr<ClothSolver> solver = makeSolver(model, sp, &start);
-    for (const int v : opt.pin) solver->pinVertex(v);
-    RelaxResult r;
-    for (int f = 0; f < opt.maxFrames; ++f) {
-        solver->step();
-        r.frames = f + 1;
-        r.kineticEnergy = solver->kineticEnergy();
-        if (r.frames >= opt.seamRampFrames && r.kineticEnergy < opt.keTarget) {
-            r.converged = true;
-            break;
+    solver_ = makeSolver(model, sp, &start);
+    for (const int v : opt.pin) solver_->pinVertex(v);
+}
+
+bool RelaxRun::step(int frames) {
+    for (int f = 0; f < frames && !finished_; ++f) {
+        solver_->step();
+        ++result_.frames;
+        result_.kineticEnergy = solver_->kineticEnergy();
+        if (result_.frames >= opt_.seamRampFrames && result_.kineticEnergy < opt_.keTarget) {
+            result_.converged = true;
+            finished_ = true;
+        } else if (result_.frames >= opt_.maxFrames) {
+            finished_ = true;
         }
     }
-    r.maxSeamGap = solver->maxSeamGap();
-    r.substeps = solver->contactDiag().substeps;
-    r.iterCapHits = solver->contactDiag().iterCapHits;
-    model.mesh.x0 = solver->positions();
-    return r;
+    result_.maxSeamGap = solver_->maxSeamGap();
+    result_.substeps = solver_->contactDiag().substeps;
+    result_.iterCapHits = solver_->contactDiag().iterCapHits;
+    return finished_;
+}
+
+void RelaxRun::finish(CrochetModel& model) { model.mesh.x0 = solver_->positions(); }
+
+RelaxResult relaxModel(CrochetModel& model, const RelaxOptions& opt) {
+    RelaxRun run(model, opt);
+    run.step(opt.maxFrames);
+    run.finish(model);
+    return run.result();
 }
 
 }  // namespace fl

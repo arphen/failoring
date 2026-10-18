@@ -43,6 +43,26 @@ struct RelaxResult {
     long long substeps = 0, iterCapHits = 0;  // Newton diagnostics (plan 1, rule 6)
 };
 
+// The relaxation as a stepper (the editor needs progress and a Stop; relaxModel is this run to the end).
+class RelaxRun {
+public:
+    // model must carry positions. The run works on a copy of them: the model is not changed until finish().
+    RelaxRun(const CrochetModel& model, const RelaxOptions& opt);
+    // Advance up to `frames` frames; stops early when converged or at maxFrames. Returns finished().
+    bool step(int frames);
+    bool finished() const { return finished_; }
+    const RelaxResult& result() const { return result_; }
+    const std::vector<Vec3>& positions() const { return solver_->positions(); }
+    // Writes the current positions into model.mesh.x0.
+    void finish(CrochetModel& model);
+
+private:
+    RelaxOptions opt_;
+    std::unique_ptr<ClothSolver> solver_;
+    RelaxResult result_;
+    bool finished_ = false;
+};
+
 // A solver holding the model as one intrinsic panel (panel 0, vertex v of the model is solver vertex v) plus its
 // point seams. positions overrides model.mesh.x0 when given. The solver is not finalized yet.
 std::unique_ptr<ClothSolver> makeSolver(const CrochetModel& model, const SolverParams& params, const std::vector<Vec3>* positions = nullptr);

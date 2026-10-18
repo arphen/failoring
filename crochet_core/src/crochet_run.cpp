@@ -13,6 +13,7 @@
 #include "failoring/crochet/pattern.hpp"
 #include "failoring/crochet/relax.hpp"
 #include "failoring/crochet/scene.hpp"
+#include "failoring/crochet/session.hpp"
 #include "failoring/crochet/snapshot.hpp"
 
 namespace fl {
@@ -103,104 +104,55 @@ RunResult runCrochet(const RunOptions& opt) {
         if (!(hookMm > 0)) throw std::runtime_error("no hook size (give --hook mm)");
         if (opt.scene != "auto" && opt.scene != "hang_pin" && opt.scene != "hang_peg" && opt.scene != "none")
             throw std::runtime_error("unknown scene '" + opt.scene + "' (auto, hang_pin, hang_peg, none)");
-        LoadSpec load;
         const bool wantLoad = opt.load != "none";
-        if (wantLoad) load = loadPreset(opt.load);  // throws std::invalid_argument naming the problem
 
         StitchGraph g = importPatternFile(exportPath, opt.patternPath);
         ModelOptions mo;
         mo.hook_m = hookMm * 1e-3;
         mo.tension = opt.tension;
-        CrochetModel cm = buildCrochetModel(g, *yarn, mo);
-        say("model: " + std::to_string(g.st.size()) + " stitches, " + std::to_string(cm.topo.vertexStitch.size()) + " vertices, " + std::to_string(cm.mesh.tris.size()) + " faces");
+        SessionSettings ss;
+        ss.scene = opt.scene;
+        ss.load = opt.load;
+        ss.frameCap = opt.frames;
+        CrochetSession session(std::move(g), *yarn, mo, ss);  // builds the model and the layout; throws on a bad scene or load
+        const CrochetModel& cm = session.model();
+        const StitchGraph& graph = session.graph();
+        say("model: " + std::to_string(graph.st.size()) + " stitches, " + std::to_string(cm.topo.vertexStitch.size()) + " vertices, " + std::to_string(cm.mesh.tris.size()) + " faces");
         for (const std::string& w : cm.warnings) say("warning: " + w);
-        const LayoutReport layout = layoutModel(cm, g);
-        for (const std::string& w : layout.warnings) say("layout warning: " + w);
+        for (const std::string& w : session.layout().warnings) say("layout warning: " + w);
 
-        // relaxation (plan 6.9); a small seeded perturbation lets over- and under-increased pieces choose their shape
-        RelaxOptions ro;
-        ro.noise = 0.3e-3;
-        const RelaxResult rr = relaxModel(cm, ro);
-        res.relaxConverged = rr.converged;
-        res.relaxFrames = rr.frames;
-        say("relaxed: " + std::to_string(rr.frames) + " frames, KE " + std::to_string(rr.kineticEnergy) + " J, seam gap " + std::to_string(rr.maxSeamGap * 1e3) + " mm");
-        MetricsInput in;
-        in.model = &cm;
-        in.graph = &g;
-        in.layout = &layout;
-        in.yarn = yarn;
-        in.relaxed = cm.mesh.x0;
-        in.frames = rr.frames;
-        in.newtonIterations = 0;
-        in.iterCapHits = rr.iterCapHits;
-        in.substeps = rr.substeps;
-        in.finalKineticEnergy = rr.kineticEnergy;
-
-        bool hasStrap = false;
-        for (const LayoutRegion& r : layout.regions) hasStrap = hasStrap || r.type == LayoutRegion::Strip;
-        const bool hang = opt.scene == "hang_pin" || opt.scene == "hang_peg" || (opt.scene == "auto" && hasStrap);
-        if (opt.scene == "hang_pin" || opt.scene == "hang_peg") {
-            if (!hasStrap) throw std::runtime_error("scene " + opt.scene + " needs a strap, and this pattern has none");
-        }
-        if (wantLoad && !hang) throw std::runtime_error("a load needs a hung model (scene hang_pin or hang_peg, and a pattern with a strap)");
-
-        std::vector<Vec3> finalX = cm.mesh.x0;
-        bool settled = rr.converged;
-        if (hang) {
-            SceneOptions so;
-            so.kind = opt.scene == "hang_peg" ? SceneKind::HangPeg : SceneKind::HangPin;
-            so.maxFrames = opt.frames;
-            CrochetScene scene(cm, g, layout, so);
-            say(std::string("hanging (") + (so.kind == SceneKind::HangPeg ? "hang_peg" : "hang_pin") + ")");
-            const SceneStats st = scene.settle();
-            res.ranHang = true;
-            res.hangSettled = st.settled;
-            res.hangFrames = st.frames;
-            settled = settled && st.settled;
-            say("hang: " + std::string(st.settled ? "settled" : "NOT settled") + " in " + std::to_string(st.frames) + " frames, KE " + std::to_string(st.kineticEnergy) + " J, Newton cap " +
-                std::to_string(st.iterCapHits) + "/" + std::to_string(st.substeps));
-            in.hanging = scene.solver().positions();
-            in.frames += st.frames;
-            in.newtonIterations += st.newtonIterations;
-            in.iterCapHits += st.iterCapHits;
-            in.substeps += st.substeps;
-            in.lineSearchFailures += scene.solver().contactDiag().lsFail;
-            in.finalKineticEnergy = st.kineticEnergy;
-            finalX = in.hanging;
-            if (wantLoad) {
-                const FitResult fit = fitCheck(cm, g, layout, load);
-                in.hasLoad = true;
-                in.load = load;
-                in.fit = fit;
-                say("fit: " + fit.message);
-                if (fit.known && fit.fits) {
-                    RigidLoad rl(scene, load);
-                    const bool inserted = rl.insert(opt.frames);
-                    say(std::string("load inserted (") + rl.stats().stopReason + ") after " + std::to_string(rl.stats().insertFrames) + " frames");
-                    const bool released = inserted && rl.release(opt.frames);
-                    res.ranLoad = true;
-                    res.loadSettled = released;
-                    settled = settled && released;
-                    say(std::string("load: ") + (released ? "settled" : "NOT settled") + " after " + std::to_string(rl.stats().releaseFrames) + " frames, |F_net| " +
-                        std::to_string(rl.stats().netForceFraction) + " of its weight");
-                    in.loaded = scene.solver().positions();
-                    in.loadCenter = rl.center();
-                    in.frames += rl.stats().insertFrames + rl.stats().releaseFrames;
-                    in.newtonIterations += scene.solver().contactDiag().newtonIters - 0;
-                    in.iterCapHits = scene.solver().contactDiag().iterCapHits;
-                    in.substeps = scene.solver().contactDiag().substeps;
-                    in.lineSearchFailures = scene.solver().contactDiag().lsFail;
-                    in.finalKineticEnergy = scene.solver().kineticEnergy();
-                    Real pmax = 0;
-                    for (const Real p : scene.solver().vertexRigidPressure()) pmax = std::max(pmax, p);
-                    in.maxContactPressure = pmax;
-                    finalX = in.loaded;
-                } else {
-                    say(fit.known ? "the load is not inserted" : "the pattern has no mouth: the load is not inserted");
-                }
+        std::string lastPhase;
+        while (!session.done()) {
+            if (lastPhase != session.phaseName()) {
+                lastPhase = session.phaseName();
+                say(std::string("phase ") + lastPhase);
+            }
+            const CrochetSession::Phase before = session.phase();
+            session.step(50);
+            if (session.phase() != before) {
+                if (before == CrochetSession::Phase::Relax)
+                    say("relaxed: " + std::to_string(session.relaxFrames()) + " frames" + (session.relaxConverged() ? "" : " (NOT converged)"));
+                else if (before == CrochetSession::Phase::Hang)
+                    say(std::string("hang: ") + (session.hangSettled() ? "settled" : "NOT settled") + " in " + std::to_string(session.scene()->stats().frames) + " frames");
             }
         }
-        res.metrics = computeMetrics(in);
+        res.relaxConverged = session.relaxConverged();
+        res.relaxFrames = session.relaxFrames();
+        res.ranHang = session.scene() != nullptr;
+        res.hangSettled = session.hangSettled();
+        res.hangFrames = res.ranHang ? session.scene()->stats().frames : 0;
+        res.ranLoad = session.hasLoad();
+        res.loadSettled = session.loadSettled();
+        if (wantLoad) {
+            say("fit: " + session.fit().message);
+            if (!session.hasLoad()) say(session.fit().known ? "the load is not inserted" : "the pattern has no mouth: the load is not inserted");
+            else say(std::string("load: ") + (res.loadSettled ? "settled" : "NOT settled"));
+        }
+        const bool settled = session.settled();
+        const bool hang = res.ranHang;
+        res.metrics = session.metrics();
+        std::vector<Vec3> finalX = session.positions();
+        const std::vector<Vec3>& relaxedX = session.relaxedPositions();
 
         std::ostringstream js;
         js << "{\n \"pattern\": \"" << jsonEscape(opt.patternPath) << "\",\n \"settings\": {\"yarn\": \"" << jsonEscape(opt.yarnId) << "\", \"hook_mm\": " << hookMm
@@ -213,9 +165,9 @@ RunResult runCrochet(const RunOptions& opt) {
 
         if (!opt.outPrefix.empty()) {
             std::ofstream(opt.outPrefix + ".json") << res.json;
-            const bool objOk = writeObjFile(opt.outPrefix + ".obj", cm, g, finalX) && writeObjFile(opt.outPrefix + "_rest.obj", cm, g, in.relaxed);
-            const std::vector<SnapshotColour> colours = rowColours(cm, g);
-            const bool pngOk = writeSnapshotPng(opt.outPrefix + ".png", finalX, cm.mesh.tris, colours) && writeSnapshotPng(opt.outPrefix + "_rest.png", in.relaxed, cm.mesh.tris, colours);
+            const bool objOk = writeObjFile(opt.outPrefix + ".obj", cm, graph, finalX) && writeObjFile(opt.outPrefix + "_rest.obj", cm, graph, relaxedX);
+            const std::vector<SnapshotColour> colours = rowColours(cm, graph);
+            const bool pngOk = writeSnapshotPng(opt.outPrefix + ".png", finalX, cm.mesh.tris, colours) && writeSnapshotPng(opt.outPrefix + "_rest.png", relaxedX, cm.mesh.tris, colours);
             if (!objOk || !pngOk) throw std::runtime_error("cannot write the output files under '" + opt.outPrefix + "'");
             say("wrote " + opt.outPrefix + ".json/.obj/_rest.obj/.png/_rest.png");
         }
