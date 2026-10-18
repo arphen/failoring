@@ -15,6 +15,12 @@ func _ready() -> void:
 		var frames := int(OS.get_environment("FL_SHOT_FRAMES")) if OS.has_environment("FL_SHOT_FRAMES") else 450
 		c.run_frames(frames)
 		c._show_metrics()
+	for i in 4:   # the caret events of loading the text arrive first; the selection comes after them
+		await get_tree().process_frame
+	if OS.has_environment("FL_SHOT_SELECT_LINE"):   # select the stitches of a pattern line: glow on the cloth, rings in the chart
+		c.select_stitches(c._line_stitches.get(int(OS.get_environment("FL_SHOT_SELECT_LINE")), PackedInt32Array()), "line")
+		if c.sim != null:
+			c._update_mesh()
 	# zoom the chart: FL_SHOT_CHART_FOCUS=<stitch id>, or FL_SHOT_CHART_ROW=<row> FL_SHOT_CHART_INDEX=<index in the row>; FL_SHOT_CHART_ZOOM=<factor>
 	var focus := -1
 	if OS.has_environment("FL_SHOT_CHART_FOCUS"):

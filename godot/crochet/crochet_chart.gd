@@ -19,7 +19,8 @@ const COL_ROW := Color(1, 1, 1, 0.08)
 # one entry per stitch: {id, pos (chart units, y up), type, insertion, written, facing, row, index, line, targets, link}
 var symbols: Array = []
 var rows: Array = []
-var selected := -1
+var selected := -1            # the clicked stitch (-1 when the highlight is a whole line or nothing)
+var highlight := PackedInt32Array()  # every highlighted stitch (the selection, from here, the 3D view or a pattern line)
 var hover := -1
 
 var _base_count := {}         # stitch id -> how many stitches are worked into it (2 or more = an increase)
@@ -50,6 +51,7 @@ func set_chart(chart: Dictionary) -> void:
 	symbols.clear()
 	rows = chart.get("rows", [])
 	selected = -1
+	highlight = PackedInt32Array()
 	hover = -1
 	var link_kind := {}
 	for l in chart.get("links", []):
@@ -143,8 +145,28 @@ func describe(id: int) -> String:
 	return t
 
 func select_stitch(id: int) -> void:
-	selected = id if id >= 0 and id < symbols.size() else -1
+	set_highlight(PackedInt32Array([id]) if id >= 0 and id < symbols.size() else PackedInt32Array())
+
+# highlight these stitches (one makes it the selected stitch) and say what they are
+func set_highlight(ids: PackedInt32Array) -> void:
+	highlight = ids
+	selected = ids[0] if ids.size() == 1 else -1
+	if ids.size() == 0:
+		_set_info(HINT)
+	elif ids.size() == 1:
+		_set_info(describe(ids[0]))
+	else:
+		_set_info("%d stitches, line %d" % [ids.size(), int(symbols[ids[0]]["line"])])
 	queue_redraw()
+
+# scroll (not zoom) so that stitch `id` is inside the view
+func reveal(id: int) -> void:
+	if id < 0 or id >= symbols.size():
+		return
+	var at := to_screen(symbols[id]["pos"])
+	if not Rect2(Vector2.ZERO, size).grow(-PAD).has_point(at):
+		_pan += size * 0.5 - at
+		queue_redraw()
 
 # ------------------------------------------------------------------------------------------------ input
 
@@ -166,8 +188,7 @@ func _gui_input(event: InputEvent) -> void:
 				fit()
 				return
 			var id := stitch_at(event.position)
-			selected = id
-			queue_redraw()
+			select_stitch(id)
 			stitch_selected.emit(id)
 		elif event.button_index == MOUSE_BUTTON_MIDDLE or event.button_index == MOUSE_BUTTON_RIGHT:
 			_panning = event.pressed
@@ -277,7 +298,10 @@ func _draw_t(c: Vector2, r: float, col: Color, w: float, slashes: int) -> void:
 
 func _draw_marks() -> void:
 	var r := maxf(_scale() * 0.42, 5.0)
-	if hover >= 0 and hover != selected:
+	if hover >= 0 and not highlight.has(hover):
 		draw_arc(to_screen(symbols[hover]["pos"]), r, 0, TAU, 20, COL_HOVER, 1.5)
-	if selected >= 0:
-		draw_arc(to_screen(symbols[selected]["pos"]), r, 0, TAU, 20, COL_SEL, 2.5)
+	var view := Rect2(Vector2.ZERO, size).grow(r)
+	for id in highlight:
+		var c := to_screen(symbols[id]["pos"])
+		if view.has_point(c):
+			draw_arc(c, r, 0, TAU, 20, COL_SEL, 2.5)

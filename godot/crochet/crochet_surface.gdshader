@@ -46,6 +46,12 @@ float stitch_height(vec2 c, float type, float ins, float rs_row) {
 	return h;
 }
 
+varying float hl;   // 1 on a selected vertex: the vertex colour's alpha is 0 there
+
+void vertex() {
+	hl = 1.0 - COLOR.a;
+}
+
 void fragment() {
 	vec2 uv = UV;
 	vec2 cell = fract(uv);
@@ -74,7 +80,9 @@ void fragment() {
 	// colour: darker in the gaps between the stitches, the WS a little darker
 	float shade = mix(0.62, 1.0, clamp(h * 1.4, 0.0, 1.0));
 	vec3 col = albedo.rgb * shade * mix(1.0, 0.82, side);
-	ALBEDO = col;
+	float sel = clamp(hl, 0.0, 1.0);
+	ALBEDO = mix(col, vec3(1.0, 0.85, 0.15), 0.6 * sel);
+	EMISSION = vec3(1.0, 0.75, 0.05) * 0.45 * sel;
 	ROUGHNESS = rough;
 	SPECULAR = 0.25;
 	RIM = sheen;

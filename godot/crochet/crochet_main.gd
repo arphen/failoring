@@ -64,6 +64,13 @@ var _pitch := -0.15
 var _dist := 1.4
 var _target := Vector3(0, 1.0, 0)
 var _dragging := false
+var _press_pos := Vector2.ZERO
+var selection := PackedInt32Array()           # the selected stitch ids (a stitch, or all the stitches of a pattern line)
+var _synced_line := -1                        # the editor line we moved the caret to ourselves; its caret event is not a user's click
+var _stitch_of_vertex := PackedInt32Array()
+var _vertex_of_stitch := PackedInt32Array()
+var _indices := PackedInt32Array()
+var _line_stitches := {}                      # pattern line (1-based) -> PackedInt32Array of stitch ids
 
 func _ready() -> void:
 	_use_worker = DisplayServer.get_name() != "headless" or OS.has_environment("FL_THREAD")
@@ -224,6 +231,7 @@ func _build_left() -> Control:
 	editor.draw_tabs = true
 	editor.syntax_highlighter = _highlighter()
 	editor.text_changed.connect(_on_text_changed)
+	editor.caret_changed.connect(_on_caret_changed)
 	box.add_child(editor)
 	status_label = _label("")
 	status_label.autowrap_mode = TextServer.AUTOWRAP_WORD
@@ -353,6 +361,7 @@ func _build_right() -> Control:
 	chart_holder.set_script(load("res://crochet/crochet_chart.gd"))
 	chart_holder.name = "Chart"
 	tabs.add_child(chart_holder)
+	chart_holder.stitch_selected.connect(_on_chart_selected)
 	var mbox := VBoxContainer.new()
 	mbox.name = "Metrics"
 	metrics_text = RichTextLabel.new()
@@ -375,6 +384,11 @@ func _on_view_input(event: InputEvent) -> void:
 		var mb := event as InputEventMouseButton
 		if mb.button_index == MOUSE_BUTTON_LEFT or mb.button_index == MOUSE_BUTTON_RIGHT:
 			_dragging = mb.pressed
+			if mb.button_index == MOUSE_BUTTON_LEFT:
+				if mb.pressed:
+					_press_pos = mb.position
+				elif mb.position.distance_to(_press_pos) < 4.0:   # a click, not a camera drag
+					pick_at(mb.position)
 		elif mb.button_index == MOUSE_BUTTON_WHEEL_UP and mb.pressed:
 			_dist = maxf(0.3, _dist * 0.9)
 			_apply_camera()
@@ -462,6 +476,13 @@ func _finish_compile() -> void:
 	var s := pattern.get_summary()
 	status_label.text = _summary_line(s)
 	chart_holder.set_chart(pattern.get_chart())
+	selection = PackedInt32Array()
+	_line_stitches.clear()
+	for sy in chart_holder.symbols:
+		var l := int(sy["line"])
+		if not _line_stitches.has(l):
+			_line_stitches[l] = PackedInt32Array()
+		_line_stitches[l].push_back(int(sy["id"]))
 	if not _running:
 		_show_metrics_note(s)
 
@@ -520,6 +541,100 @@ func _on_save_as() -> void:
 	add_child(dlg)
 	dlg.popup_centered_ratio(0.6)
 
+# ------------------------------------------------------------------------------------------------ selection (plan 9.1)
+# One selection, three views of it: the chart rings, a glow on the cloth (vertex colour alpha 0, read by the shader), and the pattern
+# line in the editor. It is set by a click in the chart, a click on the cloth (a ray against the triangles), or the caret moving to a line.
+
+func _index_scene() -> void:
+	_stitch_of_vertex = sim.get_stitch_of_vertex()
+	_indices = sim.get_indices()
+	_vertex_of_stitch = PackedInt32Array()
+	_vertex_of_stitch.resize(chart_holder.symbol_count())
+	_vertex_of_stitch.fill(-1)
+	for v in _stitch_of_vertex.size():
+		var s := _stitch_of_vertex[v]
+		if s >= 0 and s < _vertex_of_stitch.size():
+			_vertex_of_stitch[s] = v
+
+func select_stitches(ids: PackedInt32Array, source: String) -> void:
+	selection = ids
+	chart_holder.set_highlight(ids)
+	if ids.size() > 0:
+		if source != "chart":
+			chart_holder.reveal(ids[0])
+		if source != "line":
+			_show_line(int(chart_holder.symbols[ids[0]]["line"]))
+	if sim != null and not _running:
+		_update_mesh()
+
+func _on_chart_selected(id: int) -> void:
+	select_stitches(PackedInt32Array([id]) if id >= 0 else PackedInt32Array(), "chart")
+
+# the pattern line of a stitch: caret there, the whole line selected
+func _show_line(line: int) -> void:
+	if line < 1 or line > editor.get_line_count():
+		return
+	_synced_line = line
+	editor.set_caret_line(line - 1)
+	editor.select(line - 1, 0, line - 1, editor.get_line(line - 1).length())
+	editor.center_viewport_to_caret()
+
+func _on_caret_changed() -> void:
+	var line := editor.get_caret_line() + 1
+	if line == _synced_line:
+		return   # our own move, from a stitch that was selected somewhere else
+	_synced_line = -1
+	var ids: PackedInt32Array = _line_stitches.get(line, PackedInt32Array())
+	if ids == selection:
+		return
+	select_stitches(ids, "line")
+
+func highlight_vertices() -> PackedInt32Array:
+	var out := PackedInt32Array()
+	for id in selection:
+		if id < _vertex_of_stitch.size() and _vertex_of_stitch[id] >= 0:
+			out.push_back(_vertex_of_stitch[id])
+	return out
+
+# alpha 0 marks the selected vertices (the shader glows there); everything else keeps alpha 1
+func highlight_colours(col: PackedColorArray) -> PackedColorArray:
+	var out := col.duplicate()
+	for v in highlight_vertices():
+		if v < out.size():
+			var c := out[v]
+			c.a = 0.0
+			out[v] = c
+	return out
+
+# the stitch under a ray (world space): the nearest vertex of the nearest triangle it crosses, -1 when it misses
+func pick_ray(origin: Vector3, dir: Vector3) -> int:
+	if sim == null or last_vertices.is_empty() or _indices.is_empty():
+		return -1
+	var best := INF
+	var best_v := -1
+	for t in range(0, _indices.size(), 3):
+		var tri := [_indices[t], _indices[t + 1], _indices[t + 2]]
+		var hit = Geometry3D.ray_intersects_triangle(origin, dir, last_vertices[tri[0]], last_vertices[tri[1]], last_vertices[tri[2]])
+		if hit == null:
+			continue
+		var d := origin.distance_to(hit)
+		if d >= best:
+			continue
+		best = d
+		var near := 1e9
+		for v in tri:
+			var dv := last_vertices[v].distance_to(hit)
+			if dv < near:
+				near = dv
+				best_v = v
+	return _stitch_of_vertex[best_v] if best_v >= 0 else -1
+
+# a click at a point of the 3D view: select the stitch under it (or clear the selection)
+func pick_at(pos: Vector2) -> int:
+	var id := pick_ray(cam.project_ray_origin(pos), cam.project_ray_normal(pos))
+	select_stitches(PackedInt32Array([id]) if id >= 0 else PackedInt32Array(), "3d")
+	return id
+
 # ------------------------------------------------------------------------------------------------ the run
 
 func start_run(scene_id: String, load_id: String) -> bool:
@@ -537,6 +652,7 @@ func start_run(scene_id: String, load_id: String) -> bool:
 		return false
 	error_label.text = ""
 	_apply_yarn_look()
+	_index_scene()
 	_running = true
 	_stop_requested = false
 	_frames_total = 0
@@ -648,7 +764,7 @@ func _update_mesh() -> void:
 	var half := 0.5 * sim.get_thickness()
 	var indices := sim.get_indices()
 	var uv := sim.get_vertex_uv()
-	var col := sim.get_vertex_colors()
+	var col := highlight_colours(sim.get_vertex_colors())
 	# two shells: the right side outside (offset along the normal), the wrong side inside (offset against it, winding reversed)
 	var outer := PackedVector3Array()
 	var inner := PackedVector3Array()
