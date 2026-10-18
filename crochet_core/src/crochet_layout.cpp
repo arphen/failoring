@@ -432,6 +432,7 @@ private:
                 }
         // chains of the foundation are in front; the layer behind keeps its x, so the mouth (rows 1 and 50) is on top
         report_.foldAfterRow = k;
+        report_.foldY = yFold;
         report_.openingRows = {reg.rows.front(), reg.rows.back()};
         Real y1 = 0;
         for (const int s : rowKept_[reg.rows.front()]) y1 += pos_[t_.stitchVertex[s]].y;
@@ -813,17 +814,132 @@ private:
 
 }  // namespace
 
+bool flatPosition(const CrochetModel& model, const StitchGraph& g, const LayoutReport& layout, int stitch, Vec2& out) {
+    if (stitch < 0 || stitch >= static_cast<int>(g.st.size()) || model.mesh.x0.empty()) return false;
+    const int v = model.topo.stitchVertex[stitch];
+    if (v < 0) return false;
+    const int row = g.st[stitch].row;
+    for (size_t ri = 0; ri < layout.regions.size(); ++ri) {
+        const LayoutRegion& r = layout.regions[ri];
+        if (row < r.firstRow || row > r.lastRow) continue;
+        const bool flatNext = r.type == LayoutRegion::Foundation && ri + 1 < layout.regions.size() && layout.regions[ri + 1].type == LayoutRegion::Flat;
+        if (r.type != LayoutRegion::Flat && !flatNext) continue;
+        const Vec3& p = model.mesh.x0[v];
+        const bool folded = r.type == LayoutRegion::Flat && layout.foldAfterRow >= r.firstRow && layout.foldAfterRow < r.lastRow && row > layout.foldAfterRow;
+        out = Vec2(p.x, folded ? 2 * layout.foldY - p.y : p.y);
+        return true;
+    }
+    return false;
+}
+
+std::vector<Vec2> chartPositions(const CrochetModel& model, const StitchGraph& g, const LayoutReport& layout) {
+    const size_t n = g.st.size();
+    std::vector<Vec2> out(n, Vec2(0, 0));
+    std::vector<char> have(n, 0), isMain(n, 0);
+    if (model.dims.empty() || model.mesh.x0.empty()) return out;
+    // one chart unit = the size of the typical worked stitch (the median over the stitches that are not chains)
+    std::vector<Real> ws, hs;
+    for (const Stitch& s : g.st)
+        if (s.type != "ch") {
+            ws.push_back(model.dims[s.id].w);
+            hs.push_back(model.dims[s.id].h);
+        }
+    Real w0 = 1, h0 = 1;
+    if (!ws.empty()) {
+        std::nth_element(ws.begin(), ws.begin() + ws.size() / 2, ws.end());
+        std::nth_element(hs.begin(), hs.begin() + hs.size() / 2, hs.end());
+        w0 = ws[ws.size() / 2];
+        h0 = hs[hs.size() / 2];
+    }
+    const std::vector<LayoutRegion>& regs = layout.regions;
+    auto regionOf = [&](int row) {
+        for (size_t i = 0; i < regs.size(); ++i)
+            if (row >= regs[i].firstRow && row <= regs[i].lastRow) return static_cast<int>(i);
+        return -1;
+    };
+    auto typeOf = [&](int ri) {  // a foundation chain goes with the piece that starts on it
+        LayoutRegion::Type t = regs[ri].type;
+        if (t == LayoutRegion::Foundation && ri + 1 < static_cast<int>(regs.size())) t = regs[ri + 1].type;
+        return t;
+    };
+    std::vector<int> regionIdx(n, -1);
+    for (const Stitch& s : g.st) {
+        const int ri = regionOf(s.row), v = model.topo.stitchVertex[s.id];
+        regionIdx[s.id] = ri;
+        if (ri < 0 || v < 0) continue;
+        const LayoutRegion::Type t = typeOf(ri);
+        Vec2 q;
+        if (t == LayoutRegion::Flat && flatPosition(model, g, layout, s.id, q)) {
+            out[s.id] = Vec2(-q.x / w0, -q.y / h0);
+            isMain[s.id] = 1;
+        } else if (t == LayoutRegion::Revolve) {
+            out[s.id] = Vec2(model.mesh.x0[v].x / w0, model.mesh.x0[v].z / w0);
+            isMain[s.id] = 1;
+        } else {
+            out[s.id] = Vec2(s.index, s.row);
+        }
+        have[s.id] = 1;
+    }
+    // the walls of a revolve piece rise straight up, so from above they lie on the base's outline: push each stitch out along the
+    // outline's normal by its height, which unrolls the profile into concentric rings
+    for (size_t ri = 0; ri < regs.size(); ++ri) {
+        if (regs[ri].type != LayoutRegion::Revolve) continue;
+        Real yBase = 1e300;
+        std::map<int, std::vector<int>> rounds;
+        for (const Stitch& s : g.st)
+            if (regionIdx[s.id] == static_cast<int>(ri) && have[s.id]) {
+                rounds[s.row].push_back(s.id);
+                yBase = std::min(yBase, model.mesh.x0[model.topo.stitchVertex[s.id]].y);
+            }
+        std::vector<Vec2> moved = out;
+        for (const auto& kv : rounds) {
+            const std::vector<int>& ids = kv.second;
+            if (ids.size() < 3) continue;
+            Vec2 c(0, 0);
+            for (const int id : ids) c = Vec2(c.x + out[id].x, c.y + out[id].y);
+            c = Vec2(c.x / ids.size(), c.y / ids.size());
+            for (size_t i = 0; i < ids.size(); ++i) {
+                const Vec2 a = out[ids[(i + ids.size() - 1) % ids.size()]], b = out[ids[(i + 1) % ids.size()]], p = out[ids[i]];
+                Real tx = b.x - a.x, ty = b.y - a.y;
+                const Real len = std::sqrt(tx * tx + ty * ty);
+                if (len < 1e-9) continue;
+                Real nx = ty / len, ny = -tx / len;
+                if (nx * (p.x - c.x) + ny * (p.y - c.y) < 0) {
+                    nx = -nx;
+                    ny = -ny;
+                }
+                const Real h = (model.mesh.x0[model.topo.stitchVertex[ids[i]]].y - yBase) / w0;
+                moved[ids[i]] = Vec2(p.x + nx * h, p.y + ny * h);
+            }
+        }
+        out = moved;
+    }
+    // strap and rim rows by (index, row): to the right of the main piece when they would lie on it
+    Vec2 lo(1e300, 1e300), hi(-1e300, -1e300), olo(1e300, 1e300), ohi(-1e300, -1e300);
+    for (const Stitch& s : g.st) {
+        if (!have[s.id]) continue;
+        const Vec2& p = out[s.id];
+        Vec2& l = isMain[s.id] ? lo : olo;
+        Vec2& h = isMain[s.id] ? hi : ohi;
+        l = Vec2(std::min(l.x, p.x), std::min(l.y, p.y));
+        h = Vec2(std::max(h.x, p.x), std::max(h.y, p.y));
+    }
+    if (ohi.x >= olo.x && hi.x >= lo.x && olo.x <= hi.x && ohi.x >= lo.x && olo.y <= hi.y && ohi.y >= lo.y) {
+        const Real dx = hi.x + 4 - olo.x;
+        for (const Stitch& s : g.st)
+            if (have[s.id] && !isMain[s.id]) out[s.id] = Vec2(out[s.id].x + dx, out[s.id].y);
+    }
+    for (const Stitch& s : g.st)  // stitches in no face sit beside the one made before them
+        if (!have[s.id]) out[s.id] = s.prev >= 0 ? Vec2(out[s.prev].x + 0.5, out[s.prev].y) : Vec2(0, 0);
+    return out;
+}
+
 std::vector<Vec2> stitchUv(const CrochetModel& model, const StitchGraph& g, const LayoutReport& layout) {
     std::vector<Vec2> out(g.st.size());
-    for (const Stitch& s : g.st) out[s.id] = Vec2(s.index, s.row);
-    if (model.dims.empty() || model.mesh.x0.empty()) return out;
-    for (const LayoutRegion& r : layout.regions) {
-        if (r.type != LayoutRegion::Flat) continue;
-        for (const Stitch& s : g.st) {
-            const int v = model.topo.stitchVertex[s.id];
-            if (s.row < r.firstRow || s.row > r.lastRow || v < 0) continue;
-            out[s.id] = Vec2(-model.mesh.x0[v].x / model.dims[s.id].w, -model.mesh.x0[v].y / model.dims[s.id].h);
-        }
+    for (const Stitch& s : g.st) {
+        out[s.id] = Vec2(s.index, s.row);
+        Vec2 p;
+        if (!model.dims.empty() && flatPosition(model, g, layout, s.id, p)) out[s.id] = Vec2(-p.x / model.dims[s.id].w, -p.y / model.dims[s.id].h);
     }
     return out;
 }

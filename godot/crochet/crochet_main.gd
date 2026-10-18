@@ -350,9 +350,8 @@ func _build_right() -> Control:
 	var tabs := TabContainer.new()
 	tabs.custom_minimum_size = Vector2(340, 0)
 	chart_holder = Control.new()
+	chart_holder.set_script(load("res://crochet/crochet_chart.gd"))
 	chart_holder.name = "Chart"
-	var chart_note := _label("Chart view: a later step (docs/CROCHET_PLAN.md section 9.1)")
-	chart_holder.add_child(chart_note)
 	tabs.add_child(chart_holder)
 	var mbox := VBoxContainer.new()
 	mbox.name = "Metrics"
@@ -462,6 +461,7 @@ func _finish_compile() -> void:
 	run_btn.disabled = _running
 	var s := pattern.get_summary()
 	status_label.text = _summary_line(s)
+	chart_holder.set_chart(pattern.get_chart())
 	if not _running:
 		_show_metrics_note(s)
 

@@ -53,8 +53,8 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
 | T7.1 | GDExtension CrochetPattern, CrochetScene | T6.4 | done | default | 1 | fd0baf6 | crochet_api_check: 23 PASS headless; CrochetSession (stepper) shared with the CLI; 4 mutations caught |
 | T7.2 | Crochet scene skeleton: panes, CodeEdit live compile, worker thread | T7.1 | done | default | 1 | 706694d | headless crochet_scene_check: 15 PASS; not looked at on screen (headless only); 4 mutations caught |
 | T7.3 | Yarn/hook panel, metrics tab, scene/load menus, editor entry button | T7.2 | done | default | 1 | d0108db | headless test drives each control once: 26 PASS; the one editor.gd change is the Crochet button |
-| T7.4 | Surface shader, double-sided thickness | T7.2 | done | default | 1 | | shader compiles and renders in the real renderer (screenshot docs/crochet-shots/ui/pouch_hang_pin.png); crochet_api_check 26 PASS; mesh/shader not covered headless |
-| T8.1 | Chart view | T7.2 | todo | | 0 | | headless: one symbol per stitch for the pouch |
+| T7.4 | Surface shader, double-sided thickness | T7.2 | done | default | 1 | 66570c6 | shader compiles and renders in the real renderer (screenshot docs/crochet-shots/ui/pouch_hang_pin.png); crochet_api_check 26 PASS; mesh/shader not covered headless |
+| T8.1 | Chart view | T7.2 | done | default | 1 | c87381e | crochet_scene_check 38 PASS (1380 symbols for the pouch, hover/click/zoom); core chartPositions tested on pouch and bag; screenshots in docs/crochet-shots/ui |
 | T8.2 | Selection chart ↔ 3D ↔ pattern line | T8.1 | todo | | 0 | | select stitch 100 → vertex + line |
 | T8.3 | Lego overrides | T8.2 | todo | | 0 | | override gains a line, recompiles, hinges present |
 | T8.4 | Compare + five-variant run | T8.3 | todo | | 0 | | five runs, table with five corner angles |

@@ -69,12 +69,24 @@ struct LayoutRegion {
 struct LayoutReport {
     std::vector<LayoutRegion> regions;
     int foldAfterRow = -1;       // Flat region folded between this row and the next, -1 = no fold
+    Real foldY = 0;              // m, y of the fold line (meaningful when foldAfterRow >= 0)
     std::vector<int> openingRows;  // the rows that form the mouth of a bag: the last revolve round, or the two edge rows of a folded piece
     Real depth = 0;              // m, rest depth of the bag from base (or fold) to mouth
     Real stripArcLength = 0;     // m, total arc length of the strap (0 = none)
     Real stripChord = 0;         // m
     std::vector<std::string> warnings;
 };
+
+// Where a stitch sits in the plane of its Flat region with a fold opened out again: the rows after foldAfterRow are reflected back
+// about the fold line, so the whole piece lies as it was worked (x as laid out, y down the rows). Metres. Returns false when the
+// stitch is in no face or not in a Flat region.
+bool flatPosition(const CrochetModel& model, const StitchGraph& g, const LayoutReport& layout, int stitch, Vec2& out);
+
+// Chart coordinates (stitch units, y up) for the chart view, one per stitch id. Flat pieces lie as they were worked (a fold opened
+// out, row 1 at the bottom); the rounds of a revolve piece are concentric rings seen from above, the walls unrolled outward by
+// their height; a foundation chain goes with the piece it starts; strap and rim rows sit by (index in the row, row), moved to the
+// right of the main piece when they would lie on it; stitches in no face sit beside the stitch made before them.
+std::vector<Vec2> chartPositions(const CrochetModel& model, const StitchGraph& g, const LayoutReport& layout);
 
 // Surface coordinates for texturing (stitch units): u runs along the row, v up the rows. Flat pieces use their physical columns
 // (so the cells of turned rows line up), everything else the index in the row and the row. One entry per stitch id.

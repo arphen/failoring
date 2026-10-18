@@ -219,6 +219,51 @@ int main() {
         }
         CHECKP(yRow1 > yRow25 && yRow50 > yRow25 && std::fabs(yRow1 - yRow50) < 0.01, "pouch: mouth on top: row 1 at y = %.1f mm, row 50 at %.1f mm, the fold (row 25) at %.1f mm", yRow1 * 1e3,
                yRow50 * 1e3, yRow25 * 1e3);
+        // opened out again, the body lies as it was worked: rows go down in order and no two stitches share a place
+        {
+            std::vector<Vec2> flat;
+            std::vector<int> rowOf;
+            Real prevY = 1e9;
+            bool ordered = true;
+            for (int r = 1; r <= 50; ++r) {
+                Real y = 0;
+                int n = 0;
+                for (const Stitch& s : g.st) {
+                    Vec2 q;
+                    if (s.row != r || !flatPosition(cm, g, rep, s.id, q)) continue;
+                    flat.push_back(q);
+                    rowOf.push_back(r);
+                    y += q.y;
+                    ++n;
+                }
+                ordered = ordered && n > 0 && y / n < prevY;
+                if (n > 0) prevY = y / n;
+            }
+            const Real w = cm.dims[g.st.front().id].w;
+            Real nearest = 1e9;
+            for (size_t i = 0; i < flat.size(); ++i)
+                for (size_t j = i + 1; j < flat.size(); ++j) nearest = std::min(nearest, length(flat[i] - flat[j]));
+            CHECKP(flat.size() == 750 && ordered && nearest > 0.5 * w, "pouch unfolded: %zu stitches, rows run down in order (%d), nearest pair %.2f mm (stitch %.2f mm)", flat.size(),
+                   ordered ? 1 : 0, nearest * 1e3, w * 1e3);
+        }
+        // chart: the body is 50 units tall, the border row is the next row up, the strap above it, the foundation chain below row 1
+        {
+            const std::vector<Vec2> ch = chartPositions(cm, g, rep);
+            Real y1 = 0, y50 = 0, y51 = 0, y0 = 0, xs = 0, xb = 0;
+            int n1 = 0, n50 = 0, n51 = 0, n0 = 0, ns = 0, nb = 0;
+            for (const Stitch& s : g.st) {
+                if (s.row == 0 && cm.topo.stitchVertex[s.id] >= 0) { y0 += ch[s.id].y; ++n0; }
+                if (s.row == 1) { y1 += ch[s.id].y; ++n1; }
+                if (s.row == 50) { y50 += ch[s.id].y; ++n50; }
+                if (s.row == 51) { y51 += ch[s.id].y; ++n51; }
+                if (s.row == 52) { xs += ch[s.id].x; ++ns; }
+                if (s.row == 25) { xb += ch[s.id].x; ++nb; }
+            }
+            y0 /= n0; y1 /= n1; y50 /= n50; y51 /= n51; xs /= ns; xb /= nb;
+            CHECKP(std::fabs((y50 - y1) - 49) < 3 && y1 > y0 && y51 > y50 && std::fabs(y51 - y50 - 1) < 1.5 && xs > xb,
+                   "pouch chart: 50 rows are %.1f units tall, foundation %.1f below row 1, border %.1f above row 50, strap right of the body (x %.1f vs %.1f)", y50 - y1, y1 - y0,
+                   y51 - y50, xs, xb);
+        }
         // the strap: 80 rows x h
         const StitchDims sc = cm.dims[g.st[16].id];
         CHECKP(std::fabs(rep.stripArcLength / (80 * sc.h) - 1) < 0.02, "pouch strap: arc length %.1f mm = 80 rows x %.2f mm within 2 %%", rep.stripArcLength * 1e3, sc.h * 1e3);
@@ -361,6 +406,72 @@ int main() {
         // the plan's smoothing (spacing w, target weight 0.1) trades a little span for even stitches: 4.8 w of 5 w
         CHECKP(rep.warnings.empty() && minGap > 0.9 * w && (xmax - xmin) > 0.94 * 5 * w && (xmax - xmin) <= 5 * w + 1e-12,
                "increase row: stitches at least %.2f mm apart (w = %.2f mm), the row spans %.2f mm of 5 w = %.2f mm", minGap * 1e3, w * 1e3, (xmax - xmin) * 1e3, 5 * w * 1e3);
+    }
+    {
+        // chart of the bag: the rounds are concentric rings that keep growing up the walls, no two stitches on one spot, the strap clear
+        const CrochetModel& cm = models["bag_round_plain"];
+        const StitchGraph& g = graphs["bag_round_plain"];
+        const LayoutReport& rep = reports["bag_round_plain"];
+        const std::vector<Vec2> ch = chartPositions(cm, g, rep);
+        int first = -1, last = -1;
+        for (const LayoutRegion& r : rep.regions)
+            if (r.type == LayoutRegion::Revolve) {
+                first = r.firstRow;
+                last = r.lastRow;
+            }
+        bool growing = first >= 0;
+        Real prev = -1, lastR = 0;
+        std::vector<Vec2> ring;
+        Vec2 lo(1e300, 1e300), hi(-1e300, -1e300), slo(1e300, 1e300), shi(-1e300, -1e300);
+        for (int row = first; row <= last; ++row) {
+            Vec2 c(0, 0);
+            int n = 0;
+            for (const Stitch& s : g.st)
+                if (s.row == row && cm.topo.stitchVertex[s.id] >= 0) {
+                    c = Vec2(c.x + ch[s.id].x, c.y + ch[s.id].y);
+                    ++n;
+                }
+            if (n == 0) continue;
+            c = Vec2(c.x / n, c.y / n);
+            Real r = 0;
+            for (const Stitch& s : g.st)
+                if (s.row == row && cm.topo.stitchVertex[s.id] >= 0) {
+                    r += length(ch[s.id] - c) / n;
+                    ring.push_back(ch[s.id]);
+                    lo = Vec2(std::min(lo.x, ch[s.id].x), std::min(lo.y, ch[s.id].y));
+                    hi = Vec2(std::max(hi.x, ch[s.id].x), std::max(hi.y, ch[s.id].y));
+                }
+            growing = growing && r > prev;
+            prev = r;
+            lastR = r;
+        }
+        Real nearest = 1e9;
+        for (size_t i = 0; i < ring.size(); ++i)
+            for (size_t j = i + 1; j < ring.size(); ++j) nearest = std::min(nearest, length(ring[i] - ring[j]));
+        for (const Stitch& s : g.st)
+            if (s.row > last && cm.topo.stitchVertex[s.id] >= 0) {
+                slo = Vec2(std::min(slo.x, ch[s.id].x), std::min(slo.y, ch[s.id].y));
+                shi = Vec2(std::max(shi.x, ch[s.id].x), std::max(shi.y, ch[s.id].y));
+            }
+        const bool clear = slo.x > hi.x || shi.x < lo.x || slo.y > hi.y || shi.y < lo.y;
+        CHECKP(growing && nearest > 0.3 && clear, "bag chart: rounds %d-%d are concentric rings growing out to %.1f units (%d), nearest pair %.2f units, the strap clear of them (%d)", first, last,
+               lastR, growing ? 1 : 0, nearest, clear ? 1 : 0);
+    }
+    {
+        // a piece three times as big has rings that reach the strap's place: the strap then moves to the right of them
+        CrochetModel big = models["bag_round_plain"];
+        for (Vec3& p : big.mesh.x0) p = p * 3.0;
+        const StitchGraph& g = graphs["bag_round_plain"];
+        const std::vector<Vec2> ch = chartPositions(big, g, reports["bag_round_plain"]);
+        Real ringMaxX = -1e300, strapMinX = 1e300, ringMaxY = -1e300, strapMinY = 1e300;
+        for (const Stitch& s : g.st) {
+            if (big.topo.stitchVertex[s.id] < 0) continue;
+            const bool ring = s.row >= 1 && s.row <= 44;
+            if (ring) ringMaxX = std::max(ringMaxX, ch[s.id].x), ringMaxY = std::max(ringMaxY, ch[s.id].y);
+            if (s.row >= 45) strapMinX = std::min(strapMinX, ch[s.id].x), strapMinY = std::min(strapMinY, ch[s.id].y);
+        }
+        CHECKP(strapMinX > ringMaxX && ringMaxY > strapMinY, "bag chart, 3x size: the rings reach y %.0f, the strap (from y %.0f) is moved right of them (x %.0f > %.0f)", ringMaxY, strapMinY,
+               strapMinX, ringMaxX);
     }
     {
         // an inside-out mesh (every winding reversed) must still end with the right side up: the placement is mirrored

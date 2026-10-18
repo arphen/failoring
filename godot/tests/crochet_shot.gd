@@ -15,6 +15,17 @@ func _ready() -> void:
 		var frames := int(OS.get_environment("FL_SHOT_FRAMES")) if OS.has_environment("FL_SHOT_FRAMES") else 450
 		c.run_frames(frames)
 		c._show_metrics()
+	# zoom the chart: FL_SHOT_CHART_FOCUS=<stitch id>, or FL_SHOT_CHART_ROW=<row> FL_SHOT_CHART_INDEX=<index in the row>; FL_SHOT_CHART_ZOOM=<factor>
+	var focus := -1
+	if OS.has_environment("FL_SHOT_CHART_FOCUS"):
+		focus = int(OS.get_environment("FL_SHOT_CHART_FOCUS"))
+	elif OS.has_environment("FL_SHOT_CHART_ROW"):
+		for sy in c.chart_holder.symbols:
+			if sy["row"] == int(OS.get_environment("FL_SHOT_CHART_ROW")) and sy["index"] == int(OS.get_environment("FL_SHOT_CHART_INDEX")):
+				focus = sy["id"]
+	if focus >= 0:
+		c.chart_holder.focus(focus, float(OS.get_environment("FL_SHOT_CHART_ZOOM")) if OS.has_environment("FL_SHOT_CHART_ZOOM") else 10.0)
+		c.chart_holder.select_stitch(focus)
 	for i in 4:
 		await get_tree().process_frame
 	var out := OS.get_environment("FL_SHOT_OUT") if OS.has_environment("FL_SHOT_OUT") else "/tmp/crochet_shot.png"

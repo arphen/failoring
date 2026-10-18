@@ -197,30 +197,8 @@ Dictionary CrochetPattern::get_chart() const {
     if (!compiled_) return chart;
     const_cast<CrochetPattern*>(this)->rebuild_model();
     if (!modelReady_) return chart;
-    // chart coordinates in stitch units, from the layout: flat pieces as laid out (row 1 at the bottom, y up), rounds from above,
-    // everything else beside it
-    const int n = static_cast<int>(graph_.st.size());
-    std::vector<double> cx(n, 0), cy(n, 0);
-    std::vector<char> have(n, 0);
-    const double w0 = model_.dims.empty() ? 1 : model_.dims[std::min(6, n - 1)].w, h0 = model_.dims.empty() ? 1 : model_.dims[std::min(6, n - 1)].h;
-    for (const fl::LayoutRegion& r : layout_.regions) {
-        for (const fl::Stitch& s : graph_.st) {
-            if (s.row < r.firstRow || s.row > r.lastRow || model_.topo.stitchVertex[s.id] < 0) continue;
-            const fl::Vec3& p = model_.mesh.x0[model_.topo.stitchVertex[s.id]];
-            switch (r.type) {
-                case fl::LayoutRegion::Flat: cx[s.id] = -p.x / w0; cy[s.id] = -p.y / h0; break;
-                case fl::LayoutRegion::Revolve: cx[s.id] = p.x / w0; cy[s.id] = p.z / w0; break;
-                default: cx[s.id] = s.index; cy[s.id] = s.row; break;
-            }
-            have[s.id] = 1;
-        }
-    }
-    for (const fl::Stitch& s : graph_.st)  // dropped nodes sit beside their predecessor
-        if (!have[s.id]) {
-            const int p = s.prev;
-            cx[s.id] = p >= 0 ? cx[p] + 0.5 : 0;
-            cy[s.id] = p >= 0 ? cy[p] : 0;
-        }
+    // chart coordinates in stitch units, from the layout (see fl::chartPositions)
+    const std::vector<fl::Vec2> pos = fl::chartPositions(model_, graph_, layout_);
     Array stitches;
     for (const fl::Stitch& s : graph_.st) {
         Dictionary d;
@@ -236,8 +214,8 @@ Dictionary CrochetPattern::get_chart() const {
         PackedInt32Array targets;
         for (const int t : s.targets) targets.push_back(t);
         d["targets"] = targets;
-        d["x"] = cx[s.id];
-        d["y"] = cy[s.id];
+        d["x"] = pos[s.id].x;
+        d["y"] = pos[s.id].y;
         d["in_mesh"] = model_.topo.stitchVertex[s.id] >= 0;
         stitches.push_back(d);
     }

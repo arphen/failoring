@@ -13,7 +13,7 @@ acceptance, with the measured numbers. Honest numbers; "not measured" where not 
 | 4 | DSL + graph (§5) | all fixtures compile with the stated counts, error-message tests | done (T4.0-T4.2, 2026-10-17) |
 | 5 | Mesh + layout + relax (§6) | flat/cup/ruffle circle, tube, swatch size, hinge sign, mass | done (T5.1-T5.4, 2026-10-18) |
 | 6 | Scenes + load + metrics + CLI (§7) | strap analytic, force balance, settle, fit checks; PNG snapshots of all fixtures in docs/crochet-shots/ | in progress (T6.1-T6.4 done) |
-| 7 | Godot bindings + scene (§8) | crochet_api_check passes; the user can open, edit, run, and see the pouch hang on their Mac | in progress (T7.1-T7.4 done) |
+| 7 | Godot bindings + scene (§8) | crochet_api_check passes; the user can open, edit, run, and see the pouch hang on their Mac | in progress (T7.1-T7.4, T8.1 done) |
 | 8 | Chart, lego, compare (§9) | five-variant comparison runs from one click; the table shows different corner angles | todo |
 | 9 | Calibration (§10) | a swatch record changes the result and the UI says "calibrated" | todo |
 | 10 | Yarn-level look (§12) | optional | not started |
@@ -286,4 +286,11 @@ acceptance, with the measured numbers. Honest numbers; "not measured" where not 
   load menus, bundled-pattern menu, Open / Save as, run on a worker thread, Metrics tab, orbit camera, and a "Crochet" button in the
   editor. Headless `crochet_scene_check`: 26 PASS; `crochet_api_check`: 26 PASS.
 * T7.4: two-shell cloth with a stitch-relief shader (`crochet_surface.gdshader`). Seen on screen once (real renderer):
-  `docs/crochet-shots/ui/pouch_hang_pin.png`. Chart tab is a placeholder until T8.1.
+  `docs/crochet-shots/ui/pouch_hang_pin.png`. The Chart tab got its view in T8.1.
+
+### 2026-10-18 — T8.1 chart view (phase 8, item 1)
+
+* `crochet_chart.gd` in the Chart tab: US symbols (ch, sl st, sc, hdc, dc, tr, BLO/FLO arcs, join and seam colours), hover read-out with
+  the pattern line, click select, wheel zoom, drag pan. Placement is `fl::chartPositions`: flat pieces with the fold opened out
+  (pouch body 50 rows), revolve rounds as concentric rings with the walls unrolled (bag: 44 rings), strap and rim beside them.
+  `crochet_scene_check` 38 PASS, `test_crochet_layout` passes with 3 new checks. Screenshots in docs/crochet-shots/ui/.
