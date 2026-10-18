@@ -253,7 +253,8 @@ Metrics computeMetrics(const MetricsInput& in) {
             sum += std::acos(c) * 180 / kPi;
             ++cnt;
         }
-        m.corner_angle_deg = cnt > 0 ? 180 - sum / cnt : 180;
+        m.hasCorner = cnt > 0;
+        m.corner_angle_deg = cnt > 0 ? 180 - sum / cnt : 0;
     }
 
     // strain per triangle
@@ -337,7 +338,7 @@ std::string Metrics::toJson() const {
     key("strap_length_loaded_cm", opt(hasStrap && hasHang, strap_length_loaded_cm));
     key("strap_elongation_pct", opt(hasStrap && hasHang, strap_elongation_pct));
     key("base_sag_mm", opt(hasBase, base_sag_mm));
-    key("corner_angle_deg", opt(hasBase, corner_angle_deg));
+    key("corner_angle_deg", opt(hasCorner, corner_angle_deg));
     key("strain_wale_max", num(strain_wale_max));
     key("strain_wale_p95", num(strain_wale_p95));
     key("strain_course_max", num(strain_course_max));

@@ -51,7 +51,8 @@ add_library(crochet_core STATIC
   crochet_core/src/snapshot.cpp
   crochet_core/src/crochet_relax.cpp
   crochet_core/src/crochet_scene.cpp
-  crochet_core/src/crochet_metrics.cpp)
+  crochet_core/src/crochet_metrics.cpp
+  crochet_core/src/crochet_run.cpp)
 target_include_directories(crochet_core PUBLIC crochet_core/include)
 target_link_libraries(crochet_core PUBLIC cloth_core)
 target_compile_options(crochet_core PRIVATE -Wall -Wextra)
@@ -131,6 +132,18 @@ target_link_libraries(test_crochet_metrics PRIVATE crochet_core)
 target_include_directories(test_crochet_metrics PRIVATE cloth_core/tests)
 target_compile_definitions(test_crochet_metrics PRIVATE FL_PATTERNS_DIR="${FL_PATTERNS_DIR}" FL_YARNS_PATH="${FL_YARNS_PATH}")
 add_test(NAME test_crochet_metrics COMMAND test_crochet_metrics)
+
+# The command line tool of plan section 7.1: pattern -> relax -> hang -> load -> metrics, OBJ and PNG.
+add_executable(crochet_cli crochet_core/cli/crochet_cli.cpp)
+target_link_libraries(crochet_cli PRIVATE crochet_core)
+
+# crochet_core test: runCrochet and the crochet_cli tool (exit codes, JSON / OBJ / PNG outputs, every relax-only fixture, the pouch).
+add_executable(test_crochet_cli crochet_core/tests/test_crochet_cli.cpp)
+target_link_libraries(test_crochet_cli PRIVATE crochet_core)
+add_dependencies(test_crochet_cli crochet_cli)
+target_include_directories(test_crochet_cli PRIVATE cloth_core/tests)
+target_compile_definitions(test_crochet_cli PRIVATE FL_PATTERNS_DIR="${FL_PATTERNS_DIR}" FL_YARNS_PATH="${FL_YARNS_PATH}" FL_OUT_DIR="${FL_OUT_DIR}" FL_CLI_PATH="$<TARGET_FILE:crochet_cli>")
+add_test(NAME test_crochet_cli COMMAND test_crochet_cli)
 
 # Native timing (not in ctest): cmake -DFL_BENCH=ON, then build/bench_native.
 option(FL_BENCH "Build the native timing benchmark (bench_native), not run by ctest" OFF)
