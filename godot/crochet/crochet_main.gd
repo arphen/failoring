@@ -10,6 +10,7 @@ const Look = preload("res://look.gd")
 const YARNS_PATH := "res://materials/yarns.json"
 const COMPILE_DELAY := 0.4
 const Cloth = preload("res://crochet/crochet_cloth.gd")
+const Records = preload("res://crochet/crochet_records.gd")
 const HANG_Y := 1.35    # the hang point is put this high in the studio (metres)
 
 # ---- state
@@ -72,6 +73,8 @@ var _vertex_of_stitch := PackedInt32Array()
 var _indices := PackedInt32Array()
 var _line_stitches := {}                      # pattern line (1-based) -> PackedInt32Array of stitch ids
 var compare_view: Control                     # crochet_compare.gd
+var calibrate_view: Control                   # crochet_calibrate.gd
+var records: Array = []                       # the calibration records (crochet_records.gd)
 var edit_menu: PopupMenu                      # the right-click menu of the chart (plan 9.2)
 var _whole_row := false                       # "whole row" ticked in that menu
 const OVERRIDE_MODS := ["sc", "hdc", "dc", "tr", "slst", "blo", "flo", "both"]
@@ -83,6 +86,7 @@ func _ready() -> void:
 	if OS.has_environment("FL_SYNC"):
 		_use_worker = false
 	_load_yarns()
+	records = Records.load_all(Records.path())
 	_build_ui()
 	_debounce = Timer.new()
 	_debounce.one_shot = true
@@ -152,6 +156,11 @@ func _build_ui() -> void:
 	compare_view.visible = false
 	add_child(compare_view)
 	compare_view.closed.connect(func() -> void: set_process(true))
+	calibrate_view = Control.new()   # the swatch calibration wizard
+	calibrate_view.set_script(load("res://crochet/crochet_calibrate.gd"))
+	calibrate_view.visible = false
+	add_child(calibrate_view)
+	calibrate_view.records_changed.connect(_reload_records)
 
 func _small(text: String, tip := "") -> Button:
 	var b := Button.new()
@@ -191,6 +200,9 @@ func _build_top_bar() -> Control:
 	var compare := _small("Compare", "Two patterns or settings side by side, or the five hinge-round variants of the laptop bag")
 	compare.pressed.connect(func() -> void: compare_view.visible = true)
 	bar.add_child(compare)
+	var calibrate := _small("Calibrate", "Measure a swatch of this yarn on this hook: the stitch model then uses your numbers instead of the starter values")
+	calibrate.pressed.connect(func() -> void: open_calibration())
+	bar.add_child(calibrate)
 	phase_label = _label("")
 	phase_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	bar.add_child(phase_label)
@@ -421,7 +433,25 @@ func _make_pattern() -> CrochetPattern:
 		p.set_yarn(String(yarn_opt.get_item_metadata(yarn_opt.selected)))
 	p.set_hook(hook_spin.value)
 	p.set_tension(tension_spin.value)
+	p.set_calibration(record_for(String(yarn_opt.get_item_metadata(yarn_opt.selected)) if yarn_opt.item_count > 0 else "", hook_spin.value))
 	return p
+
+# the hook in mm that a panel value stands for (0 = the yarn's own)
+func effective_hook(yarn: String, hook: float) -> float:
+	if hook > 0:
+		return hook
+	for y in _yarns:
+		if String(y.get("id", "")) == yarn:
+			return float(y.get("hook_mm", 5.0))
+	return 5.0
+
+# the calibration record for a yarn on a hook (panel value, 0 = the yarn's), or {} (the starter values)
+func record_for(yarn: String, hook: float) -> Dictionary:
+	return Records.find(records, yarn, effective_hook(yarn, hook), "sc")
+
+func _reload_records() -> void:
+	records = Records.load_all(Records.path())
+	_settings_changed()
 
 func _start_compile() -> void:
 	if _compile_thread != null and _compile_thread.is_started():
@@ -478,8 +508,8 @@ func _finish_compile() -> void:
 func _summary_line(s: Dictionary) -> String:
 	if s.has("error"):
 		return "%d stitches (model: %s)" % [int(s.get("stitches", 0)), String(s["error"])]
-	return "%d stitches, %.0f m of yarn, %.0f g, layout %.1f x %.1f cm" % [int(s.get("stitches", 0)), float(s.get("yarn_m", 0.0)), float(s.get("mass_g", 0.0)),
-		float(s.get("flat_width_cm", 0.0)), float(s.get("flat_height_cm", 0.0))]
+	return "%d stitches, %.0f m of yarn, %.0f g, layout %.1f x %.1f cm%s" % [int(s.get("stitches", 0)), float(s.get("yarn_m", 0.0)), float(s.get("mass_g", 0.0)),
+		float(s.get("flat_width_cm", 0.0)), float(s.get("flat_height_cm", 0.0)), " (calibrated)" if bool(s.get("calibrated", false)) else ""]
 
 func compile_now() -> bool:
 	_debounce.stop()
@@ -846,17 +876,36 @@ func _frame_camera(pos: PackedVector3Array) -> void:
 func _update_props() -> void:
 	Cloth.place_props(sim, load_node, peg_node, Vector3(0, _y_offset, 0))
 
+func open_calibration() -> void:
+	var y := String(yarn_opt.get_item_metadata(yarn_opt.selected)) if yarn_opt.item_count > 0 else "acrylic_worsted"
+	calibrate_view.open(y, effective_hook(y, hook_spin.value))
+	calibrate_view.visible = true
+
+# "calibrated" with what was measured, or the UNVERIFIED warning (plan section 10)
+func calibration_banner(yarn: String, hook: float) -> String:
+	var rec := record_for(yarn, hook)
+	if rec.is_empty():
+		return "[color=#e0a040]UNVERIFIED starter values[/color] (no calibration)"
+	var parts: Array[String] = []
+	for pair in [["w", "gauge"], ["density", "weight"], ["bendWale", "cantilever"], ["kWale", "stretch"], ["hinge", "hinge"]]:
+		if rec.has(pair[0]):
+			parts.append(pair[1])
+	return "[color=#70c070]Calibrated[/color]: swatch of %s, %s on %.2f mm (%s)" % [String(rec.get("date", "?")), String(rec["yarn"]), float(rec["hook_mm"]), ", ".join(parts)]
+
 # ------------------------------------------------------------------------------------------------ metrics
 
+func _panel_yarn() -> String:
+	return String(yarn_opt.get_item_metadata(yarn_opt.selected)) if yarn_opt.item_count > 0 else ""
+
 func _show_metrics_note(s: Dictionary) -> void:
-	metrics_text.text = "[i]Run the pattern to see the numbers.[/i]\n\n[color=#e0a040]UNVERIFIED starter values[/color]: the stitch model uses the plan's starter constants (not calibrated).\n\n" + \
+	metrics_text.text = "[i]Run the pattern to see the numbers.[/i]\n\n" + calibration_banner(_panel_yarn(), hook_spin.value) + "\n\n" + \
 		"Pattern: %d stitches, %d rows" % [int(s.get("stitches", 0)), int(s.get("rows", 0))]
 
 func _show_metrics() -> void:
 	if sim == null:
 		return
 	var m := sim.get_metrics()
-	var t := "[color=#e0a040]UNVERIFIED starter values[/color] (no calibration)\n\n[table=2]"
+	var t := calibration_banner(_panel_yarn(), hook_spin.value) + "\n\n[table=2]"
 	for k in m.keys():
 		var v = m[k]
 		var vs := "-"

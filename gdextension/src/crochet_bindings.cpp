@@ -96,6 +96,90 @@ TypedArray<Dictionary> CrochetPattern::get_errors() const {
     return out;
 }
 
+// ---- calibration records <-> fl::Calibration -------------------------------------------------------------------------------
+
+static double num(const Dictionary& d, const char* key, double dflt = 0) {
+    return d.has(key) && (d[key].get_type() == Variant::FLOAT || d[key].get_type() == Variant::INT) ? static_cast<double>(d[key]) : dflt;
+}
+
+// A record has the keys of the parts that were measured: w+h (gauge), density, bendWale+bendCourse (cantilever), kWale+kCourse (stretch,
+// with lockWale, lockCourse, lockRatio), hinge: {name: {bendScale, restAngleDeg}}.
+static fl::Calibration calibrationFromRecord(const Dictionary& r) {
+    fl::Calibration c;
+    if (num(r, "w") > 0 && num(r, "h") > 0) {
+        c.gauge = true;
+        c.w = num(r, "w");
+        c.h = num(r, "h");
+    }
+    if (num(r, "density") > 0) {
+        c.mass = true;
+        c.density = num(r, "density");
+    }
+    if (num(r, "bendWale") > 0 && num(r, "bendCourse") > 0) {
+        c.cantilever = true;
+        c.bendWale = num(r, "bendWale");
+        c.bendCourse = num(r, "bendCourse");
+    }
+    if (num(r, "kWale") > 0 && num(r, "kCourse") > 0) {
+        c.stretch = true;
+        c.kWale = num(r, "kWale");
+        c.kCourse = num(r, "kCourse");
+        c.lockWale = num(r, "lockWale", 1.0);
+        c.lockCourse = num(r, "lockCourse", 1.0);
+        c.lockRatio = num(r, "lockRatio", 1.0);
+    }
+    if (r.has("hinge") && r["hinge"].get_type() == Variant::DICTIONARY) {
+        const Dictionary h = r["hinge"];
+        const Array keys = h.keys();
+        for (int i = 0; i < keys.size(); ++i) {
+            if (h[keys[i]].get_type() != Variant::DICTIONARY) continue;
+            const Dictionary e = h[keys[i]];
+            fl::HingeCalibration hc;
+            hc.bendScale = num(e, "bendScale", 1.0);
+            hc.restAngleDeg = num(e, "restAngleDeg", 0.0);
+            c.hinge[toStd(String(keys[i]))] = hc;
+        }
+    }
+    return c;
+}
+
+static Dictionary recordFromCalibration(const fl::Calibration& c) {
+    Dictionary r;
+    if (c.gauge) {
+        r["w"] = c.w;
+        r["h"] = c.h;
+    }
+    if (c.mass) r["density"] = c.density;
+    if (c.cantilever) {
+        r["bendWale"] = c.bendWale;
+        r["bendCourse"] = c.bendCourse;
+    }
+    if (c.stretch) {
+        r["kWale"] = c.kWale;
+        r["kCourse"] = c.kCourse;
+        r["lockWale"] = c.lockWale;
+        r["lockCourse"] = c.lockCourse;
+        r["lockRatio"] = c.lockRatio;
+    }
+    if (!c.hinge.empty()) {
+        Dictionary h;
+        for (const auto& kv : c.hinge) {
+            Dictionary e;
+            e["bendScale"] = kv.second.bendScale;
+            e["restAngleDeg"] = kv.second.restAngleDeg;
+            h[String(kv.first.c_str())] = e;
+        }
+        r["hinge"] = h;
+    }
+    return r;
+}
+
+void CrochetPattern::set_calibration(const Dictionary& record) {
+    cal_ = calibrationFromRecord(record);
+    modelReady_ = false;
+}
+Dictionary CrochetPattern::get_calibration() const { return recordFromCalibration(cal_); }
+
 void CrochetPattern::set_yarn(const String& id) {
     yarn_id_ = toStd(id);
     modelReady_ = false;
@@ -140,6 +224,7 @@ void CrochetPattern::rebuild_model() {
         fl::ModelOptions mo;
         mo.hook_m = (hook_mm_ > 0 ? hook_mm_ : y->hookMm) * 1e-3;
         mo.tension = tension_;
+        mo.calibration = calibration();
         model_ = fl::buildCrochetModel(graph_, *y, mo);
         layout_ = fl::layoutModel(model_, graph_);
         modelReady_ = true;
@@ -167,6 +252,7 @@ Dictionary CrochetPattern::get_summary() const {
     const fl::Yarn* y = book_.find(yarn_id_);
     d["skeins"] = y != nullptr && y->metres > 0 ? yarn / y->metres : 0.0;
     d["hook_mm"] = hook_mm_ > 0 ? hook_mm_ : (y != nullptr ? y->hookMm : 0.0);
+    d["calibrated"] = calibration() != nullptr;
     d["hinge_mods"] = static_cast<int>(model_.mesh.hingeMods.size());  // edges with their own bending (BLO/FLO rows, joins)
     d["vertices"] = static_cast<int>(model_.topo.vertexStitch.size());
     d["faces"] = static_cast<int>(model_.mesh.tris.size());
@@ -252,10 +338,99 @@ void CrochetPattern::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_hook", "mm"), &CrochetPattern::set_hook);
     ClassDB::bind_method(D_METHOD("get_hook"), &CrochetPattern::get_hook);
     ClassDB::bind_method(D_METHOD("set_tension", "tension"), &CrochetPattern::set_tension);
+    ClassDB::bind_method(D_METHOD("set_calibration", "record"), &CrochetPattern::set_calibration);
+    ClassDB::bind_method(D_METHOD("get_calibration"), &CrochetPattern::get_calibration);
     ClassDB::bind_method(D_METHOD("get_yarn_ids"), &CrochetPattern::get_yarn_ids);
     ClassDB::bind_method(D_METHOD("get_yarn_info", "id"), &CrochetPattern::get_yarn_info);
     ClassDB::bind_method(D_METHOD("set_tools_dir", "dir"), &CrochetPattern::set_tools_dir);
     ClassDB::bind_method(D_METHOD("is_compiled"), &CrochetPattern::is_compiled);
+}
+
+// ---- CrochetCalibration ------------------------------------------------------------------------------------------------
+
+static fl::StretchMeasurement stretchFrom(const Dictionary& d, const char* key) {
+    fl::StretchMeasurement s;
+    if (!d.has(key) || d[key].get_type() != Variant::DICTIONARY) return s;
+    const Dictionary e = d[key];
+    s.widthCm = num(e, "width_cm", 10);
+    s.l0Mm = num(e, "l0_mm", 100);
+    s.w1G = num(e, "w1_g");
+    s.w2G = num(e, "w2_g");
+    s.l1Mm = num(e, "l1_mm");
+    s.l2Mm = num(e, "l2_mm");
+    return s;
+}
+
+Dictionary CrochetCalibration::fit(const Dictionary& m) const {
+    fl::SwatchMeasurements sm;
+    sm.stitchesPer10cm = num(m, "stitches_per_10cm");
+    sm.rowsPer10cm = num(m, "rows_per_10cm");
+    sm.massG = num(m, "mass_g");
+    sm.widthCm = num(m, "width_cm");
+    sm.heightCm = num(m, "height_cm");
+    sm.stitches = static_cast<int>(num(m, "stitches"));
+    sm.rows = static_cast<int>(num(m, "rows"));
+    sm.overhangWaleMm = num(m, "overhang_wale_mm");
+    sm.overhangCourseMm = num(m, "overhang_course_mm");
+    sm.wale = stretchFrom(m, "wale");
+    sm.course = stretchFrom(m, "course");
+    const fl::CalibrationFit f = fl::fitCalibration(sm);
+    Dictionary out;
+    out["record"] = recordFromCalibration(f.cal);
+    Array notes, errors;
+    for (const std::string& s : f.notes) notes.push_back(String(s.c_str()));
+    for (const std::string& s : f.errors) errors.push_back(String(s.c_str()));
+    out["notes"] = notes;
+    out["errors"] = errors;
+    out["lock_reached_wale"] = f.lockReachedWale;
+    out["lock_reached_course"] = f.lockReachedCourse;
+    out["empty"] = !f.any();
+    return out;
+}
+
+bool CrochetCalibration::load_yarns(const String& path) {
+    try {
+        const std::string text = readTextFile(toStd(path));  // res:// and user:// paths too
+        book_ = fl::loadYarnsFromString(text);
+        have_book_ = !text.empty();
+    } catch (const std::exception&) {
+        have_book_ = false;
+    }
+    return have_book_;
+}
+
+Dictionary CrochetCalibration::compare(const String& yarn_id, double hook_mm, const Dictionary& record) const {
+    Dictionary out;
+    const fl::Yarn* y = have_book_ ? book_.find(toStd(yarn_id)) : nullptr;
+    if (y == nullptr) return out;
+    const double hook = (hook_mm > 0 ? hook_mm : y->hookMm) * 1e-3;
+    const fl::Calibration cal = calibrationFromRecord(record);
+    auto one = [&](const fl::Calibration* c) {
+        const fl::StitchDims d = fl::stitchDims(*y, hook, 1.0, fl::StitchType::Sc, fl::Insertion::Both, c);
+        const fl::StitchMech mech = fl::stitchMech(*y, hook, 1.0, fl::StitchType::Sc, fl::Insertion::Both, c);
+        Dictionary e;
+        e["w_mm"] = d.w * 1e3;
+        e["h_mm"] = d.h * 1e3;
+        e["yarn_mm"] = d.yarnLen * 1e3;
+        e["density"] = mech.density;
+        e["kWale"] = mech.kWale;
+        e["kCourse"] = mech.kCourse;
+        e["lockWale"] = mech.lockWale;
+        e["lockCourse"] = mech.lockCourse;
+        e["lockRatio"] = mech.lockRatio;
+        e["bendWale"] = mech.bendWale;
+        e["bendCourse"] = mech.bendCourse;
+        return e;
+    };
+    out["starter"] = one(nullptr);
+    out["calibrated"] = one(&cal);
+    return out;
+}
+
+void CrochetCalibration::_bind_methods() {
+    ClassDB::bind_method(D_METHOD("fit", "measurements"), &CrochetCalibration::fit);
+    ClassDB::bind_method(D_METHOD("load_yarns", "path"), &CrochetCalibration::load_yarns);
+    ClassDB::bind_method(D_METHOD("compare", "yarn_id", "hook_mm", "record"), &CrochetCalibration::compare);
 }
 
 // ---- CrochetScene ------------------------------------------------------------------------------------------------
@@ -273,6 +448,7 @@ bool CrochetScene::build(const Ref<CrochetPattern>& pattern, const String& scene
         fl::ModelOptions mo;
         mo.hook_m = (pattern->hook_mm() > 0 ? pattern->hook_mm() : y->hookMm) * 1e-3;
         mo.tension = pattern->tension();
+        mo.calibration = pattern->calibration();  // the session builds its model in the constructor, while the pattern is alive
         fl::SessionSettings ss;
         ss.scene = toStd(scene);
         ss.load = toStd(load);

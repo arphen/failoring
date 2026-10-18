@@ -18,6 +18,7 @@ signal closed
 class Slot:
 	var label := ""
 	var text := ""
+	var record := {}          # its calibration record ({} = the starter values)
 	var yarn := ""            # yarn id
 	var hook := 0.0           # mm, 0 = the yarn's
 	var tension := 1.0
@@ -243,6 +244,7 @@ func add_slot(label: String, text: String, yarn: String, hook: float, tension: f
 	s.yarn = yarn
 	s.hook = hook
 	s.tension = tension
+	s.record = main.record_for(yarn, hook) if main != null else {}
 	s.mat_rs = Cloth.make_material(0.0)
 	s.mat_ws = Cloth.make_material(1.0)
 	s.node = Node3D.new()
@@ -352,6 +354,7 @@ func _prepare(s: Slot) -> void:
 	p.set_yarn(s.yarn)
 	p.set_hook(s.hook)
 	p.set_tension(s.tension)
+	p.set_calibration(s.record)
 	if not p.compile(s.text, YARNS_PATH):
 		var msgs: Array[String] = []
 		for e in p.get_errors():
@@ -548,7 +551,16 @@ func table_bbcode() -> String:
 		return "[i]Nothing to compare yet.[/i]"
 	var two := slots.size() == 2
 	var cols := slots.size() + 1 + (1 if two else 0)
-	var t := "[color=#e0a040]UNVERIFIED starter values[/color] (no calibration); bold = the pieces differ in a key number\n\n[font_size=13][table=%d]" % cols
+	var cal: Array[String] = []
+	for s in slots:
+		if not s.record.is_empty():
+			cal.append(String(s.label))
+	var banner := "[color=#e0a040]UNVERIFIED starter values[/color] (no calibration)"
+	if cal.size() == slots.size():
+		banner = "[color=#70c070]Calibrated[/color] (swatch records)"
+	elif not cal.is_empty():
+		banner = "[color=#e0a040]UNVERIFIED[/color] except %s (calibrated)" % ", ".join(cal)
+	var t := banner + "; bold = the pieces differ in a key number\n\n[font_size=13][table=%d]" % cols
 	t += "[cell expand=34]metric[/cell]"
 	for s in slots:
 		t += "[cell expand=12][b]%s[/b][/cell]" % s.label

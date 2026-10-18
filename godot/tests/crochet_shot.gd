@@ -9,6 +9,19 @@ func _ready() -> void:
 	var pat := OS.get_environment("FL_SHOT_PATTERN") if OS.has_environment("FL_SHOT_PATTERN") else "pouch"
 	c._load_fixture_named(pat)
 	c.compile_now()
+	if OS.has_environment("FL_SHOT_CALIBRATE"):   # the calibration wizard filled with the example numbers of plan section 10
+		c.open_calibration()
+		var ex := {"stitches_per_10cm": 14, "rows_per_10cm": 16, "mass_g": 9.0, "width_cm": 12, "height_cm": 12, "overhang_wale_mm": 52, "overhang_course_mm": 38,
+			"wale_w1_g": 250, "wale_l1_mm": 104, "wale_w2_g": 1000, "wale_l2_mm": 108, "course_w1_g": 250, "course_l1_mm": 110, "course_w2_g": 1000, "course_l2_mm": 150}
+		for k in ex.keys():
+			c.calibrate_view.set_value(k, ex[k])
+		for i in 6:
+			await get_tree().process_frame
+		var wout := OS.get_environment("FL_SHOT_OUT") if OS.has_environment("FL_SHOT_OUT") else "/tmp/crochet_shot.png"
+		get_viewport().get_texture().get_image().save_png(wout)
+		print("wrote ", wout, " wizard")
+		get_tree().quit()
+		return
 	if OS.has_environment("FL_SHOT_COMPARE"):   # the compare view: FL_SHOT_COMPARE=variants|ab, FL_SHOT_FRAMES frames each
 		var cv = c.compare_view
 		cv.visible = true

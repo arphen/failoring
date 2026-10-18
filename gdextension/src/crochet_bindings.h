@@ -17,6 +17,7 @@
 #include <godot_cpp/variant/transform3d.hpp>
 #include <godot_cpp/variant/typed_array.hpp>
 
+#include "failoring/crochet/calibration.hpp"
 #include "failoring/crochet/layout.hpp"
 #include "failoring/crochet/model.hpp"
 #include "failoring/crochet/session.hpp"
@@ -43,6 +44,10 @@ public:
     Dictionary get_yarn_info(const String& id) const;
     void set_tools_dir(const String& dir) { tools_dir_ = dir.utf8().get_data(); }
     bool is_compiled() const { return compiled_; }
+    // The swatch calibration record of docs/CROCHET_PLAN.md section 10 (a Dictionary as CrochetCalibration.fit() returns it under
+    // "record"; empty = none): the stitch model uses it for the parts it measured. get_summary() then says "calibrated".
+    void set_calibration(const Dictionary& record);
+    Dictionary get_calibration() const;
 
     // for CrochetScene
     const fl::StitchGraph& graph() const { return graph_; }
@@ -50,12 +55,14 @@ public:
     std::string yarn_id() const { return yarn_id_; }
     double hook_mm() const { return hook_mm_; }
     double tension() const { return tension_; }
+    const fl::Calibration* calibration() const { return cal_.gauge || cal_.mass || cal_.cantilever || cal_.stretch || !cal_.hinge.empty() ? &cal_ : nullptr; }
 
 protected:
     static void _bind_methods();
 
 private:
     void rebuild_model();
+    fl::Calibration cal_;
     void set_error(int line, const std::string& msg);
     fl::StitchGraph graph_;
     fl::YarnBook book_;
@@ -67,6 +74,29 @@ private:
     bool modelReady_ = false;
     std::vector<std::pair<int, std::string>> errors_;
     std::string modelError_;
+};
+
+// Four kitchen-table measurements -> a calibration record (gauge, weight, cantilever, stretch; plan section 10), and what that does to
+// one stitch compared with the starter model. The measurements and the record are Dictionaries; see crochet_core's calibration.hpp.
+class CrochetCalibration : public RefCounted {
+    GDCLASS(CrochetCalibration, RefCounted)
+
+public:
+    // measurements: {stitches_per_10cm, rows_per_10cm, mass_g, width_cm, height_cm, stitches, rows, overhang_wale_mm,
+    // overhang_course_mm, wale: {width_cm, l0_mm, w1_g, w2_g, l1_mm, l2_mm}, course: {...}}; missing keys = not measured.
+    // Returns {record: {w, h (m), density (kg/m^2), bendWale, bendCourse (N*m), kWale, kCourse (N/m), lockWale, lockCourse, lockRatio}
+    // with only the measured parts, notes: [...], errors: [...], lock_reached_wale, lock_reached_course, empty}.
+    Dictionary fit(const Dictionary& measurements) const;
+    // The sc stitch of a yarn on a hook (mm, 0 = the yarn's) without and with a record: {starter: {...}, calibrated: {...}}.
+    bool load_yarns(const String& path);
+    Dictionary compare(const String& yarn_id, double hook_mm, const Dictionary& record) const;
+
+protected:
+    static void _bind_methods();
+
+private:
+    fl::YarnBook book_;
+    bool have_book_ = false;
 };
 
 class CrochetScene : public RefCounted {

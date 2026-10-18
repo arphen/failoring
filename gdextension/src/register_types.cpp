@@ -11,6 +11,7 @@ static void initialize_failoring(ModuleInitializationLevel level) {
     GDREGISTER_CLASS(FailoringSim);
     GDREGISTER_CLASS(CrochetPattern);
     GDREGISTER_CLASS(CrochetScene);
+    GDREGISTER_CLASS(CrochetCalibration);
 }
 static void uninitialize_failoring(ModuleInitializationLevel level) { (void)level; }
 

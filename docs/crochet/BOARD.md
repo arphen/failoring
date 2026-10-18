@@ -58,7 +58,7 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
 | T8.2 | Selection chart <-> 3D <-> pattern line | T8.1 | done | default | 1 | 4a8857e | crochet_scene_check 51 PASS: chart click -> glow vertex + editor line, caret line -> stitches, ray pick; 2 mutations caught |
 | T8.3 | Lego overrides | T8.2 | done | default | 1 | fe015a4 | `#! override [row]/[row,pos]/[row,a-b] <mod>` in the parser; chart menu appends lines; pouch row 12 BLO: hinge mods 8 -> 22; scene check 70 PASS |
 | T8.4 | Compare + five-variant run | T8.3 | done | default | 1 | d4c81ba | crochet_compare_check 21 PASS: A/B and five variants in a row 0.5 m apart, table with five corner angles (plumbing only, 4 frames each), threaded run and Stop |
-| T9.1 | Calibration wizard + records | T7.3 | todo | | 0 | | record changes stitchMech; UI says "calibrated" |
+| T9.1 | Calibration wizard + records | T7.3 | done | default | 1 | HASH | test_crochet_calibration (the §10 example numbers change stitchMech), crochet_calibrate_check 26 PASS: save -> pattern calibrated (yarn 39.8 -> 65.0 m), status/banner say calibrated; 4 mutations caught |
 | T9.2 | Hinge auto-fit (bisection) | T9.1 | todo | | 0 | | recovers a known bendScale within 5 % |
 
 ## Decisions
@@ -168,3 +168,6 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
   "Surface sl st on this row" is not an override (it adds stitches) and is not in the menu.
 * 2026-10-18 — T8.4 the compare view runs its pieces in parallel (one worker thread each, up to cores - 3 at once) instead of one after
   the other; the five variants are the bundled `bag_round_*` fixtures, not an edit of the user's text.
+* 2026-10-18 — T9.1 calibration records live in user://crochet/swatches.json (override FL_RECORDS) as a JSON array keyed by (yarn, hook mm,
+  stitch), SI units, with the wizard's inputs under `measured`. A stretch strip that shows no lock gets lock strain 1 (never reached). The
+  JSON is read and written by GDScript (Godot's JSON); the core only has the fit and the model side, so no fourth copy of the tiny JSON reader.
