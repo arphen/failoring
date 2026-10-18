@@ -69,6 +69,8 @@ struct LayoutRegion {
 struct LayoutReport {
     std::vector<LayoutRegion> regions;
     int foldAfterRow = -1;       // Flat region folded between this row and the next, -1 = no fold
+    std::vector<int> openingRows;  // the rows that form the mouth of a bag: the last revolve round, or the two edge rows of a folded piece
+    Real depth = 0;              // m, rest depth of the bag from base (or fold) to mouth
     Real stripArcLength = 0;     // m, total arc length of the strap (0 = none)
     Real stripChord = 0;         // m
     std::vector<std::string> warnings;
