@@ -33,6 +33,7 @@ struct RelaxOptions {
     Real noise = 0;             // m, amplitude of the start perturbation (0 = none)
     unsigned seed = 1;
     std::vector<int> pin;       // vertices held in place (scenes and tests that need a fixed part)
+    Real gravity = 0;           // m/s^2 pulling along -y: 0 for the zero-gravity relaxation, 9.81 for an equilibrium under weight (hinge fit)
 };
 
 struct RelaxResult {

@@ -253,6 +253,15 @@ Dictionary CrochetPattern::get_summary() const {
     d["skeins"] = y != nullptr && y->metres > 0 ? yarn / y->metres : 0.0;
     d["hook_mm"] = hook_mm_ > 0 ? hook_mm_ : (y != nullptr ? y->hookMm : 0.0);
     d["calibrated"] = calibration() != nullptr;
+    if (!model_.mesh.hingeMods.empty()) {  // the range of bendScale over the hinge edges, to see a hinge calibration at work
+        double lo = 1e300, hi = -1e300;
+        for (const fl::HingeMod& h : model_.mesh.hingeMods) {
+            lo = std::min(lo, h.bendScale);
+            hi = std::max(hi, h.bendScale);
+        }
+        d["hinge_scale_min"] = lo;
+        d["hinge_scale_max"] = hi;
+    }
     d["hinge_mods"] = static_cast<int>(model_.mesh.hingeMods.size());  // edges with their own bending (BLO/FLO rows, joins)
     d["vertices"] = static_cast<int>(model_.topo.vertexStitch.size());
     d["faces"] = static_cast<int>(model_.mesh.tris.size());
@@ -427,7 +436,40 @@ Dictionary CrochetCalibration::compare(const String& yarn_id, double hook_mm, co
     return out;
 }
 
+double CrochetCalibration::hinge_droop(const String& construction, double bend_scale, double rest_deg, const String& yarn_id, double hook_mm, const Dictionary& record) const {
+    const fl::Yarn* y = have_book_ ? book_.find(toStd(yarn_id)) : nullptr;
+    if (y == nullptr) return 0.0;
+    const fl::Calibration cal = calibrationFromRecord(record);
+    fl::HingeSetup setup;
+    setup.construction = toStd(construction);
+    setup.hookMm = hook_mm > 0 ? hook_mm : y->hookMm;
+    setup.fabric = &cal;
+    return fl::simulateDroop(setup, *y, bend_scale, rest_deg);
+}
+
+Dictionary CrochetCalibration::fit_hinge(const String& construction, double rest_deg, double droop_deg, const String& yarn_id, double hook_mm, const Dictionary& record) const {
+    Dictionary out;
+    const fl::Yarn* y = have_book_ ? book_.find(toStd(yarn_id)) : nullptr;
+    if (y == nullptr) return out;
+    const fl::Calibration cal = calibrationFromRecord(record);
+    fl::HingeSetup setup;
+    setup.construction = toStd(construction);
+    setup.hookMm = hook_mm > 0 ? hook_mm : y->hookMm;
+    setup.fabric = &cal;
+    const fl::HingeFit f = fl::fitHingeBendScale(setup, *y, rest_deg, droop_deg);
+    out["bend_scale"] = f.bendScale;
+    out["droop_deg"] = f.droopDeg;
+    out["runs"] = f.runs;
+    out["bracketed"] = f.bracketed;
+    Array notes;
+    for (const std::string& n : f.notes) notes.push_back(String(n.c_str()));
+    out["notes"] = notes;
+    return out;
+}
+
 void CrochetCalibration::_bind_methods() {
+    ClassDB::bind_method(D_METHOD("hinge_droop", "construction", "bend_scale", "rest_deg", "yarn_id", "hook_mm", "record"), &CrochetCalibration::hinge_droop);
+    ClassDB::bind_method(D_METHOD("fit_hinge", "construction", "rest_deg", "droop_deg", "yarn_id", "hook_mm", "record"), &CrochetCalibration::fit_hinge);
     ClassDB::bind_method(D_METHOD("fit", "measurements"), &CrochetCalibration::fit);
     ClassDB::bind_method(D_METHOD("load_yarns", "path"), &CrochetCalibration::load_yarns);
     ClassDB::bind_method(D_METHOD("compare", "yarn_id", "hook_mm", "record"), &CrochetCalibration::compare);

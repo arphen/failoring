@@ -59,7 +59,7 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
 | T8.3 | Lego overrides | T8.2 | done | default | 1 | fe015a4 | `#! override [row]/[row,pos]/[row,a-b] <mod>` in the parser; chart menu appends lines; pouch row 12 BLO: hinge mods 8 -> 22; scene check 70 PASS |
 | T8.4 | Compare + five-variant run | T8.3 | done | default | 1 | d4c81ba | crochet_compare_check 21 PASS: A/B and five variants in a row 0.5 m apart, table with five corner angles (plumbing only, 4 frames each), threaded run and Stop |
 | T9.1 | Calibration wizard + records | T7.3 | done | default | 1 | 753b50d | test_crochet_calibration (the §10 example numbers change stitchMech), crochet_calibrate_check 26 PASS: save -> pattern calibrated (yarn 39.8 -> 65.0 m), status/banner say calibrated; 4 mutations caught |
-| T9.2 | Hinge auto-fit (bisection) | T9.1 | todo | | 0 | | recovers a known bendScale within 5 % |
+| T9.2 | Hinge auto-fit (bisection) | T9.1 | done | default | 1 | HASH | test_crochet_hinge_fit: known bendScale 0.1/0.3/0.6/0.2 recovered within 0.1 % (bar 5 %) from the simulated droop; wizard section 5 and calibrate check 33 PASS; 3 mutations caught |
 
 ## Decisions
 
@@ -171,3 +171,6 @@ Branch: `crochet/main`. Never merged into `main` without the user saying so (§1
 * 2026-10-18 — T9.1 calibration records live in user://crochet/swatches.json (override FL_RECORDS) as a JSON array keyed by (yarn, hook mm,
   stitch), SI units, with the wizard's inputs under `measured`. A stretch strip that shows no lock gets lock strain 1 (never reached). The
   JSON is read and written by GDScript (Godot's JSON); the core only has the fit and the model side, so no fourth copy of the tiny JSON reader.
+* 2026-10-18 — T9.2 the droop run stops when the droop has stopped changing, not on the kinetic energy: the heavily damped clamped swatch creeps with
+  a KE below 1e-9 J for long and the KE rule gave a droop that was not monotone in bendScale. The droop is the angle below the horizontal of the
+  line from the centre of the last clamped row to the centre of the last row. `RelaxOptions::gravity` added (default 0).

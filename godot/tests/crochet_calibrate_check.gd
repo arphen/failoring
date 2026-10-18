@@ -89,6 +89,40 @@ func _ready() -> void:
 	c.open_calibration()
 	check("reopened: the inputs of the record are back (%.0f stitches, %.1f g, W2 %.0f g)" % [w.value("stitches_per_10cm"), w.value("mass_g"), w.value("wale_w2_g")], w.value("stitches_per_10cm") == 14 and w.value("mass_g") == 9.0 and w.value("wale_w2_g") == 1000 and w.result_text().contains("A record of"))
 
+	# the hinge fit (section 10.5): a known bendScale comes back from its simulated droop, and the model uses it
+	c._load_fixture_named("facing")
+	c.compile_now()
+	var hs0: Dictionary = c.pattern.get_summary()
+	var truth := 0.1
+	var droop: float = w._calib.hinge_droop("blo", truth, 0.0, "acrylic_worsted", 5.0, w.current_fit()["record"])
+	w.set_value("hinge_rest_deg", 0)
+	w.set_value("hinge_droop_deg", droop)
+	var hr: Dictionary = w.fit_hinge_now()
+	check("hinge: bendScale %.2f droops %.2f deg in the simulator; the wizard fits %.4f from that (%d runs)" % [truth, droop, hr["bend_scale"], hr["runs"]], bool(hr["bracketed"]) and absf(float(hr["bend_scale"]) / truth - 1.0) < 0.05)
+	check("hinge: the wizard holds the entry for blo and says so (%s)" % w.hinge_text().substr(0, 60), w.hinge_entries().has("blo") and absf(float(w.hinge_entries()["blo"]["bendScale"]) - truth) < 0.005 * truth * 10 and w.hinge_text().contains("bendScale"))
+	w.save()
+	var hrec: Dictionary = Records.find(Records.load_all(TEST_PATH), "acrylic_worsted", 5.0)
+	check("hinge: the saved record has hinge.blo with the rest angle (%s)" % [hrec.get("hinge", {})], hrec.has("hinge") and hrec["hinge"].has("blo") and hrec["hinge"]["blo"]["restAngleDeg"] == 0.0)
+	c.compile_now()
+	var hs1: Dictionary = c.pattern.get_summary()
+	check("hinge: the facing swatch's smallest hinge bendScale goes from %.2f to %.3f" % [hs0["hinge_scale_min"], hs1["hinge_scale_min"]], absf(float(hs0["hinge_scale_min"]) - 0.3) < 1e-9 and absf(float(hs1["hinge_scale_min"]) - float(hr["bend_scale"])) < 1e-9)
+	# the threaded fit (the Fit button), for flo; a droop no hinge gives is not stored
+	w._hinge_opt.select(1)
+	w.set_value("hinge_droop_deg", w._calib.hinge_droop("flo", 0.25, 0.0, "acrylic_worsted", 5.0, w.current_fit()["record"]))
+	w.start_hinge_fit()
+	var waited := 0.0
+	while waited < 120.0 and (w._hinge_btn.disabled or not w.hinge_entries().has("flo")):
+		await get_tree().create_timer(0.2).timeout
+		waited += 0.2
+	check("hinge: the Fit button runs on a thread and stores flo (%.1f s): %s" % [waited, w.hinge_text().substr(0, 50)], w.hinge_entries().has("flo") and absf(float(w.hinge_entries()["flo"]["bendScale"]) / 0.25 - 1.0) < 0.05 and not w._hinge_btn.disabled)
+	w.set_value("hinge_droop_deg", 4)
+	w.fit_hinge_now()
+	check("hinge: a droop that no bendScale gives is reported and the entry for flo stays (%s)" % w.hinge_text().substr(0, 40), w.hinge_text().begins_with("No fit") and absf(float(w.hinge_entries()["flo"]["bendScale"]) / 0.25 - 1.0) < 0.05)
+	w.open("acrylic_worsted", 5.0)
+	check("hinge: reopened, the wizard has the saved blo entry again and the inputs", w.hinge_entries().has("blo") and w.value("hinge_rest_deg") == 0 and w.value("hinge_droop_deg") > 0)
+	c._load_fixture_named("pouch")
+	c.compile_now()
+
 	# the compare view takes it too
 	var cv = c.compare_view
 	cv.clear_slots()

@@ -23,7 +23,7 @@ target_include_directories(cloth_core PUBLIC ${CORE}/include)
 set(CROCHET_CORE ${CMAKE_CURRENT_SOURCE_DIR}/../crochet_core)
 add_library(crochet_core STATIC
   ${CROCHET_CORE}/src/yarn.cpp ${CROCHET_CORE}/src/stitch_model.cpp ${CROCHET_CORE}/src/parse.cpp
-  ${CROCHET_CORE}/src/graph.cpp ${CROCHET_CORE}/src/crochet_mesh.cpp ${CROCHET_CORE}/src/crochet_model.cpp ${CROCHET_CORE}/src/crochet_layout.cpp ${CROCHET_CORE}/src/snapshot.cpp ${CROCHET_CORE}/src/crochet_relax.cpp ${CROCHET_CORE}/src/crochet_scene.cpp ${CROCHET_CORE}/src/crochet_metrics.cpp ${CROCHET_CORE}/src/crochet_session.cpp ${CROCHET_CORE}/src/crochet_run.cpp ${CROCHET_CORE}/src/crochet_calibration.cpp)
+  ${CROCHET_CORE}/src/graph.cpp ${CROCHET_CORE}/src/crochet_mesh.cpp ${CROCHET_CORE}/src/crochet_model.cpp ${CROCHET_CORE}/src/crochet_layout.cpp ${CROCHET_CORE}/src/snapshot.cpp ${CROCHET_CORE}/src/crochet_relax.cpp ${CROCHET_CORE}/src/crochet_scene.cpp ${CROCHET_CORE}/src/crochet_metrics.cpp ${CROCHET_CORE}/src/crochet_session.cpp ${CROCHET_CORE}/src/crochet_run.cpp ${CROCHET_CORE}/src/crochet_calibration.cpp ${CROCHET_CORE}/src/crochet_hinge_fit.cpp)
 target_include_directories(crochet_core PUBLIC ${CROCHET_CORE}/include)
 target_link_libraries(crochet_core PUBLIC cloth_core)
 

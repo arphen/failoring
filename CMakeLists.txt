@@ -54,7 +54,8 @@ add_library(crochet_core STATIC
   crochet_core/src/crochet_metrics.cpp
   crochet_core/src/crochet_session.cpp
   crochet_core/src/crochet_run.cpp
-  crochet_core/src/crochet_calibration.cpp)
+  crochet_core/src/crochet_calibration.cpp
+  crochet_core/src/crochet_hinge_fit.cpp)
 target_include_directories(crochet_core PUBLIC crochet_core/include)
 target_link_libraries(crochet_core PUBLIC cloth_core)
 target_compile_options(crochet_core PRIVATE -Wall -Wextra)
@@ -134,6 +135,13 @@ target_link_libraries(test_crochet_calibration PRIVATE crochet_core)
 target_include_directories(test_crochet_calibration PRIVATE cloth_core/tests)
 target_compile_definitions(test_crochet_calibration PRIVATE FL_PATTERNS_DIR="${FL_PATTERNS_DIR}" FL_YARNS_PATH="${FL_YARNS_PATH}")
 add_test(NAME test_crochet_calibration COMMAND test_crochet_calibration)
+
+# crochet_core test: the hinge fit (plan section 10.5).
+add_executable(test_crochet_hinge_fit crochet_core/tests/test_crochet_hinge_fit.cpp)
+target_link_libraries(test_crochet_hinge_fit PRIVATE crochet_core)
+target_include_directories(test_crochet_hinge_fit PRIVATE cloth_core/tests)
+target_compile_definitions(test_crochet_hinge_fit PRIVATE FL_YARNS_PATH="${FL_YARNS_PATH}")
+add_test(NAME test_crochet_hinge_fit COMMAND test_crochet_hinge_fit)
 
 # crochet_core test: the result numbers of plan section 7.5 (JSON keys, 90 degree fold, strain, the hung pouch).
 add_executable(test_crochet_metrics crochet_core/tests/test_crochet_metrics.cpp)

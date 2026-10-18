@@ -15,6 +15,16 @@ func _ready() -> void:
 			"wale_w1_g": 250, "wale_l1_mm": 104, "wale_w2_g": 1000, "wale_l2_mm": 108, "course_w1_g": 250, "course_l1_mm": 110, "course_w2_g": 1000, "course_l2_mm": 150}
 		for k in ex.keys():
 			c.calibrate_view.set_value(k, ex[k])
+		if OS.has_environment("FL_SHOT_HINGE"):   # the hinge section: fit a bendScale of 0.3 from its simulated droop, scrolled into view
+			var w = c.calibrate_view
+			var droop: float = w._calib.hinge_droop("blo", 0.3, 0.0, "acrylic_worsted", 5.0, w.current_fit()["record"])
+			w.set_value("hinge_rest_deg", 0)
+			w.set_value("hinge_droop_deg", snappedf(droop, 0.1))
+			w.fit_hinge_now()
+			for i in 3:
+				await get_tree().process_frame
+			for sc in w.find_children("*", "ScrollContainer", true, false):
+				sc.scroll_vertical = 100000
 		for i in 6:
 			await get_tree().process_frame
 		var wout := OS.get_environment("FL_SHOT_OUT") if OS.has_environment("FL_SHOT_OUT") else "/tmp/crochet_shot.png"

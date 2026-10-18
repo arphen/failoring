@@ -20,7 +20,7 @@ std::unique_ptr<ClothSolver> makeSolver(const CrochetModel& model, const SolverP
 
 RelaxRun::RelaxRun(const CrochetModel& model, const RelaxOptions& opt) : opt_(opt) {
     SolverParams sp;
-    sp.gravity = Vec3(0, 0, 0);
+    sp.gravity = Vec3(0, -opt.gravity, 0);
     sp.dampingScale = opt.dampingScale;
     sp.seamRampFrames = opt.seamRampFrames;
     sp.selfCollision = opt.selfCollision;

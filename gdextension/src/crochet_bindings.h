@@ -18,6 +18,7 @@
 #include <godot_cpp/variant/typed_array.hpp>
 
 #include "failoring/crochet/calibration.hpp"
+#include "failoring/crochet/hinge_fit.hpp"
 #include "failoring/crochet/layout.hpp"
 #include "failoring/crochet/model.hpp"
 #include "failoring/crochet/session.hpp"
@@ -90,6 +91,12 @@ public:
     // The sc stitch of a yarn on a hook (mm, 0 = the yarn's) without and with a record: {starter: {...}, calibrated: {...}}.
     bool load_yarns(const String& path);
     Dictionary compare(const String& yarn_id, double hook_mm, const Dictionary& record) const;
+    // The hinge fit of section 10.5: a swatch of 10 + 1 + 10 rows with the hinge row worked as `construction` ("blo", "flo", "slst"),
+    // clamped flat with the hinge at the edge, drooping under its weight. hinge_droop() is one simulator run (degrees below the
+    // horizontal); fit_hinge() bisects bendScale until the simulated droop matches the measured one: {bend_scale, droop_deg, runs,
+    // bracketed, notes}. `record` is the fabric's calibration record ({} = the starter values); hook_mm 0 = the yarn's.
+    double hinge_droop(const String& construction, double bend_scale, double rest_deg, const String& yarn_id, double hook_mm, const Dictionary& record) const;
+    Dictionary fit_hinge(const String& construction, double rest_deg, double droop_deg, const String& yarn_id, double hook_mm, const Dictionary& record) const;
 
 protected:
     static void _bind_methods();

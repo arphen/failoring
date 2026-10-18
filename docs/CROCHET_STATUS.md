@@ -13,7 +13,7 @@ acceptance, with the measured numbers. Honest numbers; "not measured" where not 
 | 4 | DSL + graph (§5) | all fixtures compile with the stated counts, error-message tests | done (T4.0-T4.2, 2026-10-17) |
 | 5 | Mesh + layout + relax (§6) | flat/cup/ruffle circle, tube, swatch size, hinge sign, mass | done (T5.1-T5.4, 2026-10-18) |
 | 6 | Scenes + load + metrics + CLI (§7) | strap analytic, force balance, settle, fit checks; PNG snapshots of all fixtures in docs/crochet-shots/ | in progress (T6.1-T6.4 done) |
-| 7 | Godot bindings + scene (§8) | crochet_api_check passes; the user can open, edit, run, and see the pouch hang on their Mac | in progress (T7.1-T7.4, T8.1-T8.4, T9.1 done) |
+| 7 | Godot bindings + scene (§8) | crochet_api_check passes; the user can open, edit, run, and see the pouch hang on their Mac | in progress (T7.1-T7.4, T8.1-T8.4, T9.1-T9.2 done) |
 | 8 | Chart, lego, compare (§9) | five-variant comparison runs from one click; the table shows different corner angles | todo |
 | 9 | Calibration (§10) | a swatch record changes the result and the UI says "calibrated" | todo |
 | 10 | Yarn-level look (§12) | optional | not started |
@@ -321,3 +321,10 @@ acceptance, with the measured numbers. Honest numbers; "not measured" where not 
   and the sc stitch before/after. With the §10 example numbers the pouch model weighs 36.1 g instead of 22.1 g and the UI says
   "(calibrated)". `test_crochet_calibration` (new), `crochet_calibrate_check` 26 PASS (new), the other Godot checks unchanged.
   Screenshot docs/crochet-shots/ui/calibrate.png.
+
+### 2026-10-18 — T9.2 hinge auto-fit (phase 9, item 2)
+
+* `fitHingeBendScale`: a 10 + 1 + 10 row swatch clamped flat and drooping under gravity, bisection on log(bendScale) until the simulated droop
+  matches the measured one. Known bendScale 0.1, 0.3, 0.6 (rest 0) and 0.2 (rest 60) are recovered within 0.1 % from their simulated droops (bar 5 %),
+  11-13 runs of about 1 s. Wizard step 5 stores `hinge.<construction>` in the record. One finding: a KE-based stop is too early for heavily damped
+  creeping runs (see the T9.2 report); the droop run stops on the droop. `test_crochet_hinge_fit` (new), `crochet_calibrate_check` 33 PASS.

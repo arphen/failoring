@@ -43,8 +43,20 @@ var _notes: LineEdit
 var _save_btn: Button
 var _del_btn: Button
 var _last := {}
+var _hinge := {}              # construction -> {bendScale, restAngleDeg}: fitted here, or already in the saved record
+var _hinge_opt: OptionButton
+var _hinge_label: Label
+var _hinge_btn: Button
+var _hinge_thread: Thread
+var _hinge_job := {}          # what the running thread was asked: {construction, rest}
+var _hinge_result := {}
+
+func _exit_tree() -> void:
+	if _hinge_thread != null and _hinge_thread.is_started():
+		_hinge_thread.wait_to_finish()
 
 func _ready() -> void:
+	set_process(false)
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_calib = CrochetCalibration.new()
 	_calib.load_yarns(YARNS_PATH)
@@ -52,7 +64,7 @@ func _ready() -> void:
 
 # --- UI
 
-func _num(parent: Control, key: String, label: String, max_value: float, step: float, tip: String) -> void:
+func _num(parent: Control, key: String, label: String, max_value: float, step: float, tip: String, min_value := 0.0) -> void:
 	var row := HBoxContainer.new()
 	var l := Label.new()
 	l.text = label
@@ -60,7 +72,7 @@ func _num(parent: Control, key: String, label: String, max_value: float, step: f
 	l.tooltip_text = tip
 	row.add_child(l)
 	var sb := SpinBox.new()
-	sb.min_value = 0
+	sb.min_value = min_value
 	sb.max_value = max_value
 	sb.step = step
 	sb.allow_greater = true
@@ -161,6 +173,29 @@ func _build_ui() -> void:
 	for dir in ["wale", "course"]:
 		_fields[dir + "_width_cm"].value = 10
 		_fields[dir + "_l0_mm"].value = 100
+	var s5 := _section(col, "5. Hinge (optional, per construction)", "A swatch of 10 rows, the hinge row, 10 rows. (a) Lay it free on a table, right side up, and measure the angle the upper part settles at: the rest angle (positive when it folds toward the wrong side). (b) Clamp the lower half flat with the hinge at the table edge and measure the droop angle of the upper half (below the horizontal, along the line from the hinge to the far edge). The wizard runs the same setup in the simulator and finds the bendScale that gives your droop (about a dozen runs). Use the fabric numbers above for the same yarn and hook.")
+	var hrow := HBoxContainer.new()
+	var hl := Label.new()
+	hl.text = "The hinge row is worked"
+	hl.custom_minimum_size = Vector2(250, 0)
+	hrow.add_child(hl)
+	_hinge_opt = OptionButton.new()
+	for it in [["BLO (back loop only)", "blo"], ["FLO (front loop only)", "flo"], ["a row of sl sts", "slst"]]:
+		_hinge_opt.add_item(it[0])
+		_hinge_opt.set_item_metadata(_hinge_opt.item_count - 1, it[1])
+	_hinge_opt.item_selected.connect(func(_i: int) -> void: _refresh())
+	hrow.add_child(_hinge_opt)
+	s5.add_child(hrow)
+	_num(s5, "hinge_rest_deg", "Rest angle (degrees, toward the WS)", 180, 0.1, "the free swatch's upper part, measured against the lower", -180)
+	_num(s5, "hinge_droop_deg", "Droop angle (degrees below horizontal)", 180, 0.1, "the clamped swatch's upper half")
+	_hinge_btn = Button.new()
+	_hinge_btn.text = "Fit bendScale"
+	_hinge_btn.tooltip_text = "Runs the simulator about a dozen times on a worker thread"
+	_hinge_btn.pressed.connect(func() -> void: start_hinge_fit())
+	s5.add_child(_hinge_btn)
+	_hinge_label = Label.new()
+	_hinge_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	s5.add_child(_hinge_label)
 	var right := VBoxContainer.new()
 	right.custom_minimum_size = Vector2(520, 0)
 	split.add_child(right)
@@ -187,8 +222,11 @@ func open(yarn: String, hook: float, path := "") -> void:
 		_fields[dir + "_width_cm"].set_value_no_signal(10)
 		_fields[dir + "_l0_mm"].set_value_no_signal(100)
 	_notes.text = ""
+	_hinge = {}
+	_hinge_label.text = ""
 	if not rec.is_empty():
 		_notes.text = String(rec.get("notes", ""))
+		_hinge = rec.get("hinge", {}).duplicate(true)
 		var m: Dictionary = rec.get("measured", {})
 		for k in m.keys():
 			if _fields.has(k):
@@ -235,6 +273,8 @@ func record() -> Dictionary:
 	rec["date"] = Time.get_date_string_from_system()
 	rec["notes"] = _notes.text
 	rec["measured"] = measured()
+	if not _hinge.is_empty():
+		rec["hinge"] = _hinge.duplicate(true)
 	return rec
 
 func _refresh() -> void:
@@ -247,7 +287,7 @@ func _refresh() -> void:
 	var t := ""
 	if not existing.is_empty():
 		t += "[color=#80d080]A record of %s is saved for this yarn and hook.[/color]\n\n" % String(existing.get("date", "?"))
-	if fit["empty"] and fit["errors"].is_empty():
+	if fit["empty"] and fit["errors"].is_empty() and _hinge.is_empty():
 		t += "[i]Nothing measured yet.[/i]\n\n"
 	for e in fit["errors"]:
 		t += "[color=#e07060]%s[/color]\n" % e
@@ -263,8 +303,10 @@ func _refresh() -> void:
 				var same := absf(float(a[k]) - float(b[k])) <= 1e-9 * maxf(1e-12, absf(float(a[k])))
 				t += "[cell]%s[/cell][cell]%s[/cell][cell]%s[/cell]" % [k, _num_text(float(a[k])), ("[b]%s[/b]" % _num_text(float(b[k]))) if not same else _num_text(float(b[k]))]
 			t += "[/table]"
+	for k in _hinge.keys():
+		t += "\nhinge %s: bendScale %.3f, rest angle %.1f deg" % [k, float(_hinge[k]["bendScale"]), float(_hinge[k]["restAngleDeg"])]
 	_result.text = t
-	_save_btn.disabled = fit["empty"]
+	_save_btn.disabled = fit["empty"] and _hinge.is_empty()
 	_del_btn.disabled = existing.is_empty()
 
 # 4 significant digits, in scientific form for the small bending numbers
@@ -272,7 +314,7 @@ func _num_text(v: float) -> String:
 	return String.num_scientific(v) if v != 0.0 and absf(v) < 0.01 else String.num(v, 4)
 
 func save() -> bool:
-	if current_fit()["empty"]:
+	if current_fit()["empty"] and _hinge.is_empty():
 		return false
 	var p := records_path if records_path != "" else Records.path()
 	var ok := Records.save_all(p, Records.upsert(Records.load_all(p), record()))
@@ -292,6 +334,67 @@ func delete() -> bool:
 	if ok:
 		records_changed.emit()
 	return ok
+
+# --- the hinge fit (section 10.5)
+
+func hinge_construction() -> String:
+	return String(_hinge_opt.get_item_metadata(_hinge_opt.selected))
+
+func _hinge_fit_args() -> Array:
+	return [hinge_construction(), value("hinge_rest_deg"), value("hinge_droop_deg"), yarn_id, hook_mm, current_fit()["record"]]
+
+# the fit on this thread (tests); start_hinge_fit() runs it on a worker so that the window stays alive
+func fit_hinge_now() -> Dictionary:
+	var a := _hinge_fit_args()
+	var r := _calib.fit_hinge(a[0], a[1], a[2], a[3], a[4], a[5])
+	_apply_hinge_fit(r, a[0], a[1])
+	return r
+
+func start_hinge_fit() -> void:
+	if _hinge_thread != null and _hinge_thread.is_started():
+		return
+	if value("hinge_droop_deg") <= 0:
+		_hinge_label.text = "Enter the droop angle of the clamped swatch first."
+		return
+	var a := _hinge_fit_args()
+	_hinge_job = {"construction": a[0], "rest": a[1]}
+	_hinge_btn.disabled = true
+	_hinge_label.text = "Fitting: the simulator runs about a dozen times ..."
+	_hinge_thread = Thread.new()
+	_hinge_thread.start(_hinge_worker.bind(a))
+	set_process(true)
+
+func _hinge_worker(a: Array) -> void:
+	_hinge_result = _calib.fit_hinge(a[0], a[1], a[2], a[3], a[4], a[5])
+
+func _process(_delta: float) -> void:
+	if _hinge_thread != null and _hinge_thread.is_started() and not _hinge_thread.is_alive():
+		_hinge_thread.wait_to_finish()
+		_hinge_btn.disabled = false
+		_apply_hinge_fit(_hinge_result, String(_hinge_job["construction"]), float(_hinge_job["rest"]))
+		set_process(false)
+
+func _apply_hinge_fit(r: Dictionary, construction: String, rest: float) -> void:
+	if r.is_empty():
+		_hinge_label.text = "The fit could not run (unknown yarn?)."
+		return
+	var warnings: Array[String] = []   # the notes except the summary of the last run, which the line below says itself
+	for n in r["notes"]:
+		if not String(n).contains("gives a droop of"):
+			warnings.append(String(n))
+	var notes := " ".join(warnings)
+	if bool(r["bracketed"]):
+		_hinge[construction] = {"bendScale": float(r["bend_scale"]), "restAngleDeg": rest}
+		_hinge_label.text = "bendScale %.3f for %s: the simulation droops %.2f deg (measured %.2f deg), %d runs. %sSave the record to keep it." % [float(r["bend_scale"]), construction, float(r["droop_deg"]), value("hinge_droop_deg"), int(r["runs"]), (notes + " ") if notes != "" else ""]
+	else:
+		_hinge_label.text = "No fit: " + notes
+	_refresh()
+
+func hinge_entries() -> Dictionary:
+	return _hinge
+
+func hinge_text() -> String:
+	return _hinge_label.text
 
 func result_text() -> String:
 	return _result.text
