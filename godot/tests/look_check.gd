@@ -175,6 +175,19 @@ func _init() -> void:
 	_check(shadowed == Studio.LAMPS.size() - 1 and not (lights["fill"] as Light3D).shadow_enabled, "every lamp casts a shadow except the fill's bounce card")
 	_check(away, "every shadow falls away from its lamp, across the subject")
 	_check((st["fixtures"] as Array).size() == Studio.LAMPS.size(), "a visible fixture per lamp")
+	# a lamp can be switched off and on again: its light, the glow of its diffuser and its share of the sky follow
+	var key_light: Light3D = lights["key"]
+	var key_glow: StandardMaterial3D = (st["fixture_of"]["key"] as Node3D).get_meta("glow_mat")
+	var cols0: PackedVector3Array = (((st["sky"] as Sky).sky_material as ShaderMaterial).get_shader_parameter("lamp_col") as PackedVector3Array).duplicate()
+	Studio.set_lamp(st, "key", false)
+	var cols1: PackedVector3Array = ((st["sky"] as Sky).sky_material as ShaderMaterial).get_shader_parameter("lamp_col")
+	_check(is_equal_approx(key_light.light_energy, 8.0 * Studio.LAMP_FLOOR) and key_glow.emission_energy_multiplier == 0.0, "a lamp switched off keeps a trace of light and its diffuser goes dark")
+	_check(cols1[0].length() < cols0[0].length() * 0.05 and cols1[1] == cols0[1] and cols1[2] == cols0[2], "the sky loses the key's radiance and only the key's")
+	Studio.set_lamp(st, "key", true)
+	var cols2: PackedVector3Array = ((st["sky"] as Sky).sky_material as ShaderMaterial).get_shader_parameter("lamp_col")
+	_check(key_light.light_energy == 8.0 and key_glow.emission_energy_multiplier == 5.0 and cols2[0].is_equal_approx(cols0[0]), "switched on again it is exactly as it was")
+	Studio.set_lamp(st, "no_such_lamp", false)
+	_check(key_light.light_energy == 8.0, "an unknown lamp id changes nothing")
 	var sky_m := (st["sky"] as Sky).sky_material as ShaderMaterial
 	_check(int(sky_m.get_shader_parameter("lamp_n")) == Studio.LAMPS.size(), "the sky holds every lamp")
 	var sroot: Node3D = st["root"]

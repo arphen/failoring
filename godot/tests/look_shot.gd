@@ -72,6 +72,14 @@ func _init() -> void:
 	stage.add_child(we)
 	var st: Dictionary = Studio.build(stage)
 	we.environment.sky = st["sky"]
+	# FL_LAMPS_OFF=key,fill,rim_l,rim_r,top switches those lamps off (Studio.set_lamp, as the editor's Lamps menu does);
+	# FL_NOFIXTURES=1 hides all the fixtures
+	if OS.has_environment("FL_LAMPS_OFF"):
+		for lid in OS.get_environment("FL_LAMPS_OFF").split(","):
+			Studio.set_lamp(st, lid, false)
+	if OS.has_environment("FL_NOFIXTURES"):
+		for fx in st["fixtures"]:
+			(fx as Node3D).visible = false
 	stage.add_child(Look.contact_shadow())
 	_cam = Camera3D.new()
 	Look.camera(_cam)

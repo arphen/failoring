@@ -215,3 +215,45 @@ func _run() -> void:
 	ed._reset_view()
 	await _frames(1)
 	check("reset clears the pan", ed.pan_off == Vector3.ZERO and is_equal_approx(ed.yaw, 0.3))
+
+	# The 3D image is drawn exactly over its pane, at a window scale other than 1 too. (A TextureRect cannot be smaller than its
+	# texture unless told to ignore its size: at 1600 x 900 the image overflowed the pane by 15 %, anchored top left, so the
+	# subject came out low and to the right and the view cropped.)
+	get_window().size = Vector2i(1600, 900)
+	await _frames(4)
+	var kx: float = get_window().get_final_transform().get_scale().x
+	check("the window scale is not 1 at 1600 x 900 (%.2f)" % kx, absf(kx - 1.0) > 0.05)
+	check("the 3D view image is exactly its pane (pane %s, image %s)" % [ed.view_pane.size, ed.view_image.size], ed.view_image.size.is_equal_approx(ed.view_pane.size))
+	get_window().size = Vector2i(1280, 720)
+	await _frames(4)
+	check("and at 1280 x 720", ed.view_image.size.is_equal_approx(ed.view_pane.size))
+	# the real case: the viewport renders at on-screen pixels, more than the pane's design size at a scale above 1
+	ed.shoot_busy = true   # keeps _sync_view_px from putting the size back
+	ed.sub_view.size = Vector2i(roundi(ed.view_pane.size.x * 1.25), roundi(ed.view_pane.size.y * 1.25))
+	await _frames(3)
+	check("a viewport larger than the pane does not stretch the image past the pane (pane %s, viewport %s, image %s)" % [ed.view_pane.size, ed.sub_view.size, ed.view_image.size], ed.view_image.size.is_equal_approx(ed.view_pane.size))
+	ed.shoot_busy = false
+	await _frames(3)
+
+	# The Lamps menu: each lamp is a switch that changes the picture; the fixtures are shown separately.
+	var pm: PopupMenu = ed._lamps_menu.get_popup()
+	var key_l: Light3D = ed.studio["lights"]["key"]
+	var key_fx: Node3D = ed.studio["fixture_of"]["key"]
+	var key_e: float = key_l.light_energy
+	check("lamps menu: every lamp starts on, the fixtures hidden", ed.lamp_on.size() == 5 and ed.lamp_on.values().all(func(v): return v) and not key_fx.visible)
+	ed._on_lamps_menu(0)
+	check("lamps menu: the key off dims its light, puts its diffuser out and unticks it", not ed.lamp_on["key"] and key_l.light_energy < key_e * 0.05 and key_l.light_energy > 0.0 \
+		and (key_fx.get_meta("glow_mat") as StandardMaterial3D).emission_energy_multiplier == 0.0 and not pm.is_item_checked(pm.get_item_index(0)))
+	check("lamps menu: the other lamps are untouched", is_equal_approx(ed.studio["lights"]["fill"].light_energy, 2.6) and is_equal_approx(ed.studio["lights"]["rim_l"].light_energy, 4.5))
+	ed._on_lamps_menu(ed.LAMP_ALL_OFF_ID)
+	var all_dim := true
+	for lid in ed.studio["lights"].keys():
+		all_dim = all_dim and (ed.studio["lights"][lid] as Light3D).light_energy > 0.0 and (ed.studio["lights"][lid] as Light3D).light_energy < 0.2
+	check("lamps menu: all off leaves every lamp a trace of light (at exactly 0 the global illumination blacks the room out)", all_dim)
+	ed._on_lamps_menu(ed.LAMP_ALL_ON_ID)
+	check("lamps menu: all on restores the lights, the glow and the ticks", is_equal_approx(key_l.light_energy, key_e) and is_equal_approx(ed.studio["lights"]["rim_r"].light_energy, 3.8) \
+		and (key_fx.get_meta("glow_mat") as StandardMaterial3D).emission_energy_multiplier == 5.0 and pm.is_item_checked(pm.get_item_index(0)))
+	ed._on_lamps_menu(ed.LAMP_SHOW_ID)
+	check("lamps menu: Show lamps and stands shows the fixtures (the light was on all along)", key_fx.visible and key_l.light_energy == key_e)
+	ed._on_lamps_menu(ed.LAMP_SHOW_ID)
+	check("lamps menu: and hides them again", not key_fx.visible)

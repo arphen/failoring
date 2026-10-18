@@ -21,20 +21,22 @@ const Props = preload("res://studio_props.gd")
 const Atelier = preload("res://studio_atelier.gd")
 
 const CENTER := Vector3(0.0, 1.1, 0.0)        # the subject's chest: lamps aim here, the sky is seen from here
+const LAMP_FLOOR := 0.02                      # a lamp that is switched off keeps this share of its energy: with every spot at exactly 0 the
+#                                              global illumination (SDFGI) turned the whole room black, windows and bulbs included
 const SKY_GLOW := 0.3                         # a diffuser's radiance in the sky, per unit of its fixture glow
 
 # kind: octa (octagonal softbox, size = width), strip / box (size = width, height), vflat (size = panel width, height)
 # energy: SpotLight3D energy at the lamp; with inverse-square falloff the light on the subject is energy / distance^2.
 const LAMPS := [
-	{"id": "key", "kind": "octa", "pos": Vector3(-2.25, 2.35, 2.25), "aim": Vector3(0.0, 1.15, 0.0), "size": Vector2(1.5, 1.5),
+	{"id": "key", "label": "Key softbox", "kind": "octa", "pos": Vector3(-2.25, 2.35, 2.25), "aim": Vector3(0.0, 1.15, 0.0), "size": Vector2(1.5, 1.5),
 		"color": Color(1.0, 0.955, 0.9), "energy": 8.0, "angle": 45.0, "soft": 0.9, "shadow": true, "glow": 5.0},
-	{"id": "fill", "kind": "vflat", "pos": Vector3(2.55, 1.2, 1.55), "aim": Vector3(0.0, 1.0, 0.0), "size": Vector2(1.2, 2.4),
+	{"id": "fill", "label": "Fill (V-flat)", "kind": "vflat", "pos": Vector3(2.55, 1.2, 1.55), "aim": Vector3(0.0, 1.0, 0.0), "size": Vector2(1.2, 2.4),
 		"color": Color(1.0, 0.97, 0.94), "energy": 2.6, "angle": 75.0, "soft": 1.5, "shadow": false, "glow": 0.0},
-	{"id": "rim_l", "kind": "strip", "pos": Vector3(-1.95, 1.3, -2.1), "aim": Vector3(0.0, 1.05, 0.0), "size": Vector2(0.35, 1.7),
+	{"id": "rim_l", "label": "Rim light, left", "kind": "strip", "pos": Vector3(-1.95, 1.3, -2.1), "aim": Vector3(0.0, 1.05, 0.0), "size": Vector2(0.35, 1.7),
 		"color": Color(0.93, 0.96, 1.0), "energy": 4.5, "angle": 32.0, "soft": 0.35, "shadow": true, "glow": 6.0},
-	{"id": "rim_r", "kind": "strip", "pos": Vector3(2.05, 1.3, -1.95), "aim": Vector3(0.0, 1.05, 0.0), "size": Vector2(0.35, 1.7),
+	{"id": "rim_r", "label": "Rim light, right", "kind": "strip", "pos": Vector3(2.05, 1.3, -1.95), "aim": Vector3(0.0, 1.05, 0.0), "size": Vector2(0.35, 1.7),
 		"color": Color(0.93, 0.96, 1.0), "energy": 3.8, "angle": 32.0, "soft": 0.35, "shadow": true, "glow": 6.0},
-	{"id": "top", "kind": "box", "pos": Vector3(0.0, 2.95, -0.75), "aim": Vector3(0.0, 1.45, 0.0), "size": Vector2(0.6, 0.6),
+	{"id": "top", "label": "Top light", "kind": "box", "pos": Vector3(0.0, 2.95, -0.75), "aim": Vector3(0.0, 1.45, 0.0), "size": Vector2(0.6, 0.6),
 		"color": Color(1.0, 0.97, 0.93), "energy": 1.2, "angle": 60.0, "soft": 0.4, "shadow": true, "glow": 4.0},
 ]
 
@@ -81,6 +83,7 @@ static func build(parent: Node3D) -> Dictionary:
 	root.add_child(furnish(practicals))
 	var lights := {}
 	var fixtures := []
+	var fixture_of := {}
 	for lamp in LAMPS:
 		var l := spot(lamp)
 		root.add_child(l)
@@ -88,7 +91,33 @@ static func build(parent: Node3D) -> Dictionary:
 		var fx := fixture(lamp)
 		root.add_child(fx)
 		fixtures.append(fx)
-	return {"root": root, "lights": lights, "key": lights["key"], "sky": sky(), "fixtures": fixtures, "practicals": practicals}
+		fixture_of[lamp["id"]] = fx
+	return {"root": root, "lights": lights, "key": lights["key"], "sky": sky(), "fixtures": fixtures, "fixture_of": fixture_of, "practicals": practicals}
+
+
+# Switches one lamp on or off, so that the picture shows it: its light (down to LAMP_FLOOR of its energy), the glow of its
+# diffuser, and its share of the studio sky (the ambient light and the reflections).
+static func set_lamp(st: Dictionary, id: String, on: bool) -> void:
+	for i in LAMPS.size():
+		var lamp: Dictionary = LAMPS[i]
+		if String(lamp["id"]) != id:
+			continue
+		var k := 1.0 if on else LAMP_FLOOR
+		(st["lights"][id] as Light3D).light_energy = float(lamp["energy"]) * k
+		var fx := (st["fixture_of"] as Dictionary).get(id) as Node3D
+		if fx != null and fx.has_meta("glow_mat"):
+			(fx.get_meta("glow_mat") as StandardMaterial3D).emission_energy_multiplier = float(lamp["glow"]) * (1.0 if on else 0.0)
+		var sky_res := st.get("sky") as Sky
+		if sky_res != null and sky_res.sky_material is ShaderMaterial and sky_res.has_meta("lamp_col0"):
+			var base: PackedVector3Array = sky_res.get_meta("lamp_col0")
+			var cols := base.duplicate()
+			var m := sky_res.sky_material as ShaderMaterial
+			var now = m.get_shader_parameter("lamp_col")
+			if now is PackedVector3Array:
+				cols = (now as PackedVector3Array).duplicate()
+			cols[i] = base[i] * k
+			m.set_shader_parameter("lamp_col", cols)
+		return
 
 
 # The light itself: a spot at the diffuser's centre, aimed at the subject.
@@ -147,6 +176,7 @@ static func sky() -> Sky:
 	m.set_shader_parameter("lamp_up", ups)
 	m.set_shader_parameter("lamp_half", halves)
 	m.set_shader_parameter("lamp_col", cols)
+	s.set_meta("lamp_col0", cols)
 	s.sky_material = m
 	s.radiance_size = Sky.RADIANCE_SIZE_256
 	s.process_mode = Sky.PROCESS_MODE_QUALITY
@@ -411,6 +441,7 @@ static func fixture(lamp: Dictionary) -> Node3D:
 	var metal := _mat(METAL, 0.45, 0.6)
 	var fabric := _mat(FABRIC, 0.9)
 	var glow := _glow_mat(lamp["color"], float(lamp["glow"]))
+	root.set_meta("glow_mat", glow)   # set_lamp() turns the diffuser's glow off with the lamp
 	# the head: -z points at the subject
 	var head := Node3D.new()
 	head.transform = Transform3D(Basis.looking_at(aim - pos, Vector3.UP), pos)
