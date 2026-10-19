@@ -116,6 +116,13 @@ func _ready() -> void:
 	_rebuild(-1)
 	_refresh()
 	_frame_work(true)
+	call_deferred("_auto_sim")
+
+# The piece starts as a slip knot made by the simulator (one strand of yarn, the hook through a ring), played as it is made. The stitch
+# buttons still work on the placed lattice: the first one takes the view back to it.
+func _auto_sim() -> void:
+	if animate:
+		start_sim("slip_knot")
 
 # ------------------------------------------------------------------------------------------------ UI
 
@@ -633,6 +640,8 @@ func _build_marker() -> void:
 # One hook action. Everything the stitch needs is chosen: it goes into the next stitch of the row below (both loops), or into the loop the
 # user clicked. Returns false when it could not be made (the status line says why).
 func do_action(kind: String, opening: int = -2, turn_chains: int = -1) -> bool:
+	if sim_root != null and sim_root.visible:
+		close_sim()
 	if opening == -2:
 		opening = picked
 	if busy:   # clicks while the hook is working are kept and made one after the other (a few at most)
@@ -736,6 +745,7 @@ func reset_piece() -> void:
 	if busy:
 		return
 	_replay([])
+	_auto_sim()
 
 # Rebuilds the piece from a list of [kind, opening] without the animations.
 func _replay(actions: Array) -> void:
@@ -1517,6 +1527,9 @@ func start_sim(procedure: String) -> void:
 	sim_playing = true
 	sim_play.text = "Pause"
 	_show_sim_frame(0)
+	orbit.target = sim_root.global_position + Vector3(0, -0.004, 0)
+	orbit.dist = 0.11
+	orbit.apply()
 	status_label.text = "Simulated, %d frames: one strand of yarn, a rigid hook, the left hand holding the yarn. Nothing is placed." % sim_frames
 
 func close_sim() -> void:
@@ -1529,6 +1542,7 @@ func close_sim() -> void:
 			(n as Node3D).visible = true
 	_sim_hidden.clear()
 	_refresh()
+	_frame_work(true)
 
 func _sim_process(delta: float) -> void:
 	if not sim_playing or sim_frames == 0:
