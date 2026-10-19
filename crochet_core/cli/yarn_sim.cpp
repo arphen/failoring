@@ -41,7 +41,7 @@ int main(int argc, char** argv) {
     std::string out = "sim";
     int every = 30;
     Real rad = 1.1, segMm = 1.0, topDist = 0.07, massScale = 100, damp = 20;
-    int fa = -1, fb = -2, fstep = 1;
+    int fa = -1, fb = -2, fstep = 1, chains = 0;
     for (int i = 1; i + 1 < argc; i += 2) {
         const std::string k = argv[i];
         if (k == "--out") out = argv[i + 1];
@@ -50,6 +50,7 @@ int main(int argc, char** argv) {
         else if (k == "--seg") segMm = std::atof(argv[i + 1]);
         else if (k == "--top") topDist = std::atof(argv[i + 1]);
         else if (k == "--close") std::sscanf(argv[i + 1], "%d-%d/%d", &fa, &fb, &fstep);
+        else if (k == "--chains") chains = std::atoi(argv[i + 1]);
         else if (k == "--mass") massScale = std::atof(argv[i + 1]);
         else if (k == "--damp") damp = std::atof(argv[i + 1]);
     }
@@ -87,6 +88,7 @@ int main(int argc, char** argv) {
     sim.params.segment = segMm * 1e-3;
     sim.params.massScale = massScale;
     sim.params.damping = damp;
+    if (std::getenv("SIM_MU")) sim.params.friction = std::atof(std::getenv("SIM_MU"));
     sim.build(slipKnotLayout(sim.params.radius));
     std::printf("%d particles\n", sim.rs.particleCount());
     int shot = 0;
@@ -183,16 +185,20 @@ int main(int argc, char** argv) {
             // a close-up at the throat
             const YarnMesh m = sceneMesh(sim);
             YarnCamera cam;
-            cam.target = sim.hook.tip + sim.hook.axis() * (3.0 * sim.shape.R);
+            static Vec3 fixedTarget{};
+            static int fixedFrom = -1;
+            if (fixedFrom < 0) { fixedFrom = sim.frame; fixedTarget = sim.hook.tip + sim.hook.axis() * (6.0 * sim.shape.R); }
+            cam.target = std::getenv("SIM_CFIX") ? fixedTarget : sim.hook.tip + sim.hook.axis() * (3.0 * sim.shape.R);
             cam.fovDeg = 30;
             cam.distance = std::getenv("SIM_CDIST") ? std::atof(std::getenv("SIM_CDIST")) : 0.03;
             // views in the hook's frame: from the throat side, from the side, and between
             const Vec3 th = sim.hook.throat(), ax = sim.hook.axis(), sd = cross(ax, th);
-            const Vec3 views[3] = {th, sd, normalized(th + sd * 0.8 - ax * 0.5)};
+            Vec3 views[3] = {th, sd, normalized(th + sd * 0.8 - ax * 0.5)};
+            if (std::getenv("SIM_CFIX")) { views[0] = Vec3{0, 0, 1}; views[1] = normalized(Vec3{-1, 0.05, 0.1}); views[2] = normalized(Vec3{0, 1, 0.02}); }
             const char* vn[3] = {"throat", "side", "obl"};
             for (int v = 0; v < 3; ++v) {
                 cam.dir = views[v];
-                cam.up = v == 1 ? th : sd;
+                cam.up = std::getenv("SIM_CFIX") ? (v == 2 ? Vec3{0, 0, -1} : Vec3{0, 1, 0}) : (v == 1 ? th : sd);
                 char name[256];
                 std::snprintf(name, sizeof name, "%s_c%04d_%s.png", out.c_str(), sim.frame, vn[v]);
                 renderYarnPng(name, m, cam, 480, 480);
@@ -208,6 +214,35 @@ int main(int argc, char** argv) {
     snap("start");
     if (std::getenv("SIM_DEBUG")) for (int i = 136; i <= 150; ++i) std::printf("  p%d (%.1f %.1f %.1f) w %.3g\n", i, sim.rs.x[i].x * 1e3, sim.rs.x[i].y * 1e3, sim.rs.x[i].z * 1e3, sim.rs.w[i]);
     makeSlipKnot(sim);
+    auto loopSize = [&] {
+        const Vec3 ax = sim.hook.axis();
+        Real mx = 0;
+        for (const Vec3& p : sim.rs.x) {
+            const Vec3 d = p - sim.hook.tip;
+            const Real a = dot(d, ax);
+            if (a < 0 || a > 0.04) continue;
+            const Real rr = length(d - ax * a);
+            if (rr < 0.008) mx = std::max(mx, rr);
+        }
+        return mx;
+    };
+    std::printf("loop reaches %.1f mm from the axis\n", loopSize() * 1e3);
+    if (std::getenv("SIM_SNUG")) {
+        const bool tail = std::string(std::getenv("SIM_SNUG")) == "tail";
+        const Vec3 t0 = sim.tail.target;
+        for (int k = 1; k <= 90; ++k) {
+            if (tail) sim.tail.target = t0 + Vec3{0, -0.02, 0} * (k / 90.0);
+            else sim.ball.tension = 0.6;
+            sim.step(sim.hook);
+            if (sim.onFrame) sim.onFrame();
+        }
+        sim.settle(30);
+        std::printf("after pulling the %s: loop reaches %.1f mm\n", tail ? "tail" : "working yarn", loopSize() * 1e3);
+    }
+    for (int c = 0; c < chains; ++c) {
+        makeChain(sim);
+        std::printf("chain %d: loops on hook %d (up) %d (front)\n", c + 1, sim.loopsOnHook(Vec3{0, 1, 0}), sim.loopsOnHook(Vec3{0, 0, 1}));
+    }
     snap("end");
     const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     std::printf("slip knot: %d frames in %.1f s; worst gap %.2f mm (2r %.2f), worst strain %.3f, worst in hook %.2f mm\n", sim.frame, secs,

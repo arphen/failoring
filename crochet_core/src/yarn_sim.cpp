@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 
 namespace fl {
 
@@ -336,9 +338,166 @@ void makeSlipKnot(YarnSim& sim) {
     }
     // snugged: the working yarn pulled firmly closes the loop on the shaft
     sim.phase = "The working yarn pulled firmly snugs the loop on the shaft: the slip knot";
-    sim.ball.tension = 6.0 * tension0;
-    sim.settle(60);
+    sim.ball.tension = 4.0 * sim.params.tension;
+    sim.settle(150);
     sim.ball.tension = tension0;
+    sim.settle(20);
+}
+
+namespace {
+// Where the loop on the hook sits: the mean of the yarn close round the shaft (within `reach` of the axis), and how far behind the tip.
+bool loopOnShaft(const YarnSim& sim, Vec3* centre, Real* along) {
+    const Vec3 ax = sim.hook.axis();
+    Vec3 c{};
+    int n = 0;
+    for (const Vec3& p : sim.rs.x) {
+        const Vec3 d = p - sim.hook.tip;
+        const Real a = dot(d, ax);
+        if (a < 0 || a > 0.04) continue;
+        if (length(d - ax * a) > sim.shape.R + 3.0 * sim.params.radius) continue;
+        c += p;
+        ++n;
+    }
+    if (n == 0) return false;
+    *centre = c / (Real)n;
+    *along = dot(*centre - sim.hook.tip, ax);
+    return true;
+}
+}  // namespace
+
+void makeChain(YarnSim& sim) {
+    const Real m = kMm, R = sim.shape.R;
+    Vec3 loop;
+    Real along = 0;
+    if (!loopOnShaft(sim, &loop, &along)) return;
+    const Vec3 ax = sim.hook.axis();            // tip -> handle (the hook lies tip to the left)
+    const Vec3 up{0, 1, 0}, front{0, 0, 1};
+    auto moveHand = [&](const Vec3& to, Real seconds) {
+        const Vec3 from = sim.ball.target;
+        const int n = std::max(1, (int)(seconds / sim.params.dt));
+        for (int k = 1; k <= n; ++k) {
+            const Real t = (Real)k / n;
+            sim.ball.target = from + (to - from) * (t * t * (3 - 2 * t));
+            sim.step(sim.hook);
+            if (sim.onFrame) sim.onFrame();
+        }
+    };
+    // the left hand: thumb and middle finger pinch the work just below the loop on the hook; the index finger, up behind the loop, carries the yarn
+    sim.phase = "The left hand holds the work below the hook; the yarn runs up over its index finger";
+    const int hold = sim.grab(loop - up * (R + 4 * m), 3.5 * m);
+    std::printf("chain: loop %.1f mm behind the tip, loops on hook %d\n", along * 1e3, sim.loopsOnHook(up));
+    // the loop pushed back onto the shaft, clear of the throat: the hook slides on through it, tip first
+    const Real seat = (std::getenv("SIM_SEAT") ? std::atof(std::getenv("SIM_SEAT")) : 8.0) * R;
+    if (along < seat) {
+        sim.moveHook(hookPose(sim.hook.tip - ax * (seat - along), -ax, sim.hook.throat()), 0.6);
+        loopOnShaft(sim, &loop, &along);
+        std::printf("chain: loop now %.1f mm behind the tip\n", along * 1e3);
+    }
+    // the working yarn tightened: the loop closes snug round the shaft
+    sim.ball.tension = 4.0 * sim.params.tension;
+    sim.settle(60);
+    sim.ball.tension = sim.params.tension;
+    const Vec3 tip0 = sim.hook.tip;
+    const Vec3 throat = tip0 + ax * (3.0 * R);  // the middle of the throat
+    moveHand(loop + up * (25 * m) - front * (15 * m), 0.7);
+    // yarn over: the index finger brings the yarn down behind the hook, level with it and to the left, so that it runs from the loop past the
+    // throat; the throat turned back toward it, the hook moves back into it: the yarn lands in the throat (the catch that made the slip knot)
+    sim.phase = "Yarn over: the hook takes the yarn running to the finger into its throat";
+    const Vec3 back = front * -1.0;
+    auto env = [](const char* k, Real d) { return std::getenv(k) ? std::atof(std::getenv(k)) : d; };
+    const Vec3 thr = normalized(front * env("YO_RF", 0.5) - up);   // the throat, down and a little toward the crocheter
+    if (env("YO_MODE", 3) == 3) {
+        // the yarn over: the index finger takes the yarn once round the hook just in front of the throat, from behind, over the top, down in
+        // front, under and up behind again; the throat faces down into the wrap
+        sim.moveHook(hookPose(tip0, -ax, thr), 0.5);
+        const Vec3 c = tip0 + ax * (env("YO_AX", 3.0) * R);
+        const Real rad = env("YO_R", 15) * m;
+        const Real a0 = env("YO_A0", 2.2);   // the angle in the (back, up) plane where the finger starts: behind and above
+        auto at = [&](Real ang) { return c + (front * -std::cos(ang) + up * std::sin(ang)) * rad; };
+        moveHand(at(a0), 0.6);
+        const int n = (int)(env("YO_T", 1.6) / sim.params.dt);
+        for (int k = 1; k <= n; ++k) {
+            const Real t = (Real)k / n;
+            const Real e = t * t * (3 - 2 * t);
+            sim.ball.target = at(a0 - 2 * kPi * e);   // decreasing angle: from behind-up over the top toward the front, down, under, back
+            sim.step(sim.hook);
+            if (sim.onFrame) sim.onFrame();
+        }
+    } else if (env("YO_MODE", 3) == 2) {
+        moveHand(loop - ax * (env("YO_L", 40) * m) + up * (env("YO_U", 4) * m) + back * (env("YO_B", 2) * m), 0.8);
+        sim.moveHook(hookPose(tip0, -ax, normalized(up + back * env("YO_TB", 0.2))), 0.5);
+        sim.moveHook(hookPose(tip0 + up * (env("YO_D", 2.5) * m), -ax, normalized(up + back * env("YO_TB", 0.2))), 0.5);
+    } else {
+        moveHand(loop - ax * (env("YO_L", 14) * m) + back * (env("YO_B", 16) * m) + up * (env("YO_U", 1) * m), 0.7);
+        sim.moveHook(hookPose(tip0, -ax, back), 0.5);
+        sim.moveHook(hookPose(tip0 + back * (env("YO_D", 7) * m), -ax, back), 0.8);
+    }
+    {
+        int n = 0, lo = 1 << 30, hi = -1;
+        for (int i = 0; i < sim.rs.particleCount(); ++i) {
+            const Vec3 l = rotate(conj(sim.hook.q), sim.rs.x[i] - sim.hook.tip) / R;
+            if (l.x > -0.3 && l.x < 1.0 && std::fabs(l.y) < 1.2 && l.z > 1.4 && l.z < 4.6) { ++n; lo = std::min(lo, i); hi = std::max(hi, i); }
+        }
+        std::printf("chain: after the catch %d particles in the throat (%d..%d), %d particles;", n, lo, hi, sim.rs.particleCount());
+        for (int i = 0; i < sim.rs.particleCount(); ++i) {
+            const Vec3 l = rotate(conj(sim.hook.q), sim.rs.x[i] - sim.hook.tip) / R;
+            if (l.x > -0.3 && l.x < 1.0 && std::fabs(l.y) < 1.2 && l.z > 1.4 && l.z < 4.6) std::printf(" %d", i);
+        }
+        int lo2 = 1 << 30, hi2 = -1;
+        for (int i = 0; i < sim.rs.particleCount(); ++i) {
+            const Vec3 d = sim.rs.x[i] - sim.hook.tip;
+            const Real a = dot(d, ax);
+            if (a > 5 * R && a < 12 * R && length(d - ax * a) < R + 2.5 * sim.params.radius) { lo2 = std::min(lo2, i); hi2 = std::max(hi2, i); }
+        }
+        std::printf("; round the shaft %d..%d\n", lo2, hi2);
+    }
+    // the throat rolled down and forward: the yarn is over the hook, caught
+    sim.phase = "The hook turns its throat down, the yarn caught in it";
+    if (env("YO_MODE", 3) != 3) {
+        const Vec3 lift = sim.hook.tip - tip0;
+        sim.moveHook(hookPose(tip0 + lift, -ax, front), 0.4);
+        sim.moveHook(hookPose(tip0, -ax, thr), 0.4);
+        moveHand(tip0 + ax * (3 * R) + front * (env("YO_HF", 14) * m) - up * (env("YO_HD", 10) * m), 0.8);
+    }
+    {
+        int best = -1; Real bd = 1e9; Vec3 bl{};
+        for (int i = 0; i < sim.rs.particleCount(); ++i) {
+            const Vec3 l = rotate(conj(sim.hook.q), sim.rs.x[i] - sim.hook.tip) / R;
+            const Real d = length(l - Vec3{0.1, 0, 2.9});
+            if (d < bd) { bd = d; best = i; bl = l; }
+        }
+        std::printf("chain: before the pull the yarn nearest the throat is p%d at (%.2f %.2f %.2f) R, %.2f R away; loops on hook %d\n", best, bl.x, bl.y,
+                    bl.z, bd, sim.loopsOnHook(up));
+    }
+    // drawn back through the loop: the hand holds the work, the hook moves to the right; the old loop slides over the head and off, the yarn in the
+    // throat comes through it as the new loop
+    sim.phase = "Pull through: the hook draws the yarn through the loop on the hook";
+    sim.moveHook(hookPose(tip0 + ax * (along + env("YO_PULL", 8) * R), -ax, thr), 1.6);
+    {
+        int lo2 = 1 << 30, hi2 = -1;
+        for (int i = 0; i < sim.rs.particleCount(); ++i) {
+            const Vec3 d = sim.rs.x[i] - sim.hook.tip;
+            const Real a = dot(d, ax);
+            if (a > 0 && a < 12 * R && length(d - ax * a) < R + 2.5 * sim.params.radius) { lo2 = std::min(lo2, i); hi2 = std::max(hi2, i); }
+        }
+        std::printf("chain: after the pull, round the hook:");
+        for (int i = 0; i < sim.rs.particleCount(); ++i) {
+            const Vec3 d = sim.rs.x[i] - sim.hook.tip;
+            const Real a = dot(d, ax);
+            if (a > 0 && a < 12 * R && length(d - ax * a) < R + 2.5 * sim.params.radius) std::printf(" %d", i);
+        }
+        std::printf("\n");
+    }
+    // the throat back toward the crocheter, and the hook pushed on through the new loop (the hand still holding the work) so that it rides out
+    // of the throat onto the shaft; the yarn back over the finger
+    sim.phase = "The new loop on the hook: it rides onto the shaft";
+    sim.moveHook(hookPose(sim.hook.tip, -ax, normalized(front + up * 0.6)), 0.6);
+    if (loopOnShaft(sim, &loop, &along) && along < seat)
+        sim.moveHook(hookPose(sim.hook.tip - ax * (seat - along), -ax, sim.hook.throat()), 0.8);
+    moveHand(sim.hook.tip + ax * seat + up * (25 * m) - front * (15 * m), 0.6);
+    sim.release(hold);
+    sim.settle(20);
 }
 
 }  // namespace fl
+

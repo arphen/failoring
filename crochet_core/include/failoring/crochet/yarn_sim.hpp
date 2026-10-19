@@ -107,6 +107,9 @@ private:
 // The slip knot, made the way a crocheter makes it: the yarn laid in a ring with the working yarn behind it, the hook in through the ring, catching
 // the working yarn and drawing it through, the ends pulled to close the knot on the hook.
 void makeSlipKnot(YarnSim& sim);
+// One chain stitch, from a loop on the hook (the hook lying tip to the left): the left hand holds the work just below the hook and carries the
+// working yarn over its index finger; the hook picks the yarn up (yarn over), turns its throat down and draws it back through the loop on the hook.
+void makeChain(YarnSim& sim);
 
 // The yarn laid out for the slip knot (tail first): exposed so a caller can set the simulation up and drive its own frames.
 std::vector<Vec3> slipKnotLayout(Real radius);
