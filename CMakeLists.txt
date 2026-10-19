@@ -184,3 +184,7 @@ endif()
 # yarn mode: builds a piece of crochet one hook action at a time and writes PNG views (docs/YARN_MODE_PLAN.md, phase Y2)
 add_executable(yarn_cli crochet_core/cli/yarn_cli.cpp)
 target_link_libraries(yarn_cli PRIVATE crochet_core)
+
+# yarn mode: searches the lattice's design parameters for clean threading and no overlap
+add_executable(yarn_tune crochet_core/cli/yarn_tune.cpp)
+target_link_libraries(yarn_tune PRIVATE crochet_core)

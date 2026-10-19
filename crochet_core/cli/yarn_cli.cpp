@@ -78,6 +78,10 @@ int main(int argc, char** argv) {
         else if (k == "--close") w.wp.closeFactor = v;
         else if (k == "--lift") w.wp.travelLift = v * 1e-3;
         else if (k == "--n") nChains = (int)v;
+        else if (k == "--barA") w.wp.barA = v * 1e-3;
+        else if (k == "--barB") w.wp.barB = v * 1e-3;
+        else if (k == "--tilt") w.wp.barTilt = v;
+        else if (k == "--rise") w.wp.postRise = v;
         else if (k == "--cscale") w.rod.params.radiusScale = v;
         else if (k == "--shape") w.rod.params.shapeStiffness = v;
         else if (k == "--fric") w.rod.params.friction = v;

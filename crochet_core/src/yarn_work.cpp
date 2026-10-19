@@ -197,7 +197,7 @@ int YarnWork::finger(const std::vector<int>& eyesLoops, bool consume, const Vec3
 }
 
 // A loop with its ring put at `ringC` (plane square to `ringN`) and its legs through the eyes of `eyesLoops`, in order.
-int YarnWork::loopAt(const Vec3& ringC, const Vec3& ringN0, const std::vector<int>& eyesLoops, bool consume) {
+int YarnWork::loopAt(const Vec3& ringC, const Vec3& ringN0, const std::vector<int>& eyesLoops, bool consume, const Vec3* major, Real semiA, Real semiB) {
     const Real r = rod.params.radius;
     const Real off = wp.hookRadius + r + 0.0004;
     const Vec3 ringN = normalized(ringN0);
@@ -237,30 +237,36 @@ int YarnWork::loopAt(const Vec3& ringC, const Vec3& ringN0, const std::vector<in
     }
     // the ring: legs flare out to it from the side of the last eye
     const Pass& L = passes.back();
-    Vec3 w0 = (L.c - ringC) - ringN * dot(L.c - ringC, ringN);
-    if (length2(w0) < 1e-10) w0 = L.u;
-    w0 = normalized(w0);
-    const Vec3 v0 = cross(ringN, w0);   // (w0, v0, ringN) right handed
-    const Real eps = std::asin(std::min(0.9, wp.legGap / std::max(off, 1e-6)));
-    auto onRing = [&](Real phi, Real rho) { return ringC + (w0 * std::cos(phi) + v0 * std::sin(phi)) * rho; };
+    const Real ra = semiA > 0 ? semiA : wp.ringRadius, rb = semiB > 0 ? semiB : wp.ringRadius;
+    Vec3 U = major != nullptr ? (*major) - ringN * dot(*major, ringN) : Vec3{};
+    const Vec3 toEye = (L.c - ringC) - ringN * dot(L.c - ringC, ringN);
+    if (length2(U) < 1e-10) {
+        U = toEye;
+        if (length2(U) < 1e-10) U = L.u;
+    }
+    U = normalized(U);
+    const Vec3 V = cross(ringN, U);   // (U, V, ringN) right handed
+    // the ring starts on the side that faces the eye
+    const Real th0 = std::atan2(dot(toEye, V) / rb, dot(toEye, U) / ra);
+    const Real eps = std::asin(std::min(0.9, wp.legGap / std::max(std::min(ra, rb), 1e-6)));
+    auto onRing = [&](Real phi) { return ringC + U * (ra * std::cos(th0 + phi)) + V * (rb * std::sin(th0 + phi)); };
     const Real pitch = 2.4 * r;
     way.push_back(L.c + L.a * wp.approach + L.u * wp.legGap);
     const int ringSteps = 22;
     const Real sweep = 2.0 * kPi - 2.0 * eps;
-    // from the eye to the ring's attachment: a short run, spreading from the leg gap to the ring
     for (int k = 1; k <= 2; ++k) {
         const Real f = k / 3.0;
         const Vec3 from = L.c + L.a * wp.approach + L.u * wp.legGap;
-        const Vec3 to = onRing(eps, wp.ringRadius) + ringN * 0.0;
+        const Vec3 to = onRing(eps);
         way.push_back(from + (to - from) * f);
     }
     const int ringFirstWay = (int)way.size();
-    for (int k = 0; k <= ringSteps; ++k) way.push_back(onRing(eps + sweep * k / ringSteps, wp.ringRadius) + ringN * (pitch * k / ringSteps));
+    for (int k = 0; k <= ringSteps; ++k) way.push_back(onRing(eps + sweep * k / ringSteps) + ringN * (pitch * k / ringSteps));
     const int ringLastWay = (int)way.size() - 1;
     for (int k = 2; k >= 1; --k) {
         const Real f = k / 3.0;
         const Vec3 from = L.c + L.a * wp.approach - L.u * wp.legGap;
-        const Vec3 to = onRing(-eps, wp.ringRadius) + ringN * pitch;
+        const Vec3 to = onRing(-eps) + ringN * pitch;
         way.push_back(from + (to - from) * f);
     }
     for (int k = (int)passes.size() - 1; k >= 0; --k) {
@@ -359,10 +365,23 @@ int YarnWork::pullThrough(int k) {
 }
 
 int YarnWork::chain() {
-    // the next ring: one stitch on along the row, alternating between the two layers
-    ++chainCount_;
-    const Vec3 c = origin_ + progress * (wp.stitchWidth * (chainCount_ + 1)) + zAxis() * ((chainCount_ % 2 == 0 ? 1.0 : -1.0) * wp.layerGap);
-    const int id = loopAt(c, zAxis(), {hook.back()}, true);
+    const Vec3 z = zAxis();
+    Vec3 c;
+    int id;
+    if (row == 0) {
+        // the foundation chain: the next ring one stitch on along the row, alternating between the two layers
+        ++chainCount_;
+        c = origin_ + progress * (wp.stitchWidth * (chainCount_ + 1)) + z * ((chainCount_ % 2 == 0 ? 1.0 : -1.0) * wp.layerGap);
+        id = loopAt(c, z, {hook.back()}, true);
+    } else {
+        // a turning chain: a ring standing a row above the stitch on the hook, at the end of the row
+        const EyeFrame e = eye(hook.back());
+        const Vec3 base = e.centre - z * dot(e.centre, z);
+        const Vec3 lean = normalized(upDir * std::cos(wp.barTilt) + z * std::sin(wp.barTilt));
+        const Vec3 along = progress;
+        c = base + upDir * wp.stitchHeight - along * (0.5 * wp.stitchWidth) + z * (0.3 * wp.layerGap);
+        id = loopAt(c, lean, {hook.back()}, true, &along, wp.barA, wp.barB);
+    }
     settle();
     return id;
 }
@@ -374,18 +393,19 @@ int YarnWork::pullUp(int opening) {
 }
 
 int YarnWork::sc(int opening) {
-    // the opening is the eye of a loop in the row below. The loop pulled up through it stands half a row above, on the worker's side of the
-    // work; the loop pulled through that one and the loop on the hook stands a whole row up, half a stitch along, on the other side. The
-    // position comes from the opening's place along the row; the layer from the row (the rows alternate sides as the work is turned over).
+    // The opening is the eye of a loop in the row below. The loop pulled up through it is a post: it stands nearly a row up and is a bar (a flat
+    // elongated ring leaning back toward the worker, which from the front is a pair of strands side by side along the row). The loop pulled
+    // through that one and the loop on the hook is the stitch's top: another bar, half a stitch along. Position comes from the opening's place
+    // along the row; the lean from the worker's side of the work.
     const EyeFrame b = eye(opening);
     const Vec3 z = zAxis();
-    const Real layer = (row % 2 == 1 ? 1.0 : -1.0) * wp.layerGap;
-    const Vec3 base = b.centre - z * dot(b.centre, z);   // the opening's place in the plane of the work
-    const Vec3 rowBase = base + z * (origin_.x * 0.0);
-    const int b1 = loopAt(rowBase + upDir * (0.55 * wp.stitchHeight) + z * layer, z, {opening}, false);
+    const Vec3 along = progress;
+    const Vec3 lean = normalized(upDir * std::cos(wp.barTilt) + z * std::sin(wp.barTilt));
+    const Vec3 base = b.centre - z * dot(b.centre, z);
+    const int b1 = loopAt(base + upDir * (wp.postRise * wp.stitchHeight) + z * (0.5 * wp.layerGap), lean, {opening}, false, &along, wp.barA, wp.barB);
     settle();
-    const int top = loopAt(rowBase + upDir * wp.stitchHeight + progress * (0.5 * wp.stitchWidth) - z * (0.5 * layer), z,
-                           {b1, hook.front() == b1 ? hook.back() : hook.front()}, true);
+    const int top = loopAt(base + upDir * wp.stitchHeight + along * (0.5 * wp.stitchWidth) - z * (0.3 * wp.layerGap), lean,
+                           {b1, hook.front() == b1 ? hook.back() : hook.front()}, true, &along, wp.barA, wp.barB);
     settle();
     return top;
 }
@@ -419,19 +439,18 @@ int YarnWork::stitchSc(int opening) {
 
 void YarnWork::stitchTurn(int turningChain) {
     const bool foundation = row == 0;
-    for (int i = 0; i < turningChain; ++i) {
-        const int id = chain();
-        (void)id;
-        if (!log_.empty() && log_.back().first == "ch") ++log_.back().second;
-        else log_.push_back({"ch", 1});
-    }
-    // the next row goes back along the stitches just made, the last made first
+    // the next row goes back along the stitches just made, the last made first; its turning chain is the first thing in it
     target_.assign(made_.rbegin(), made_.rend());
     if (foundation && !target_.empty()) target_.erase(target_.begin());   // sc in the 2nd chain from the hook
     made_.clear();
     cursor_ = 0;
-    turn();
     log_.push_back({"turn", 1});
+    turn();   // the work is turned over before its turning chain is made: the chain goes the new way
+    for (int i = 0; i < turningChain; ++i) {
+        chain();
+        if (!log_.empty() && log_.back().first == "ch") ++log_.back().second;
+        else log_.push_back({"ch", 1});
+    }
 }
 
 std::string YarnWork::patternText() const {

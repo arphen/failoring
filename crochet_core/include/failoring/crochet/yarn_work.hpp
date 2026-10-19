@@ -35,25 +35,29 @@ struct WorkParams {
     // The shape of a finger as it is made (m). A loop on the hook is a ring round the hook's shaft with its two legs running back along
     // the shaft, side by side, through the loops it was pulled through. It is made roomy and then tightened (tension on the working end):
     // the loops it passed through close onto its legs, the live ring stays open round the hook.
-    Real hookRadius = 0.0020;     // the hook's shaft (a 4 mm hook)
-    Real legGap = 0.0014;         // half the distance between the two legs
-    Real approach = 0.0020;       // the straight run of the legs either side of an eye
-    Real fingerLength = 0.0020;   // legs beyond the last eye before they flare out to the ring
+    Real hookRadius = 0.0;     // the hook's shaft (a 4 mm hook)
+    Real legGap = 0.00134;         // half the distance between the two legs
+    Real approach = 0.00162;       // the straight run of the legs either side of an eye
+    Real fingerLength = 0.00103;   // legs beyond the last eye before they flare out to the ring
     Real flare = 0.0030;          // length over which the legs spread out to the ring
-    Real ringRadius = 0.0060;     // the live ring while it is made (the hook's radius and a strand's, once it is tight)
-    Real workingRun = 0.0040;     // the yarn laid out after a finger toward the ball
-    Real travelSlack = 1.15;      // the working yarn to the next eye is pulled taut: its rest length is this times the straight distance
+    Real ringRadius = 0.0040;     // the live ring while it is made (the hook's radius and a strand's, once it is tight)
+    Real workingRun = 0.0010;     // the yarn laid out after a finger toward the ball
+    Real travelSlack = 3.0;      // the working yarn to the next eye is pulled taut: its rest length is this times the straight distance
     Real travelLift = 0.0085;     // the working yarn goes round the outside of the work to the next eye, this far out (m)
     Real segmentLength = 0.0020;  // the rod's node spacing
     Real tighten = 1.0;           // the rest length of every segment is its made length times this
-    Real closeFactor = 0.6;       // a loop that a finger is pulled through is pulled in: its ring's rest length times this (once per pass)
-    Real closeFloor = 0.40;       // ... but no further than this fraction of the ring as made
-    int settleSteps = 80;         // rod steps after each action
+    Real closeFactor = 1.0;       // a loop that a finger is pulled through is pulled in: its ring's rest length times this (once per pass)
+    Real closeFloor = 1.0;       // ... but no further than this fraction of the ring as made
+    int settleSteps = 0;         // rod steps after each action
     // the lattice the rings are placed on (flat work: rings lie in the fabric plane, rows alternate which side of it they sit on)
-    Real stitchWidth = 0.0058;    // between neighbouring rings in a row
-    Real stitchHeight = 0.0050;   // between rows
-    Real layerGap = 0.0026;       // between the front and the back layer of rings (about a strand)
-    Real workTension = 0.25;      // N pulling the working end along its last run, as the crocheter's hand does
+    Real stitchWidth = 0.00846;    // between neighbouring rings in a row
+    Real stitchHeight = 0.00568;   // between rows
+    Real layerGap = 0.00216;       // between the front and the back layer of rings (about a strand)
+    Real barA = 0.00304;           // a stitch's top loop is a bar: semi-axis along the row
+    Real barB = 0.0022;           // ... and across it
+    Real barTilt = 0.75157;          // rad: how far the bar leans back from the horizontal toward the worker (its normal is up, tipped this far toward the front)
+    Real postRise = 0.99442;          // the loop pulled up through the stitch below stands this fraction of a row up
+    Real workTension = 0.0;      // N pulling the working end along its last run, as the crocheter's hand does
 };
 
 class YarnWork {
@@ -121,7 +125,8 @@ private:
     int finger(const std::vector<int>& eyesLoops, bool consume, const Vec3* axisHint = nullptr);
     // A loop whose ring is put at `ringC`, its plane square to `ringN`; its legs go from the ring through the eyes of `eyesLoops` (in order)
     // and back. The legs pass each eye towards the ring, bending to face it when the line is too slanting.
-    int loopAt(const Vec3& ringC, const Vec3& ringN, const std::vector<int>& eyesLoops, bool consume);
+    // The ring is a circle of ringRadius, or an ellipse with semi-axes semiA along `major` and semiB across it (a top loop seen edge on is a bar).
+    int loopAt(const Vec3& ringC, const Vec3& ringN, const std::vector<int>& eyesLoops, bool consume, const Vec3* major = nullptr, Real semiA = -1, Real semiB = -1);
     int addLoop(int p0, int p1, bool live);
     void appendPath(const std::vector<Vec3>& pts);
 };

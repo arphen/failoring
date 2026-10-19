@@ -16,17 +16,7 @@ YarnSession::YarnSession() { reset(); }
 
 void YarnSession::reset() {
     work_ = fl::YarnWork();
-    // the settings of a piece being worked by hand: tight loops on a lattice, a soft shape memory, strands that give a little
-    work_.wp.hookRadius = 0.0;
-    work_.wp.closeFactor = 1.0;
-    work_.wp.closeFloor = 1.0;
-    work_.wp.travelSlack = 3.0;
-    work_.wp.ringRadius = 0.0032;
-    work_.wp.approach = 0.0015;
-    work_.wp.workingRun = 0.0020;
-    work_.wp.fingerLength = 0.0010;
-    work_.wp.workTension = 0.0;
-    work_.wp.settleSteps = 0;
+    // the settings of a piece being worked by hand: the tuned tight lattice (WorkParams' defaults), a soft shape memory, strands that give a little
     work_.rod.params.radiusScale = 0.55;
     work_.rod.params.shapeStiffness = 40.0;
     work_.slipKnot(fl::Vec3{0, 0, 0});
