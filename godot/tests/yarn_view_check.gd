@@ -324,6 +324,13 @@ func _ready() -> void:
 	check("the hands can be hidden, and then the yarn goes straight to its ball", not yv.left_hand.visible and not yv.right_hand.visible)
 	yv.hands_check.button_pressed = true
 
+	# a partly drawn yarn (the yarn growing as it is made) with a loop standing on the hook at every length
+	var grown_ok := true
+	var total: int = yv.session.get_particle_count()
+	for nn in range(4, total, maxi(1, total / 17)):
+		var gm: Dictionary = yv.session.get_mesh(nn, 8, 2)
+		grown_ok = grown_ok and (gm["positions"] as PackedVector3Array).size() > 0
+	check("the yarn can be drawn at any length while the loops on the hook stand (no hang, a mesh each time)", grown_ok)
 	# the hook makes the stitch: it draws the new loop through the loop on the hook, then rests at the new loop
 	yv.reset_piece()
 	yv.animate = true
@@ -337,6 +344,7 @@ func _ready() -> void:
 	check("...the last moment of the pull is the finished yarn (same vertices as the whole mesh)", (fr1["positions"] as PackedVector3Array).size() == (yv.session.get_mesh(-1, 8, 2)["positions"] as PackedVector3Array).size())
 	check("...the first moment has less yarn out than the last (the loop is not out yet)", _extent(fr0["positions"]) < _extent(fr1["positions"]) + 1.0e-9)
 	check("the animated chains made three more stitches", int(yv.session.get_state()["made"]) == 3)
+	check("an animated chain is made by the hook: the pull animation ran (and every click was taken, none lost to a stuck busy flag)", not yv._last_frame.is_empty() and not yv.busy)
 	check("the hook rests at the new loop", yv.hook_node.global_position.distance_to(yv.work_root.to_global(yv._live_centre())) < 0.0015)
 	# the same animated: the first sc starts the row, a finished row is turned (the turning chain drawn through first, then the half turn)
 	for i in 2:

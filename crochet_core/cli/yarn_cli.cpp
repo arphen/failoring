@@ -107,6 +107,7 @@ int main(int argc, char** argv) {
     int lastLoops = 0;
     bool colour = false;
     int pull = -2;
+    int showOverlaps = 0;
     bool stand = false;
     YarnWork w;
     for (int i = 2; i + 1 < argc; i += 2) {
@@ -116,12 +117,14 @@ int main(int argc, char** argv) {
         else if (k == "--last") lastLoops = (int)v;
         else if (k == "--colour") colour = v != 0;
         else if (k == "--pull") pull = (int)v;
+        else if (k == "--overlaps") showOverlaps = (int)v;
         else if (k == "--stand") stand = v != 0;
         else if (k == "--cscale") w.rodParams.radiusScale = v;
         else if (k == "--pitch") w.wp.chainPitch = v * 1e-3;
         else if (k == "--chA") w.wp.chainA = v * 1e-3;
         else if (k == "--chB") w.wp.chainB = v * 1e-3;
         else if (k == "--thick") gThick = v;
+        else if (k == "--rad") w.rodParams.radius = v * 1e-3;
         else if (k == "--taper") w.wp.chainTaper = v;
         else if (k == "--chEye") w.wp.chainEye = v;
         else if (k == "--chLayer") w.wp.chainLayer = v * 1e-3;
@@ -170,6 +173,22 @@ int main(int argc, char** argv) {
         std::printf("threading: %d of %d passes are a clean 1+1 piercing\n", total - bad, total);
     }
     std::printf("min strand gap %.3f mm (2r = %.2f)\n", minStrandGap(w.rod, 5) * 1e3, 2e3 * w.rodParams.radius);
+    {   // how often the design's centre lines come closer than a yarn allows (docs: the yarn must not pass through itself)
+        const Real twoR = 2.0 * w.rodParams.radius;
+        const std::vector<YarnOverlap> ov = findOverlaps(w, twoR);
+        int c25 = 0, c50 = 0, c75 = 0, c0 = 0, c01 = 0;
+        for (const YarnOverlap& o : ov) {
+            if (o.dist < 0.05e-3) ++c0;
+            if (o.dist < 0.30e-3) ++c01;
+            if (o.dist < 0.25 * twoR) ++c25;
+            if (o.dist < 0.50 * twoR) ++c50;
+            if (o.dist < 0.75 * twoR) ++c75;
+        }
+        std::printf("design overlaps (segment pairs closer than the yarn's width 2r = %.2f mm): %zu; closer than 75%% / 50%% / 25%% of it: %d / %d / %d; closer than 0.05 mm / 0.3 mm: %d / %d\n", twoR * 1e3, ov.size(), c75, c50, c25, c0, c01);
+        for (size_t k = 0; k < ov.size() && k < (size_t)showOverlaps; ++k)
+            std::printf("  %.2f mm at (%.1f %.1f %.1f) / (%.1f %.1f %.1f): strand %d seg %d (loop %d) vs strand %d seg %d (loop %d)\n", ov[k].dist * 1e3, ov[k].at.x * 1e3, ov[k].at.y * 1e3,
+                        ov[k].at.z * 1e3, ov[k].atB.x * 1e3, ov[k].atB.y * 1e3, ov[k].atB.z * 1e3, ov[k].strand, ov[k].i, ov[k].loopA, ov[k].strandB, ov[k].j, ov[k].loopB);
+    }
     std::printf("%d particles, %zu strands, %zu loops\n%s", w.particleCount(), w.strands.size(), w.loops.size(), w.patternText().c_str());
     if (stand) {   // the loops on the hook stand round it, the hook through them (as in the photographs)
         const Vec3 tipDir = normalized(Vec3{-0.86, -0.38, -0.30});

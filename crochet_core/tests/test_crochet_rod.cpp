@@ -308,6 +308,54 @@ void testNonIntersection() {
 }
 
 // Friction: a strand lying across another does not slide off when the plane tilts.
+// A flat yarn: wide in the plane of the fabric, thin across it. Strands lying on top of each other need 2 b between their centre lines, side by side 2 a, and crossing over each
+// other 2 b as well; a round yarn of the same area needs more than 2 b and less than 2 a.
+void testRibbon() {
+    std::printf("[flat yarn]\n");
+    const Real a = 1.9e-3, b = 0.8e-3;
+    auto settle = [&](const Vec3& offset, bool cross) {
+        RodSystem rs;
+        rs.params.gravity = Vec3{};
+        rs.params.ribbonWidth = a;
+        rs.params.ribbonThickness = b;
+        rs.params.ribbonNormal = Vec3{0, 0, 1};
+        rs.params.damping = 150.0;   // (what is pushed out is not flung)
+        rs.setMassScale(1.0e4);
+        rs.setRotationalInertiaScale(1.0e4);
+        const int base = rs.addChain(line({-0.04, 0, 0}, {0.04, 0, 0}, 40), false);
+        for (int i = 0; i < rs.chains[base].particles; ++i) rs.pin(rs.chains[base].firstParticle + i);
+        const Vec3 d = cross ? Vec3{0, 1, 0} : Vec3{1, 0, 0};
+        const int top = rs.addChain(line(offset - d * 0.04, offset + d * 0.04, 40), false);
+        for (int k = 0; k < 400; ++k) rs.step(1.0 / 120.0);
+        const RodChain T = rs.chains[top];
+        Real best = 1e300;
+        for (int s = 0; s < rs.segmentCount(); ++s)
+            if (rs.segChain[s] == top)
+                for (int t = 0; t < rs.segmentCount(); ++t)
+                    if (rs.segChain[t] == base) best = std::min(best, length(rs.x[rs.segA[s]] + (rs.x[rs.segB[s]] - rs.x[rs.segA[s]]) * 0.5 - (rs.x[rs.segA[t]] + (rs.x[rs.segB[t]] - rs.x[rs.segA[t]]) * 0.5)));
+        const Vec3 mid = rs.x[T.firstParticle + T.particles / 2];
+        return mid;
+    };
+    // on top of it (offset along the normal z): pushed out to 2 b along z only
+    const Vec3 up = settle({0, 0, 1.55e-3}, false);
+    CHECKP(up.z > 2 * b - 0.05e-3 && up.z < 0.6 * 2 * a && std::fabs(up.y) < 0.1e-3, "a flat yarn laid on another sits 2 b = %.2f mm above it (%.2f mm), not 2 a", 2e3 * b, up.z * 1e3);
+    // beside it (offset along y, in the plane of the fabric): pushed to 2 a
+    const Vec3 side = settle({0, 3.7e-3, 0}, false);
+    CHECKP(side.y > 2 * a - 0.05e-3 && side.y < 2 * a + 1.2e-3, "...beside it 2 a = %.2f mm away (%.2f mm)", 2e3 * a, side.y * 1e3);
+    // crossing over it at right angles: 2 b again (the section's thin way is the way they are separated)
+    const Vec3 over = settle({0, 0, 1.55e-3}, true);
+    CHECKP(over.z > 2 * b - 0.05e-3 && over.z < 0.6 * 2 * a, "...crossing over it 2 b apart (%.2f mm)", over.z * 1e3);
+    RodSystem rs;
+    rs.params.ribbonWidth = a;
+    rs.params.ribbonThickness = b;
+    rs.params.radius = 1.0e-3;
+    const int c1 = rs.addChain(line({-0.01, 0, 0}, {0.01, 0, 0}, 5), false), c2 = rs.addChain(line({-0.01, 0, 1.0e-3}, {0.01, 0, 1.0e-3}, 5), false);
+    (void)c1;
+    (void)c2;
+    const Real gap = rs.contactGap(0, rs.chains[c2].firstSegment);
+    CHECKP(std::fabs(gap - (1.0e-3 - 2 * b)) < 1e-9, "the gap helper says so: %.2f mm of centre distance against 2 b = %.2f", gap * 1e3 + 2e3 * b, 2e3 * b);
+}
+
 void testFriction() {
     std::printf("[friction]\n");
     auto run = [](Real mu) {
@@ -404,6 +452,7 @@ int main() {
     testTwist();
     testLinkedRings();
     testNonIntersection();
+    testRibbon();
     testFriction();
     testSharpCorners();
     testTiming();

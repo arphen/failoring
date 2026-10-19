@@ -33,14 +33,20 @@ namespace {
 struct RingSpec {
     Vec3 pos, d1, d2, base;
     Real r = 0, arc = 0;
+    Real ra = 0, rb = 0;   // the half widths of a flat yarn's section along d1 and d2 (0: round, radius r)
 };
 
 void emitRing(YarnMesh& m, const RingSpec& g, const YarnMeshOptions& o, int sides) {
     for (int j = 0; j < sides; ++j) {
         const Real th = 2.0 * kPi * j / sides;
         const Vec3 radial = g.d1 * std::cos(th) + g.d2 * std::sin(th);
-        m.pos.push_back(g.pos + radial * g.r);
-        m.nrm.push_back(radial);
+        if (g.ra > 0.0 && g.rb > 0.0) {
+            m.pos.push_back(g.pos + g.d1 * (std::cos(th) * g.ra) + g.d2 * (std::sin(th) * g.rb));
+            m.nrm.push_back(normalized(g.d1 * (std::cos(th) / g.ra) + g.d2 * (std::sin(th) / g.rb)));
+        } else {
+            m.pos.push_back(g.pos + radial * g.r);
+            m.nrm.push_back(radial);
+        }
         const Real phase = o.plies * (th + 2.0 * kPi * g.arc / o.plyPitch);
         const Real tone = 1.0 - o.plyContrast + o.plyContrast * (0.5 + 0.5 * std::cos(phase));
         m.col.push_back(g.base * tone);
@@ -65,6 +71,8 @@ void capRings(std::vector<RingSpec>& out, const RingSpec& end, const Vec3& dir, 
         RingSpec g = end;
         g.pos = end.pos + dir * (end.r * std::sin(ang[k]));
         g.r = end.r * std::cos(ang[k]);
+        g.ra = end.ra * std::cos(ang[k]);
+        g.rb = end.rb * std::cos(ang[k]);
         g.arc = end.arc + (atStart ? -1.0 : 1.0) * end.r * std::sin(ang[k]);
         out.push_back(g);
     }
@@ -123,6 +131,28 @@ YarnMesh buildYarnMesh(const RodSystem& rs, const YarnMeshOptions& o) {
             g.base = (!o.segmentColour.empty() && seg < (int)o.segmentColour.size()) ? o.segmentColour[seg] : o.colour;
             g.r = rs.radius[seg] * o.radiusScale;
             g.arc = arc;
+            if (o.ribbonWidth > 0.0) {   // flat: the thin axis along the fabric's normal, round where the yarn runs along it
+                const Real f = rs.radius[seg] / std::max(rs.params.radius, 1e-12) * o.radiusScale;
+                Real ra = o.ribbonWidth * f, rb = o.ribbonThickness * f;
+                const Vec3 N = normalized(o.ribbonNormal);
+                Vec3 tn = N - T * dot(N, T);
+                if (length2(tn) > 1e-12) {
+                    tn = normalized(tn);
+                    const Real along = std::fabs(dot(N, T));
+                    const Real u = std::min(1.0, std::max(0.0, (along - 0.55) / 0.35));
+                    const Real wgt = u * u * (3.0 - 2.0 * u);
+                    const Real req = std::sqrt(ra * rb);
+                    ra += (req - ra) * wgt;
+                    rb += (req - rb) * wgt;
+                    g.d1 = normalized(cross(T, tn));   // the wide way
+                    g.d2 = cross(T, g.d1);              // (the thin way, either sign)
+                } else {
+                    ra = rb = std::sqrt(ra * rb);
+                }
+                g.ra = ra;
+                g.rb = rb;
+                g.r = std::sqrt(ra * rb);
+            }
             rings.push_back(g);
             tangents.push_back(T);
         }

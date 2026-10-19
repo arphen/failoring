@@ -18,8 +18,8 @@ struct Param { const char* name; Real* (*get)(WorkParams&); Real lo, hi; };
 
 #define P(field, lo, hi) {#field, [](WorkParams& w) -> Real* { return &w.field; }, lo, hi}
 const Param kParams[] = {
-    P(stitchWidth, 0.0055, 0.0085), P(stitchHeight, 0.0055, 0.0072), P(layerGap, 0.0010, 0.0040), P(ringRadius, 0.0024, 0.0040),
-    P(legGap, 0.0008, 0.0018), P(approach, 0.0010, 0.0030), P(fingerLength, 0.0005, 0.0025), P(barA, 0.0030, 0.0045), P(barB, 0.0014, 0.0022),
+    P(stitchWidth, 0.0055, 0.0120), P(stitchHeight, 0.0055, 0.0120), P(layerGap, 0.0010, 0.0060), P(ringRadius, 0.0024, 0.0060),
+    P(legGap, 0.0006, 0.0030), P(approach, 0.0010, 0.0040), P(fingerLength, 0.0005, 0.0030), P(barA, 0.0030, 0.0080), P(barB, 0.0012, 0.0040),
     P(barTilt, 0.15, 0.9), P(postRise, 0.5, 1.1), P(workingRun, 0.0010, 0.0040), P(hdcScale, 1.45, 1.6), P(dcScale, 1.9, 2.1), P(slstScale, 0.3, 0.6),
     P(yoHdc, 0.3, 0.8), P(yoDc, 0.25, 0.6), P(riseDc, 0.55, 0.9), P(midDc, 0.7, 1.0), P(yoLayer, 0.4, 1.6)};
 const int kN = (int)(sizeof(kParams) / sizeof(kParams[0]));
@@ -27,8 +27,11 @@ const int kFirstNew = 12;   // the parameters from here on belong to hdc, dc and
 
 struct Score { int unclean = 0, passes = 0, extra = 0; Real pen = 0, total = 0; };
 
+Real gRadius = 1.25e-3, gWant = 0.5;   // the yarn's radius, and how much of its width two strands must keep between their centre lines (0.5: worsted may be squeezed)
+
 Score evaluate(const WorkParams& base) {
     YarnWork w;
+    w.rodParams.radius = gRadius;
     w.wp = base;
     w.slipKnot(Vec3{0, 0, 0});
     for (int i = 0; i < 6; ++i) w.stitchChain();
@@ -49,7 +52,7 @@ Score evaluate(const WorkParams& base) {
     }
     // overlap: segment pairs more than 6 apart whose centre lines come closer than 0.8 of two radii
     const RodSystem& rs = w.rod;
-    const Real want = 0.5 * 2.0 * rs.params.radius;   // worsted is soft: strands may be squeezed to half their width
+    const Real want = gWant * 2.0 * rs.params.radius;
     const int S = rs.segmentCount();
     for (int a = 0; a < S; ++a)
         for (int b = a + 7; b < S; ++b) {
@@ -67,6 +70,8 @@ Score evaluate(const WorkParams& base) {
 
 int main(int argc, char** argv) {
     const int iters = argc > 1 ? std::atoi(argv[1]) : 300;
+    if (const char* e = std::getenv("YARN_TUNE_RAD")) gRadius = std::atof(e) * 1e-3;     // mm
+    if (const char* e = std::getenv("YARN_TUNE_WANT")) gWant = std::atof(e);
     const bool onlyNew = argc > 3 && std::string(argv[3]) == "new";
     std::mt19937 rng(argc > 2 ? std::atoi(argv[2]) : 1);
     std::uniform_real_distribution<Real> u01(0, 1);

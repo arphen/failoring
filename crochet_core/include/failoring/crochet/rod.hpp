@@ -44,6 +44,12 @@ struct RodParams {
     bool contact = true;          // off: strands pass through each other (a debugging tool and the mutant of the linking test)
     int contactSkipSegments = 2;  // segments of one chain this close (in index) do not touch
     Real radiusScale = 1.0;       // contact radius scale (the plan's "yarn thickness" slider)
+    // A flat yarn: in a dense fabric a yarn is squashed, wide in the plane of the fabric and thin across it. With ribbonWidth > 0 the cross-section of every strand is an ellipse with
+    // these half widths (at the strand's own radius = params.radius; they scale with it and with radiusScale), its thin axis along the fabric's normal `ribbonNormal` squared to the
+    // strand's tangent, and the contact asks for the distance the ellipses need (2 b where strands cross over each other, 2 a side by side). A strand that runs along the
+    // normal (a leg through an eye) has the round section of the same area.
+    Real ribbonWidth = 0.0, ribbonThickness = 0.0;
+    Vec3 ribbonNormal{0, 0, 1};
     Real shapeStiffness = 0.0;    // N/m of the soft spring that pulls a particle back to its anchor (0 = none): the shape memory of a designed piece
     // dynamics
     Vec3 gravity{0, -9.81, 0};
@@ -128,6 +134,11 @@ public:
     void setAnchorsToShape() { anchor = x; }   // the present shape is the designed one
     void fixOrientation(int segment) { wq[segment] = 0; }
 
+    // How far two strands (segments) are from touching as the yarn is shaped: the distance of their centre lines minus the distance the cross-sections need, negative when they
+    // overlap (isotropic yarn: minus the two radii). The segments are not tested for being neighbours.
+    Real contactGap(int segA, int segB) const;
+    // the half widths of a strand's cross-section (width, thickness) and its thin axis (valid when ribbonWidth > 0)
+    void ribbonSection(int seg, Real* a, Real* b, Vec3* thin, Vec3* wide) const;
     void step(Real dt);
     // Runs steps of `dt` until the largest particle speed is below `tol` (m/s) or `maxSteps` have run; returns the steps run.
     int relax(Real dt, Real tol, int maxSteps);

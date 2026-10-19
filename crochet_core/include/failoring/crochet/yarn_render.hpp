@@ -20,6 +20,9 @@ struct YarnMeshOptions {
     Real plyContrast = 0.35;   // 0 = a plain tube
     Vec3 colour{0.80, 0.30, 0.22};
     std::vector<Vec3> segmentColour;  // optional: one colour per rod segment (overrides `colour`)
+    // A flat yarn (see RodParams::ribbonWidth): the section is an ellipse of these half widths at the rod's radius, its thin axis along `ribbonNormal` (squared to the yarn). 0 = round.
+    Real ribbonWidth = 0.0, ribbonThickness = 0.0;
+    Vec3 ribbonNormal{0, 0, 1};
     int maxParticles = -1;     // draw only the first this many particles of each chain (the yarn growing as it is made); -1 = all
 };
 

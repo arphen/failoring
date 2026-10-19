@@ -665,7 +665,11 @@ func do_action(kind: String, opening: int = -2, turn_chains: int = -1) -> bool:
 		if rotate:
 			await _turn_animation()                      # ... then the work is turned over
 	elif kind != "skip":
-		await _grow(before, int(r["particles"]))
+		var made: Array = r.get("loops", [])
+		if animate and made.size() > 0:
+			await _pull_animation(before, made)
+		else:
+			await _grow(before, int(r["particles"]))
 	soft_steps = 16 if animate else 0
 	_refresh()
 	if animate:

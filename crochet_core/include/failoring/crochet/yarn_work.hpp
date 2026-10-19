@@ -246,4 +246,14 @@ std::vector<std::array<int, 3>> loopPiercings(const YarnWork& w);
 // {loop, eye, +count, -count}. A finger that really threads an eye has exactly one piercing each way ({.., 1, 1}).
 std::vector<std::array<int, 4>> threadingReport(const YarnWork& w);
 
+// Where the yarn comes closer to itself than it can: pairs of segments of the strands' centre lines (the design, not the soft layer) that are not near each other along the
+// yarn (`skip` segments) and whose distance is below `limit`. A real yarn of radius r needs 2 r between centre lines; a distance near 0 is the yarn passing through itself.
+struct YarnOverlap {
+    int strand = 0, i = 0, strandB = 0, j = 0;   // the segments (strand, index into its pts)
+    Real dist = 0.0;
+    Vec3 at{}, atB{};                            // where (the middle of each of the two segments)
+    int loopA = -1, loopB = -1;                  // the loops the segments belong to (-1: none, the tail or travel between loops)
+};
+std::vector<YarnOverlap> findOverlaps(const YarnWork& w, Real limit, int skip = 4);
+
 }  // namespace fl

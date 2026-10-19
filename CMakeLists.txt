@@ -198,3 +198,7 @@ target_link_libraries(yarn_tune PRIVATE crochet_core)
 # yarn mode: a bounded physical simulation of a chain stitch (a hook, a loop, a yarn over, a pull through)
 add_executable(yarn_presim crochet_core/cli/yarn_presim.cpp)
 target_link_libraries(yarn_presim PRIVATE crochet_core)
+
+# yarn mode: does inflating the yarn under contact untangle the design? (an experiment)
+add_executable(yarn_relax crochet_core/cli/yarn_relax.cpp)
+target_link_libraries(yarn_relax PRIVATE crochet_core)

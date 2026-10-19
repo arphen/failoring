@@ -536,8 +536,48 @@ int YarnWork::slipKnot(const Vec3& at, const Vec3& colour) {
     appendPath(way);
     const int ring = addLoop(0, 0, (int)strands[0].pts.size() - 1, false);
     loops[ring].r0 = std::min((int)strands[0].pts.size() - 2, (int)std::ceil(wp.tailLength / wp.segmentLength));
-    // out round the ring and back to the side the finger will come from
-    appendPath({at + ex * (2.4 * r) + ey * (R * 1.7), at - ex * (4.0 * r) + ey * (R * 1.7), at - ex * (4.0 * r) + ey * (R * 0.3)});
+    // out round the ring and back to the side the finger will come from, without touching the tail or the ring: straight out from where the turn ended, back along the
+    // ring's axis outside it and above the tail (the tail runs along the ring's top), a quarter of the way round to the front, where the finger can go in
+    const Real Ro = R + 2.0 * r + 0.0010;                       // clear of the ring (and of the tail along its top) by a yarn's width
+    const Real xEnd = 2.4 * r;
+    std::vector<Vec3> out;
+    out.push_back(at + ex * xEnd + ey * Ro);
+    out.push_back(at - ex * (4.0 * r) + ey * Ro);
+    for (int k = 1; k <= 6; ++k) {   // a quarter turn round the axis, at that radius, to the front
+        const Real a = 0.5 * kPi * k / 6.0;
+        out.push_back(at - ex * (4.0 * r) + ey * (Ro * std::cos(a)) + ez * (Ro * std::sin(a)));
+    }
+    {   // rounded: a smooth curve (Catmull-Rom) through those points, from where the turn ended
+        std::vector<Vec3> ctl;
+        ctl.push_back(at + ex * (2.0 * r * 0.0) + ey * R);          // (the start of the turn, only for the tangent)
+        ctl.push_back(strands[0].pts.back());
+        for (const Vec3& q : out) ctl.push_back(q);
+        ctl.push_back(out.back() + (out.back() - out[out.size() - 2]));
+        std::vector<Vec3> smooth;
+        for (size_t i = 1; i + 2 < ctl.size(); ++i)
+            for (int k = 1; k <= 6; ++k) {
+                const Real t = k / 6.0, t2 = t * t, t3 = t2 * t;
+                const Vec3 &p0 = ctl[i - 1], &p1 = ctl[i], &p2 = ctl[i + 1], &p3 = ctl[i + 2];
+                smooth.push_back((p1 * 2.0 + (p2 - p0) * t + (p0 * 2.0 - p1 * 5.0 + p2 * 4.0 - p3) * t2 + (p1 * 3.0 - p0 - p2 * 3.0 + p3) * t3) * 0.5);
+            }
+        std::vector<Vec3> even;   // evenly spaced, as the rod's nodes are
+        Vec3 prev = strands[0].pts.back();
+        Real acc = 0.0;
+        for (const Vec3& q : smooth) {
+            Real d = length(q - prev);
+            while (acc + d >= wp.segmentLength) {
+                const Real f = (wp.segmentLength - acc) / std::max(d, 1e-12);
+                prev = prev + (q - prev) * f;
+                even.push_back(prev);
+                d = length(q - prev);
+                acc = 0.0;
+            }
+            acc += d;
+            prev = q;
+        }
+        even.push_back(smooth.back());
+        appendPath(even);
+    }
     origin_ = at;
     chainCount_ = 0;
     turnChains_ = 0;
@@ -897,6 +937,42 @@ std::vector<std::array<int, 4>> threadingReport(const YarnWork& w) {
             out.push_back({(int)li, eyeLoop, plus, minus});
         }
     }
+    return out;
+}
+
+std::vector<YarnOverlap> findOverlaps(const YarnWork& w, Real limit, int skip) {
+    struct Seg { int strand, i; };
+    std::vector<Seg> segs;
+    std::vector<std::vector<int>> owner(w.strands.size());
+    for (size_t s = 0; s < w.strands.size(); ++s) {
+        owner[s].assign(w.strands[s].pts.size(), -1);
+        for (size_t li = 0; li < w.loops.size(); ++li)
+            if (w.loops[li].strand == (int)s)
+                for (int k = std::max(0, w.loops[li].p0); k <= w.loops[li].p1 && k < (int)owner[s].size(); ++k) owner[s][k] = (int)li;
+        for (int i = 0; i + 1 < (int)w.strands[s].pts.size(); ++i) segs.push_back({(int)s, i});
+    }
+    std::vector<YarnOverlap> out;
+    for (size_t a = 0; a < segs.size(); ++a)
+        for (size_t b = a + 1; b < segs.size(); ++b) {
+            if (segs[a].strand == segs[b].strand && std::abs(segs[a].i - segs[b].i) <= skip) continue;
+            const std::vector<Vec3>& P = w.strands[segs[a].strand].pts;
+            const std::vector<Vec3>& Q = w.strands[segs[b].strand].pts;
+            const SegSegResult r = closestSegmentSegment(P[segs[a].i], P[segs[a].i + 1], Q[segs[b].i], Q[segs[b].i + 1]);
+            const Real d = std::sqrt(r.dist2);
+            if (d >= limit) continue;
+            YarnOverlap o;
+            o.strand = segs[a].strand;
+            o.i = segs[a].i;
+            o.strandB = segs[b].strand;
+            o.j = segs[b].i;
+            o.dist = d;
+            o.at = (P[segs[a].i] + P[segs[a].i + 1]) * 0.5;
+            o.atB = (Q[segs[b].i] + Q[segs[b].i + 1]) * 0.5;
+            o.loopA = owner[o.strand][o.i];
+            o.loopB = owner[o.strandB][o.j];
+            out.push_back(o);
+        }
+    std::sort(out.begin(), out.end(), [](const YarnOverlap& x, const YarnOverlap& y) { return x.dist < y.dist; });
     return out;
 }
 

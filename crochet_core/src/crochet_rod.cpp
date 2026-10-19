@@ -617,6 +617,7 @@ void RodSystem::buildPairs() {
         lmax = std::max(lmax, length(x[segB[s]] - x[segA[s]]));
     }
     rmax *= params.radiusScale;
+    if (params.ribbonWidth > 0.0) rmax *= params.ribbonWidth / std::max(params.radius, 1e-12);
     const Real reach = 2.0 * rmax + params.contactSkin * rmax;  // two radii and the skin: the largest separation that can matter
     const Real cell = std::max(lmax + reach, 1e-6);
     const Real inv = 1.0 / cell;
@@ -652,10 +653,55 @@ void RodSystem::buildPairs() {
         const int a = (int)(c / (uint64_t)S), b = (int)(c % (uint64_t)S);
         if (skipPair(a, b)) continue;
         if (!segActive_.empty() && !segActive_[a] && !segActive_[b]) continue;   // both frozen: nothing moves
-        const Real R = (radius[a] + radius[b]) * params.radiusScale + params.contactSkin * rmax;
+        Real R = (radius[a] + radius[b]) * params.radiusScale + params.contactSkin * rmax;
+        if (params.ribbonWidth > 0.0) R = (radius[a] + radius[b]) / std::max(params.radius, 1e-12) * params.ribbonWidth * params.radiusScale + params.contactSkin * rmax;
         const SegSegResult r = closestSegmentSegment(x[segA[a]], x[segB[a]], x[segA[b]], x[segB[b]]);
         if (r.dist2 < R * R) pairs_.push_back({a, b});
     }
+}
+
+void RodSystem::ribbonSection(int seg, Real* a, Real* b, Vec3* thin, Vec3* wide) const {
+    const Real f = radius[seg] / std::max(params.radius, 1e-12) * params.radiusScale;
+    Real aa = params.ribbonWidth * f, bb = params.ribbonThickness * f;
+    const Vec3 d = x[segB[seg]] - x[segA[seg]];
+    const Real dl = length(d);
+    Vec3 t = dl > 1e-12 ? d / dl : Vec3{0, 0, 1};
+    const Vec3 N = normalized(params.ribbonNormal);
+    const Real along = std::fabs(dot(N, t));
+    Vec3 tn = N - t * dot(N, t);
+    if (length2(tn) < 1e-12) tn = cross(t, Vec3{1, 0, 0}) + Vec3{0, 1e-9, 0};
+    tn = normalized(tn);
+    const Real u = std::min(1.0, std::max(0.0, (along - 0.55) / 0.35));
+    const Real w = u * u * (3.0 - 2.0 * u);            // a strand along the normal is round
+    const Real req = std::sqrt(aa * bb);
+    aa += (req - aa) * w;
+    bb += (req - bb) * w;
+    if (a) *a = aa;
+    if (b) *b = bb;
+    if (thin) *thin = tn;
+    if (wide) *wide = normalized(cross(t, tn));
+}
+
+namespace {
+// the distance between the centre lines two ellipse sections (aligned with segment A's frame) need along the unit direction n
+Real ellipseNeed(Real aA, Real bA, Real aB, Real bB, const Vec3& thinA, const Vec3& wideA, const Vec3& n) {
+    const Real Wa = aA + aB, Wb = bA + bB;
+    const Real c = dot(n, thinA), w = dot(n, wideA);
+    const Real den = std::sqrt(Wb * Wb * w * w + Wa * Wa * c * c);
+    return den > 1e-12 ? Wa * Wb / den : std::max(Wa, Wb);
+}
+}  // namespace
+
+Real RodSystem::contactGap(int sa, int sb) const {
+    const SegSegResult r = closestSegmentSegment(x[segA[sa]], x[segB[sa]], x[segA[sb]], x[segB[sb]]);
+    const Real dist = std::sqrt(r.dist2);
+    if (params.ribbonWidth <= 0.0) return dist - (radius[sa] + radius[sb]) * params.radiusScale;
+    Vec3 n = dist > 1e-12 ? (r.pa - r.pb) / dist : normalized(cross(x[segB[sa]] - x[segA[sa]], x[segB[sb]] - x[segA[sb]]) + Vec3{1e-9, 0, 0});
+    Real aA, bA, aB, bB;
+    Vec3 thinA, wideA;
+    ribbonSection(sa, &aA, &bA, &thinA, &wideA);
+    ribbonSection(sb, &aB, &bB, nullptr, nullptr);
+    return dist - ellipseNeed(aA, bA, aB, bB, thinA, wideA, n);
 }
 
 void RodSystem::solveContacts(Real /*h*/) {
@@ -664,9 +710,15 @@ void RodSystem::solveContacts(Real /*h*/) {
     for (const Pair& pr : pairs_) {
         const int ia = segA[pr.a], ib = segB[pr.a], ja = segA[pr.b], jb = segB[pr.b];
         const SegSegResult r = closestSegmentSegment(x[ia], x[ib], x[ja], x[jb]);
-        const Real R = (radius[pr.a] + radius[pr.b]) * params.radiusScale;
+        Real R = (radius[pr.a] + radius[pr.b]) * params.radiusScale;
+        Real aA = 0, bA = 0, aB = 0, bB = 0;
+        Vec3 thinA, wideA;
+        if (params.ribbonWidth > 0.0) {
+            ribbonSection(pr.a, &aA, &bA, &thinA, &wideA);
+            ribbonSection(pr.b, &aB, &bB, nullptr, nullptr);
+            R = aA + aB;   // the widest the pair can need
+        }
         if (r.dist2 >= R * R) continue;
-        ++touching;
         const Real dist = std::sqrt(r.dist2);
         Vec3 n;
         if (dist > 1e-12) {
@@ -677,6 +729,11 @@ void RodSystem::solveContacts(Real /*h*/) {
             if (length2(n) < 1e-24) n = Vec3{1, 0, 0};
             n = normalized(n);
         }
+        if (params.ribbonWidth > 0.0) {
+            R = ellipseNeed(aA, bA, aB, bB, thinA, wideA, n);
+            if (dist >= R) continue;
+        }
+        ++touching;
         const Real pen = R - dist;
         const Real s = r.s, t = r.t;
         const Real w1 = (1 - s) * (1 - s) * w[ia] + s * s * w[ib];
