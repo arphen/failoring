@@ -56,7 +56,9 @@ add_library(crochet_core STATIC
   crochet_core/src/crochet_run.cpp
   crochet_core/src/crochet_calibration.cpp
   crochet_core/src/crochet_hinge_fit.cpp
-  crochet_core/src/crochet_rod.cpp)
+  crochet_core/src/crochet_rod.cpp
+  crochet_core/src/yarn_render.cpp
+  crochet_core/src/yarn_work.cpp)
 target_include_directories(crochet_core PUBLIC crochet_core/include)
 target_link_libraries(crochet_core PUBLIC cloth_core)
 target_compile_options(crochet_core PRIVATE -Wall -Wextra)
@@ -178,3 +180,7 @@ if(FL_BENCH)
   add_executable(bench_bake cloth_core/tests/bench_bake.cpp)
   target_link_libraries(bench_bake PRIVATE cloth_core)
 endif()
+
+# yarn mode: builds a piece of crochet one hook action at a time and writes PNG views (docs/YARN_MODE_PLAN.md, phase Y2)
+add_executable(yarn_cli crochet_core/cli/yarn_cli.cpp)
+target_link_libraries(yarn_cli PRIVATE crochet_core)

@@ -56,6 +56,12 @@ struct RodParams {
     Real floorY = 0.0;            // a plane with the normal +y, for particles
 };
 
+// A fixed capsule (a sphere when a == b) strands cannot enter: the hook, a peg, a table edge.
+struct StaticCapsule {
+    Vec3 a, b;
+    Real r = 0;
+};
+
 struct RodChain {
     int firstParticle = 0, particles = 0, firstSegment = 0, segments = 0, firstJoint = 0, joints = 0;
     bool closed = false;
@@ -84,10 +90,15 @@ public:
     std::vector<int> jointA, jointB;
     std::vector<Vec3> restDarboux;     // rotation vector of the relative rotation at rest, in the first segment's frame (rad)
     std::vector<RodChain> chains;
+    std::vector<StaticCapsule> statics;
 
     // Adds a chain through `pts` (>= 2 points; >= 3 when closed). The frames are parallel transported along it. `restFromShape`: the
     // bend of the given shape is the rest bend (a ring that stays a ring); otherwise the rest is straight. Returns the chain index.
     int addChain(const std::vector<Vec3>& pts, bool closed, bool restFromShape = false);
+    // Appends points to the END of the LAST chain (open chains only): one particle and one segment per point, frames parallel transported
+    // from the chain's last segment. This is how yarn mode grows the yarn as the work is made.
+    void extendChain(const std::vector<Vec3>& pts);
+    Real restBendMemory = 1.0;   // how much of the bend a yarn is made with extendChain it keeps as its rest bend (0: springs back straight)
     // Resets the rest lengths of a chain to `scale` times the lengths of its present segments.
     void setRestLengthsFromShape(int chain, Real scale = 1.0);
     void scaleRestLengths(Real factor);  // slack: every rest length times factor (1 = as made)
@@ -126,6 +137,7 @@ private:
     void solveBendTwist(int j, Real h2inv);
     void solveContacts(Real h);
     void solveFloor(Real h);
+    void solveStatics();
     bool skipPair(int a, int b) const;
 };
 

@@ -1,0 +1,47 @@
+#pragma once
+// Yarn mode: the yarn drawn. A tube along each rod chain, its plies drawn as helices that follow the rod's material frame (so a strand
+// that has been twisted shows it), and a small software renderer (perspective, z-buffer, smooth shading, 2x supersampling) that writes
+// PNGs for the tests and the CLI. The Godot view builds the same mesh and shades it with a shader instead.
+#include <array>
+#include <string>
+#include <vector>
+
+#include "failoring/crochet/rod.hpp"
+#include "failoring/math.hpp"
+
+namespace fl {
+
+struct YarnMeshOptions {
+    int sides = 10;            // vertices round the tube
+    int subdiv = 3;            // samples per rod segment
+    Real radiusScale = 1.0;    // the drawn radius as a multiple of the rod's (the plan's "yarn thickness" slider)
+    int plies = 3;             // strands twisted together
+    Real plyPitch = 0.007;     // m of yarn per turn of one ply
+    Real plyContrast = 0.35;   // 0 = a plain tube
+    Vec3 colour{0.80, 0.30, 0.22};
+    std::vector<Vec3> segmentColour;  // optional: one colour per rod segment (overrides `colour`)
+};
+
+struct YarnMesh {
+    std::vector<Vec3> pos, nrm, col;
+    std::vector<std::array<int, 3>> tri;
+};
+
+YarnMesh buildYarnMesh(const RodSystem& rs, const YarnMeshOptions& o = {});
+
+struct YarnCamera {
+    Vec3 target{0, 0, 0};
+    Vec3 dir{0, 0, 1};      // from the target toward the camera
+    Vec3 up{0, 1, 0};
+    Real distance = 0.1;    // m
+    Real fovDeg = 35.0;     // vertical
+};
+
+// Renders `mesh` and writes a PNG; returns false when the file cannot be written.
+bool renderYarnPng(const std::string& path, const YarnMesh& mesh, const YarnCamera& cam, int width, int height,
+                   const Vec3& background = {0.93, 0.93, 0.91});
+// The same into an RGB buffer (width * height * 3), for putting several views side by side.
+std::vector<unsigned char> renderYarnRgb(const YarnMesh& mesh, const YarnCamera& cam, int width, int height,
+                                         const Vec3& background = {0.93, 0.93, 0.91});
+
+}  // namespace fl

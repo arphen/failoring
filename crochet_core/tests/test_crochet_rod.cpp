@@ -331,6 +331,48 @@ void testFriction() {
     CHECKP(std::fabs(held) < 0.25 * std::fabs(slid) || std::fabs(held) < 1e-3, "friction holds the strand (%.2f mm against %.2f mm)", held * 1e3, slid * 1e3);
 }
 
+// A rod made with sharp corners (a yarn loop turns 0.5 rad or more per 2 mm node) keeps its shape and does not stretch: the bend-twist
+// Jacobian must be the exact one. With the small-angle one, strain went to 50 % in 20 steps.
+void testSharpCorners() {
+    std::printf("[sharp corners]\n");
+    RodSystem rs;
+    rs.params.gravity = Vec3{};
+    rs.params.contact = false;
+    rs.params.damping = 25.0;
+    rs.params.EA = 30.0;
+    // a square wave of 2 mm nodes with 90 degree corners and a ring of radius 5.5 mm (0.36 rad per node)
+    std::vector<Vec3> pts;
+    for (int k = 0; k < 6; ++k) {   // a meander: up 4 mm, across 4 mm, down 4 mm, across 4 mm, ...
+        const Real x = 0.008 * k;
+        pts.push_back({x, 0.0, 0.0});
+        pts.push_back({x, 0.002, 0.0});
+        pts.push_back({x, 0.004, 0.0});
+        pts.push_back({x + 0.002, 0.004, 0.0});
+        pts.push_back({x + 0.004, 0.004, 0.0});
+        pts.push_back({x + 0.004, 0.002, 0.0});
+        pts.push_back({x + 0.004, 0.0, 0.0});
+        pts.push_back({x + 0.006, 0.0, 0.0});
+    }
+    for (int k = 0; k <= 16; ++k) {
+        const Real a = 2.0 * kPi * k / 16;
+        pts.push_back({0.05 + 0.0055 * std::sin(a), 0.0055 * (1 - std::cos(a)), 0.0});
+    }
+    const int c = rs.addChain(pts, false, true);
+    rs.pin(0);
+    Real maxAngle = 0;
+    for (int j = 0; j < (int)rs.jointA.size(); ++j) maxAngle = std::max(maxAngle, length(rs.jointRotation(j)));
+    for (int k = 0; k < 200; ++k) rs.step(1.0 / 120.0);
+    Real strain = 0, drift = 0;
+    for (int s = 0; s < rs.segmentCount(); ++s)
+        strain = std::max(strain, std::fabs(length(rs.x[rs.segB[s]] - rs.x[rs.segA[s]]) / rs.restLen[s] - 1.0));
+    for (int i = 0; i < rs.particleCount(); ++i) drift = std::max(drift, length(rs.x[i] - pts[i]));
+    std::printf("  largest joint angle %.2f rad, after 200 steps: strain %.4f, drift from the made shape %.3f mm\n", maxAngle, strain, drift * 1e3);
+    CHECKP(maxAngle > 1.4 && maxAngle < 2.0, "the test shape has sharp corners (%.2f rad)", maxAngle);
+    CHECKP(strain < 0.02, "the stretch stays under 2%% (%.3f%%)", 100.0 * strain);
+    CHECKP(drift < 0.5e-3, "a rod made in a shape stays in it (%.3f mm)", drift * 1e3);
+    (void)c;
+}
+
 void testTiming() {
     std::printf("[timing]\n");
     RodSystem rs;
@@ -363,6 +405,7 @@ int main() {
     testLinkedRings();
     testNonIntersection();
     testFriction();
+    testSharpCorners();
     testTiming();
     FINISH();
 }

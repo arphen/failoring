@@ -22,4 +22,7 @@ struct SnapshotColour {
 bool writeSnapshotPng(const std::string& path, const std::vector<Vec3>& pos, const std::vector<std::array<int, 3>>& tris,
                       const std::vector<SnapshotColour>& colours = {}, int tile = 360);
 
+// Writes an 8 bit RGB image (w * h * 3 bytes, row-major from the top) as a PNG.
+bool writePngRgb(const std::string& path, const std::vector<unsigned char>& rgb, int w, int h);
+
 }  // namespace fl

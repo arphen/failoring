@@ -241,4 +241,14 @@ bool writeSnapshotPng(const std::string& path, const std::vector<Vec3>& pos, con
     return ok;
 }
 
+bool writePngRgb(const std::string& path, const std::vector<unsigned char>& rgb, int w, int h) {
+    if (w <= 0 || h <= 0 || rgb.size() != static_cast<size_t>(w) * h * 3) return false;
+    const std::vector<unsigned char> png = encodePng(rgb, w, h);
+    std::FILE* f = std::fopen(path.c_str(), "wb");
+    if (f == nullptr) return false;
+    const bool ok = std::fwrite(png.data(), 1, png.size(), f) == png.size();
+    std::fclose(f);
+    return ok;
+}
+
 }  // namespace fl

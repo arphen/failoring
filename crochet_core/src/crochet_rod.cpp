@@ -143,6 +143,21 @@ M3 inv3(const M3& a) {
     return c * (1.0 / det);
 }
 
+// J_l^-1(phi): d(log(exp(delta) exp(phi))) / d(delta). A joint's relative rotation r = q_a* q_b changes by a left perturbation exp(delta)
+// when either orientation is perturbed, delta = u_b - u_a in a's frame, so this is the exact Jacobian of the bend-twist constraint
+// (the identity only for small angles: a loop of yarn turns 0.5 rad or more per 2 mm node).
+M3 jlInv(const Vec3& phi) {
+    const Real th = length(phi);
+    const M3 K = skew3(phi);
+    M3 J = ident3() - K * 0.5;
+    if (th > 1e-4 && th < 3.0) {
+        const Real k = 1.0 / (th * th) - (1.0 + std::cos(th)) / (2.0 * th * std::sin(th));
+        J = J + (K * K) * k;
+    } else if (th <= 1e-4) {
+        J = J + (K * K) * (1.0 / 12.0);
+    }
+    return J;
+}
 
 }  // namespace
 
@@ -210,6 +225,54 @@ int RodSystem::addChain(const std::vector<Vec3>& pts, bool closed, bool restFrom
     lambdaS_.assign(3 * segA.size(), 0.0);
     lambdaB_.assign(3 * jointA.size(), 0.0);
     return ci;
+}
+
+void RodSystem::extendChain(const std::vector<Vec3>& pts) {
+    if (chains.empty() || chains.back().closed) return;
+    RodChain& ch = chains.back();
+    const int ci = (int)chains.size() - 1;
+    for (const Vec3& p : pts) {
+        const int last = ch.firstParticle + ch.particles - 1;   // the present end particle
+        const int lastSeg = ch.firstSegment + ch.segments - 1;
+        const Vec3 d = p - x[last];
+        const Real len = fl::length(d);
+        if (len < 1e-12) continue;
+        const Vec3 t = d / len;
+        const Vec3 tPrev = rotate(q[lastSeg], kE3);
+        const Quat qn = normalized(quatFromTo(tPrev, t) * q[lastSeg]);
+        // the old end particle now has a segment on each side: its mass grows by half the new segment
+        const Real mOld = wFree[last] > 0 ? 1.0 / wFree[last] : 0.0;
+        const Real mNew = mOld + 0.5 * params.linearDensity * len;
+        wFree[last] = 1.0 / mNew;
+        if (w[last] > 0) w[last] = wFree[last];
+        const Real wi = 1.0 / (0.5 * params.linearDensity * len);
+        x.push_back(p); xPrev.push_back(p); v.push_back(Vec3{});
+        w.push_back(wi); wFree.push_back(wi);
+        extForce.push_back(Vec3{}); pinTarget.push_back(p); particleChain.push_back(ci);
+        const int sIdx = (int)segA.size();
+        segA.push_back(last);
+        segB.push_back((int)x.size() - 1);
+        segChain.push_back(ci);
+        segIndex.push_back(ch.segments);
+        q.push_back(qn); qPrev.push_back(qn); omega.push_back(Vec3{});
+        const Real m = params.linearDensity * len, r = params.radius;
+        mass.push_back(m);
+        wq.push_back(12.0 / (m * (3.0 * r * r + len * len)));
+        restLen.push_back(len);
+        radius.push_back(r);
+        jointA.push_back(lastSeg);
+        jointB.push_back(sIdx);
+        {   // the yarn keeps the bend it was made with (a loop stays a loop): bend rest from the shape, no rest twist
+            Vec3 rd = rotationVector(conj(q[lastSeg]) * qn);
+            rd.z = 0;
+            restDarboux.push_back(rd * restBendMemory);
+        }
+        ++ch.particles;
+        ++ch.segments;
+        ++ch.joints;
+    }
+    lambdaS_.assign(3 * segA.size(), 0.0);
+    lambdaB_.assign(3 * jointA.size(), 0.0);
 }
 
 void RodSystem::setRestLengthsFromShape(int chain, Real scale) {
@@ -303,20 +366,25 @@ void RodSystem::solveBendTwist(int j, Real h2inv) {
     const int sa = jointA[j], sb = jointB[j];
     const Real wa = wq[sa], wb = wq[sb];
     if (wa + wb <= 0) return;
-    const Vec3 C = rotationVector(conj(q[sa]) * q[sb]) - restDarboux[j];
+    const Vec3 phi = rotationVector(conj(q[sa]) * q[sb]);
+    const Vec3 C = phi - restDarboux[j];
+    const M3 Jp = jlInv(phi);
     const Real lAvg = 0.5 * (restLen[sa] + restLen[sb]);
     const Real ab = h2inv * lAvg / params.EI, at = h2inv * lAvg / params.GJ;
     const Vec3 lam{lambdaB_[3 * j], lambdaB_[3 * j + 1], lambdaB_[3 * j + 2]};
-    const Vec3 dl{(-C.x - ab * lam.x) / (wa + wb + ab), (-C.y - ab * lam.y) / (wa + wb + ab),
-                  (-C.z - at * lam.z) / (wa + wb + at)};
+    // S = (wa + wb) Jp Jp^T + alpha, a 3x3 solve
+    M3 S = (Jp * tr3(Jp)) * (wa + wb);
+    S.m[0] += ab; S.m[4] += ab; S.m[8] += at;
+    const Vec3 rhs{-C.x - ab * lam.x, -C.y - ab * lam.y, -C.z - at * lam.z};
+    const Vec3 dl = mulv(inv3(S), rhs);
     lambdaB_[3 * j] += dl.x;
     lambdaB_[3 * j + 1] += dl.y;
     lambdaB_[3 * j + 2] += dl.z;
-    const Vec3 dw = rotate(q[sa], dl);  // the correction in the world frame
+    const Vec3 du = mulv(tr3(Jp), dl);   // the correction in a's frame
+    const Vec3 dw = rotate(q[sa], du);   // in the world frame
     if (wb > 0) q[sb] = applyRot(q[sb], dw * wb);
     if (wa > 0) q[sa] = applyRot(q[sa], dw * (-wa));
 }
-
 
 // All stretch-shear and bend-twist constraints of one open chain in one banded solve (Deul et al. 2018, "Direct position-based solver
 // for stiff rods"). The constraints are ordered s0, j0, s1, j1, ... (s_k the stretch-shear of segment k, j_k the bend-twist between
@@ -333,11 +401,12 @@ void RodSystem::solveChainDirect(int ci, Real h2inv) {
     const int S = ch.segments;
     const int M = 2 * S - 1;
     if (M <= 0) return;
-    thread_local std::vector<M3> A0, A1, A2, L1, L2, Dinv, Dm, Rm;
+    thread_local std::vector<M3> A0, A1, A2, L1, L2, Dinv, Dm, Rm, Kj;
     thread_local std::vector<Vec3> rhs, y, z, sol, d3v;
     A0.assign(M, M3()); A1.assign(M, M3()); A2.assign(M, M3());
     L1.assign(M, M3()); L2.assign(M, M3()); Dinv.assign(M, M3()); Dm.assign(M, M3());
     Rm.assign(S, M3());
+    Kj.assign(S, M3());
     rhs.assign(M, Vec3{}); y.assign(M, Vec3{}); z.assign(M, Vec3{}); sol.assign(M, Vec3{}); d3v.assign(S, Vec3{});
     const int s0 = ch.firstSegment;
     for (int k = 0; k < S; ++k) {
@@ -360,7 +429,6 @@ void RodSystem::solveChainDirect(int ci, Real h2inv) {
             // with the previous segment: the shared particle (2 back) and the shared orientation (1 back, with joint k-1)
             const int sp = s - 1;
             A2[2 * k] = ident3() * (-w[a] / (restLen[sp] * l));
-            A1[2 * k] = skew3(d) * Rm[k - 1] * wqs;
         }
         if (k < S - 1) {
             const int j = ch.firstJoint + k;
@@ -368,17 +436,22 @@ void RodSystem::solveChainDirect(int ci, Real h2inv) {
             const Real lAvg = 0.5 * (l + restLen[sb2]);
             const Real ab = h2inv * lAvg / params.EI, at = h2inv * lAvg / params.GJ;
             const Real wsum = wqs + wq[sb2];
-            M3 dj = ident3() * wsum;
+            const Vec3 phi = rotationVector(conj(q[s]) * q[sb2]);
+            const M3 Jp = jlInv(phi);
+            Kj[k] = Jp * tr3(Rm[k]);                 // d C / d theta_b (and minus d C / d theta_a), world rotations
+            M3 dj = (Jp * tr3(Jp)) * wsum;
             dj.m[0] += ab; dj.m[4] += ab; dj.m[8] += at;
             A0[2 * k + 1] = dj;
-            A1[2 * k + 1] = tr3(skew3(d) * Rm[k] * (-wqs));   // (s_k, j_k)^T
-            const Vec3 C2 = rotationVector(conj(q[s]) * q[sb2]) - restDarboux[j];
+            // (s_k, j_k) = -wq_k [d_k]x K^T, so (j_k, s_k) is its transpose
+            A1[2 * k + 1] = tr3(skew3(d) * tr3(Kj[k]) * (-wqs));
+            const Vec3 C2 = phi - restDarboux[j];
             const Vec3 lamj{lambdaB_[3 * j], lambdaB_[3 * j + 1], lambdaB_[3 * j + 2]};
             rhs[2 * k + 1] = Vec3{-C2.x - ab * lamj.x, -C2.y - ab * lamj.y, -C2.z - at * lamj.z};
         }
     }
-    // A(j_k, j_k-1) = A(j_k-1, j_k)^T = (-wq_k R_k-1^T R_k)^T = -wq_k R_k^T R_k-1
-    for (int k = 1; k < S - 1; ++k) A2[2 * k + 1] = tr3(Rm[k]) * Rm[k - 1] * (-wq[s0 + k]);
+    // (s_k+1, j_k) = wq_k+1 [d_k+1]x K_k^T, written at row s_k+1 as its (n, n-1) block; (j_k+1, j_k) = -wq_k+1 K_k+1 K_k^T
+    for (int k = 1; k < S; ++k) A1[2 * k] = skew3(d3v[k]) * tr3(Kj[k - 1]) * wq[s0 + k];
+    for (int k = 1; k < S - 1; ++k) A2[2 * k + 1] = Kj[k] * tr3(Kj[k - 1]) * (-wq[s0 + k]);
     // block LDL^T: Lambda1 = L(n, n-1), Lambda2 = L(n, n-2), D(n)
     for (int n = 0; n < M; ++n) {
         M3 T = A1[n];
@@ -429,8 +502,8 @@ void RodSystem::solveChainDirect(int ci, Real h2inv) {
         const int s = s0 + k;
         if (wq[s] <= 0) continue;
         Vec3 dth = cross(sol[2 * k], d3v[k]);                    // [d]x^T dlambda
-        if (k < S - 1) dth -= mulv(Rm[k], sol[2 * k + 1]);       // joint k: segment k is its first
-        if (k > 0) dth += mulv(Rm[k - 1], sol[2 * k - 1]);       // joint k-1: segment k is its second
+        if (k < S - 1) dth -= mulv(tr3(Kj[k]), sol[2 * k + 1]);      // joint k: segment k is its first (a)
+        if (k > 0) dth += mulv(tr3(Kj[k - 1]), sol[2 * k - 1]);      // joint k-1: segment k is its second (b)
         q[s] = applyRot(q[s], dth * wq[s]);
     }
 }
@@ -579,6 +652,25 @@ void RodSystem::solveContacts(Real /*h*/) {
     lastContacts = touching;
 }
 
+void RodSystem::solveStatics() {
+    for (const StaticCapsule& cap : statics) {
+        for (int s = 0; s < segmentCount(); ++s) {
+            const int ia = segA[s], ib = segB[s];
+            const SegSegResult r = closestSegmentSegment(x[ia], x[ib], cap.a, cap.b);
+            const Real R = radius[s] * params.radiusScale + cap.r;
+            if (r.dist2 >= R * R) continue;
+            const Real dist = std::sqrt(r.dist2);
+            Vec3 n = dist > 1e-12 ? (r.pa - r.pb) / dist : normalized(cross(x[ib] - x[ia], Vec3{0, 1, 0}) + Vec3{1e-9, 0, 0});
+            const Real pen = R - dist;
+            const Real w1 = (1 - r.s) * (1 - r.s) * w[ia] + r.s * r.s * w[ib];
+            if (w1 <= 0) continue;
+            const Real lam = pen / w1;
+            x[ia] += n * ((1 - r.s) * w[ia] * lam);
+            x[ib] += n * (r.s * w[ib] * lam);
+        }
+    }
+}
+
 void RodSystem::solveFloor(Real /*h*/) {
     const Real mu = params.friction;
     const Real r = params.radius * params.radiusScale;
@@ -651,6 +743,7 @@ void RodSystem::step(Real dt) {
             }
             if (params.contact) solveContacts(h);
             if (params.floorOn) solveFloor(h);
+            if (!statics.empty()) solveStatics();
         }
         // 3. velocities
         for (int i = 0; i < n; ++i) v[i] = w[i] > 0 ? (x[i] - xPrev[i]) / h : Vec3{};

@@ -113,3 +113,36 @@ Each phase ends in tests and, where marked, a look by the user.
 * The first three or four seam variants to compare (a line each is enough, e.g. "pick up two orange loops, then pull red through").
 * Whether the hook's motion should ever be physical (the plan says cosmetic).
 * Yarn defaults for twist: the plies' direction and how tight they are, for cotton worsted and acrylic worsted (starter values until a real strand is measured).
+
+## 11. The editor's feel: the user's brief (2026-10-19, said while away from the desk)
+
+Phase Y3 builds to this; it is the point of the whole mode.
+
+* **A lego-simulator feeling.** Click an element, the hook performs the action, the new stitch appears, go again. Clicking "single crochet" must not
+  raise further questions: the defaults are what a crocheter means. **Both loops of the target stitch are selected by default**; the user may
+  select only one of the loops, or skip a loop by selecting and deselecting it (the loop picking of section 4, but with the sensible choice already made).
+* **Turning the work** at the end of a row gets a **designed animation**: the camera rotates round the piece, because the worker turns the work over.
+* **The worker's view.** The hook is in the right hand and the workpiece in the left; camera and hook placement follow that.
+* **Soft yarn.** The yarn should feel soft and deformable. It is about feel, not physical accuracy; the piece hardly reacts to gravity while it is
+  being worked, so gravity is off (or nearly) in this mode.
+* **The pattern as an overlay** while crocheting: the pattern's chart or cloth view, semi-transparent, over the work. (The cloth engine already makes the
+  layout and the chart; this is that view blended over the yarn.)
+
+## 12. What the first Y2 attempts taught (2026-10-19)
+
+* **CrochetPARADE** has no yarn model (see `docs/crochet/reports/Y1.md`), so its code is not in this.
+* **Storck et al., "Topology based modelling of crochet structures", J. Industrial Textiles 2022** (CC BY-NC 4.0; its ideas are used, nothing of it is
+  copied): a stitch is a unit cell of key points along the yarn centre line (L stitch length, H height, D depth), shifted in space and joined in the order
+  the work is made, then spline interpolated. Its caveat is the one that matters for us: yarn diameter over stitch size must be about 1/10 or less for
+  the paths not to interpenetrate; ours is about 1/2, so worsted must be treated as compressible in the contact (radius scale well under 1) and
+  built tight, not built roomy and shrunk. Its Figure 3 shows the sc unit cell: two tall parallel posts, a long top loop reaching toward the next stitch,
+  and a small foot loop at the bottom.
+* **CT2Yarn (arXiv 2609.06950)** renders plies as coaxial helices round the centre line (Zhao et al. 2016) and simulates the recovered yarn as a Discrete
+  Elastic Rod: the same two choices as `yarn_render` and the rod solver here.
+* **Building the topology by physics did not work.** Fingers made roomy round a hook and then tightened by tension and by shrinking rest lengths gave
+  blobs: the slack has nowhere tidy to go, and a long travel strand from the end of the yarn to the next opening wraps the work. The rod solver was not
+  the problem once its bend Jacobian was made exact (a regression test now covers it).
+* **What worked:** put every loop's ring on an explicit lattice position (flat work: rings lie in the fabric plane, rows alternate which side of it
+  they sit on), run the two legs from the ring through the eye of the loop it is pulled through at the lattice's own angle, build it tight, and look at it
+  before any relaxation. A chain built that way, with no physics at all, is recognisably a crochet chain from the front. The sc row on the same
+  scheme is not yet right (see `docs/crochet/reports/Y2.md` when it exists).
