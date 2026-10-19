@@ -184,3 +184,11 @@ A chain loop was a round ring; a real chain shows a column of Vs (each loop clos
 (`chainEye` 0.55 of `chainA`, `YarnLoop::eyeShift`), alternating two layers 1.5 mm apart. Chosen by a grid search over taper, eye, width and layer using the threading
 report (the same 32 of 33 clean passes as the round chain). Shots: `docs/crochet-shots/yarn/chain_teardrop_front.png`, `swatch_teardrop_chain_front.png`, `editor_swatch_teardrop.png`.
 Not yet right: the yarn is 2.5 mm thick against an 8.5 mm stitch, so the chain still reads as a braid of pointed loops more than the photo's thin Vs.
+
+### 13.z The turn, the hook's motions, fastening off (2026-10-19)
+
+From the user's sc swatch motion spec (docs/YARN_SC_SWATCH_SPEC.md): no rotation after the foundation chain (the first sc starts row 1 by itself); a turn after a finished row is the turning chain
+(drawn by the hook) and then half a turn of the fabric about its vertical axis through the loop on the hook, which stays put, the same way every row. Each loop of a stitch is made by insert / yarn over /
+pull (`YarnWork::pullFrame(loop, s, wrap)`: the working yarn to the first eye is part of the frame so it can be laid over the shaft). Fastening off is `YarnWork::finishOff()` and the "Finish off" button.
+Tests: test_crochet_yarn_work (pull frames end exactly at the design, the wrap lies round the shaft, the tail goes through the loop once), yarn_view_check (70 PASS: the spec's flow, the turn, the animated
+stitch and turn, finishing off and undoing it).

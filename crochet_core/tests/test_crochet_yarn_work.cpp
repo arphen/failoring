@@ -314,9 +314,38 @@ void testPullFrames() {
     }
 }
 
+void testFinishOff() {
+    std::printf("[fastening off]\n");
+    YarnWork w;
+    w.slipKnot(Vec3{0, 0, 0});
+    for (int i = 0; i < 5; ++i) w.stitchChain();
+    w.stitchTurn(0);
+    for (int i = 0; i < 4; ++i) w.stitch("sc", -1);
+    const int live = w.hook.back();
+    const int loopsBefore = (int)w.loops.size();
+    const int id = w.finishOff();
+    CHECKP(id == loopsBefore && w.finished() && w.strands[w.active].cut, "fastening off makes the tail (loop %d), the work is finished and the yarn is cut", id);
+    CHECKP(w.stitchChain() < 0 && w.stitch("sc", -1) < 0 && !w.stitchSkip(), "nothing more can be worked once it is fastened off");
+    const auto pi = piercings(w, id, live);
+    CHECKP(pi[0] + pi[1] == 1, "the tail goes through the loop that was on the hook exactly once (%d up, %d down)", pi[0], pi[1]);
+    CHECKP(w.patternText().find("fasten off") != std::string::npos, "the pattern says so: %s", w.patternText().c_str());
+    const YarnWork::PullFrame end = w.pullFrame(id, 1.0);
+    Real dmax = 0;
+    for (size_t i = 0; i < end.pts.size(); ++i) dmax = std::max(dmax, length(end.pts[i] - w.rod.x[end.first + i]));
+    CHECKP(dmax < 1e-12 && end.through, "the pull-through of the tail ends exactly at the tail as it lies (%.2g mm)", dmax * 1e3);
+    Real tail = 0;
+    const Strand& S = w.strands[w.active];
+    for (int i = w.loops[id].r0; i + 1 < (int)S.pts.size(); ++i) tail += length(S.pts[i + 1] - S.pts[i]);
+    CHECKP(tail > 8e-3, "the tail hangs %.0f mm beyond the loop", tail * 1e3);
+    YarnWork again;
+    again.slipKnot(Vec3{0, 0, 0});
+    CHECKP(again.finishOff() >= 0 && again.finishOff() < 0, "a work can be fastened off once");
+}
+
 }  // namespace
 
 int main() {
+    testFinishOff();
     testPullFrames();
     testCursor();
     testThreading();

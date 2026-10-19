@@ -89,6 +89,7 @@ var last_kind := "sc"            # the stitch last made: the turning chain after
 var loop_front: CheckBox
 var loop_back: CheckBox
 var b_turn: Button
+var b_finish: Button
 var b_undo: Button
 var _shown_particles := 0         # how much of the yarn is drawn (it grows as it is made)
 var _marker_t := 0.0
@@ -147,6 +148,8 @@ func _build_ui() -> void:
 	bar.add_child(loop_back)
 	b_turn = _button("Turn", "turn the work over at the end of a row", func() -> void: do_action("turn"))
 	bar.add_child(b_turn)
+	b_finish = _button("Finish off", "cut the yarn and draw the end through the loop on the hook: the piece is finished (Undo takes it back)", func() -> void: do_action("finish"))
+	bar.add_child(b_finish)
 	b_undo = _button("Undo", "take the last stitch back", func() -> void: undo())
 	bar.add_child(b_undo)
 	bar.add_child(_button("New piece", "start again from a slip knot", func() -> void: reset_piece()))
@@ -525,6 +528,8 @@ func do_action(kind: String, opening: int = -2, turn_chains: int = -1) -> bool:
 	_refresh()
 	if animate:
 		await _move_hook(_live_centre(), 0.25)
+		if kind == "finish":   # the hook is taken away from the finished piece
+			await _move_hook(work_root.to_local(work_root.to_global(_live_centre()) + Vector3(0.09, 0.05, 0.02)), 0.6)
 		_frame_work(false)
 	else:
 		_place_hook(_live_centre())
@@ -693,9 +698,18 @@ func _refresh() -> void:
 	b_slst.disabled = b_sc.disabled or sk
 	colour_label.text = ("  next stitch changes colour" if bool(st.get("pending_colour", false)) else "")
 	b_undo.disabled = history.size() == 0
+	var done_work := bool(st.get("finished", false))
+	b_finish.disabled = done_work or int(st["made"]) + int(st["row"]) < 1
+	b_chain.disabled = done_work
+	b_turn.disabled = done_work
+	if done_work:
+		for b in [b_sc, b_hdc, b_dc, b_slst]:
+			(b as Button).disabled = true
 	var row := int(st["row"])
 	var made := int(st["made"])
-	if row == 0:
+	if done_work:
+		status_label.text = "Fastened off: the yarn is cut and its end is through the last loop. The piece is finished (Undo takes the last step back, New piece starts again)."
+	elif row == 0:
 		status_label.text = "Foundation chain: %d chains so far. Chain as many as you like (the loop on the hook is not counted, the first chain from it is skipped), then work single crochet back along them: no turning needed." % made
 	elif next_id < 0:
 		status_label.text = "Row %d is done (%d stitches). Turn the work over for the next row." % [row, cursor]
@@ -706,7 +720,7 @@ func _refresh() -> void:
 
 # The pattern so far, as symbols in the yarn's colour, semi transparent over the view. o chain, + single crochet, T half double, a dagger double,
 # a dot slip stitch, a dash a skipped stitch; an underline marks a stitch worked into one loop only.
-const SYMBOLS := {"ch": "o", "sc": "+", "hdc": "T", "dc": "†", "sl st": "•", "sk": "–"}
+const SYMBOLS := {"ch": "o", "sc": "+", "hdc": "T", "dc": "†", "sl st": "•", "sk": "–", "fo": "■"}
 
 func _refresh_overlay(st: Dictionary) -> void:
 	var out := "[b]Pattern[/b]\n"

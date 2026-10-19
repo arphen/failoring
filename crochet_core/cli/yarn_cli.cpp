@@ -1,7 +1,7 @@
 // yarn_cli: builds a small piece of crochet one hook action at a time (yarn mode) and writes PNG views of it.
 //   yarn_cli "ch 8; turn 0; sc 7; turn 1; hdc 7" [--out prefix] [--colour 0|1] [--last n] [--cscale s]
 // actions, separated by ; : `ch N`, `sc N`, `hdc N`, `dc N`, `slst N`, `sk N` (skip), `turn K` (K turning chains), `colour R G B` (the next stitch
-// changes to this colour, 0..1 each), `colourat R G B` (from the start of the next stitch). Prints the threading report and the overlap.
+// changes to this colour, 0..1 each), `colourat R G B` (from the start of the next stitch), `fo` (fasten off). Prints the threading report and the overlap.
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -131,7 +131,9 @@ int main(int argc, char** argv) {
         std::string verb;
         is >> verb;
         if (verb.empty()) continue;
-        if (verb == "turn") {
+        if (verb == "fo") {
+            if (w.finishOff() < 0) std::fprintf(stderr, "could not fasten off\n");
+        } else if (verb == "turn") {
             int k = 0;
             is >> k;
             w.stitchTurn(k);

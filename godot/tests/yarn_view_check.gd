@@ -319,6 +319,17 @@ func _ready() -> void:
 	await yv.do_action("turn")
 	st = yv.session.get_state()
 	check("the animated turn: row 2, a turning chain, the work turned half way round (%.0f deg), the hook at the loop" % rad_to_deg(yv.flip), int(st["row"]) == 2 and absf(absf(yv.flip) - PI) < 1.0e-6 and yv.hook_node.global_position.distance_to(yv.work_root.to_global(yv._live_centre())) < 0.0015 and not yv.busy)
+	# fastening off: the yarn is cut, nothing more can be made, the ball is gone, the pattern says so, undo takes it back
+	var ends_before: int = (yv.session.get_state()["ends"] as Array).size()
+	await yv.do_action("finish")
+	st = yv.session.get_state()
+	check("Finish off: the work is finished, every stitch button is disabled and the status says so", bool(st["finished"]) and yv.b_sc.disabled and yv.b_chain.disabled and yv.b_turn.disabled and yv.b_finish.disabled and yv.status_label.text.contains("Fastened off"))
+	check("...the cut yarn no longer runs to a ball (%d end -> %d)" % [ends_before, (st["ends"] as Array).size()], ends_before == 1 and (st["ends"] as Array).size() == 0)
+	check("...the pattern ends 'fasten off' and the overlay shows it", String(st["text"]).strip_edges().ends_with("fasten off") and yv.overlay_text.text.contains("■"))
+	var refused: bool = await yv.do_action("chain")
+	check("...a further stitch is refused", not refused and bool(yv.session.get_state()["finished"]))
+	yv.undo()
+	check("undo takes the fastening off back: the yarn runs to its ball again and stitches can be made", not bool(yv.session.get_state()["finished"]) and (yv.session.get_state()["ends"] as Array).size() == 1 and not yv.b_chain.disabled)
 	yv.animate = false
 	print("RESULT: %d failed" % fails)
 	get_tree().quit(1 if fails > 0 else 0)

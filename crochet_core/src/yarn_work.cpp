@@ -567,8 +567,48 @@ void YarnWork::turn() {
 
 int YarnWork::nextOpening() const { return cursor_ < (int)target_.size() ? target_[cursor_] : -1; }
 
+int YarnWork::finishOff() {
+    if (hook.empty() || finished_) return -1;
+    const int live = hook.back();
+    const EyeFrame e = eye(live);
+    Vec3 n = e.normal;
+    if (dot(n, zAxis()) < 0) n = -n;   // toward the front of the work: the cut end is drawn through the loop from behind
+    Strand& S = strands[active];
+    const int oldEnd = (int)S.pts.size() - 1;
+    Vec3 side = cross(n, upDir);
+    side = length2(side) > 1e-8 ? normalized(side) : Vec3{1, 0, 0};
+    Vec3 down = normalized(-upDir + n * dot(upDir, n));   // hangs along the loop's plane, not back through it
+    const Vec3 c = e.centre + side * 0.0008;               // through the eye, a little off its middle
+    appendPath({c - n * 0.006});
+    const int e0 = (int)S.pts.size() - 1;
+    appendPath({c - n * 0.002, c});
+    appendPath({c + n * 0.003, c + n * 0.006 + down * 0.003, c + n * 0.008 + down * 0.012, c + n * 0.008 + down * 0.022});
+    const int p1 = (int)S.pts.size() - 1;
+    int r0 = p1;   // what lies beyond the eye is the "ring" of the tail (its far end is where the hook draws it to)
+    for (int i = e0 + 1; i <= p1; ++i)
+        if (length(S.pts[i] - c) > 0.006) { r0 = i; break; }
+    {   // the loop is pulled tight on the yarn through it
+        YarnLoop& Lp = loops[live];
+        const Real target = std::max(wp.closeFloor, Lp.ringScale * wp.closeFactor);
+        const Real f = target / Lp.ringScale;
+        std::vector<Real>& rest = strands[Lp.strand].rest;
+        for (int i = Lp.r0; i < Lp.r1 && i < (int)rest.size(); ++i) rest[i] *= f;
+        Lp.ringScale = target;
+    }
+    const int id = addLoop(active, e0 + 1, p1, false);
+    loops[id].r0 = r0;
+    loops[id].r1 = p1;
+    loops[id].t0 = oldEnd;
+    loops[id].through = {live};
+    S.cut = true;
+    finished_ = true;
+    pushLog("fo", active);
+    materialize();
+    return id;
+}
+
 int YarnWork::stitchChain() {
-    if (hook.empty()) return -1;
+    if (hook.empty() || finished_) return -1;
     const int id = chain();
     made_.push_back(id);
     pushLog("ch", loops[id].strand);
@@ -576,6 +616,7 @@ int YarnWork::stitchChain() {
 }
 
 int YarnWork::stitch(const std::string& kind, int opening, Loops which) {
+    if (finished_) return -1;
     if (opening < 0) opening = nextOpening();
     if (opening < 0 || hook.empty()) return -1;
     if (opening == nextOpening()) ++cursor_;
@@ -594,13 +635,14 @@ int YarnWork::stitch(const std::string& kind, int opening, Loops which) {
 }
 
 bool YarnWork::stitchSkip() {
-    if (nextOpening() < 0) return false;
+    if (finished_ || nextOpening() < 0) return false;
     ++cursor_;
     pushLog("sk", -1);
     return true;
 }
 
 void YarnWork::stitchTurn(int turningChain) {
+    if (finished_) return;
     const bool foundation = row == 0;
     // the next row goes back along the stitches just made, the last made first; its turning chain is the first thing in it
     target_.assign(made_.rbegin(), made_.rend());
@@ -633,7 +675,7 @@ std::string YarnWork::patternText() const {
     auto emit = [&]() {
         if (run == 0) return;
         if (!line.empty()) line += ", ";
-        line += lastKind + " " + std::to_string(run);
+        line += lastKind == "fo" ? std::string("fasten off") : lastKind + " " + std::to_string(run);
         run = 0;
     };
     for (const LogEntry& a : log_) {

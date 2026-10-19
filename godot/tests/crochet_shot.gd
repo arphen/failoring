@@ -42,6 +42,9 @@ func _ready() -> void:
 				yv.colour_when.select(1 if parts.size() > 4 and parts[4] == "stitch" else 0)
 				yv.choose_colour(Color(float(parts[1]), float(parts[2]), float(parts[3])))
 				continue
+			if tok == "fo":   # fasten off
+				await yv.do_action("finish")
+				continue
 			var kind := "turn"
 			var count := 1
 			if tok != "turn":

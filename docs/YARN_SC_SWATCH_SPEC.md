@@ -18,4 +18,9 @@ edges; every pull-up the same height.
 
 What yarn mode does about it (see yarn_view_check.gd): row 1 starts by itself with the first single crochet (no Turn to press, no rotation), the turn after a row makes the turning
 chain with the hook and then swings the work half a turn round the loop on the hook, and the run to the ball keeps its ball.
-Not done yet from this spec: the yarn over laid across the shaft with the throat turning down, the INSERT motion under the strands, the pull-up lift, and finishing off (cutting the yarn).
+Also done: INSERT (the hook comes at the eye from the front, throat up, and goes through it to behind), YO (the working yarn is laid over the shaft from behind, over the top, to
+the front, the throat turns down), PULL (back through the eye with the yarn in the throat, the loop opens as it comes) for every loop of every stitch; the hook has a beak and a neck so the
+throat can be seen. Finishing off is the "Finish off" button: the yarn is cut (no more run to a ball), the end is drawn through the loop on the hook with the same motions, the loop is pulled
+tight, a tail hangs, the pattern reads "fasten off", Undo takes it back.
+Not done from this spec: the pull-up lift of exactly 1.5 hook diameters (the loop's height is the design's), the hook passing under the strands of a chain's back bump (one convention only:
+through the loops), the foundation tail being 15 cm (it hangs about 2 cm).

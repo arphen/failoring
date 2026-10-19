@@ -24,7 +24,7 @@ public:
     YarnSession();
     // A new piece: the slip knot at the origin, one loop on the hook.
     void reset();
-    // "chain", "sc" / "hdc" / "dc" / "slst" (under both loops), the same with "_front" / "_back" (one loop only), "skip" (the next stitch), "turn" (`opening` is
+    // "chain", "sc" / "hdc" / "dc" / "slst" (under both loops), the same with "_front" / "_back" (one loop only), "skip" (the next stitch), "finish" (fasten off: cut the yarn and draw the end through the loop on the hook), "turn" (`opening` is
     // then the number of turning chains): one hook action. `opening` is the loop to work into (-1: the next one in order). Returns
     // {ok, loop, loops (the loops it made, in order), msg, particles (the yarn now has), row, cursor}.
     Dictionary action(const String& kind, int opening);

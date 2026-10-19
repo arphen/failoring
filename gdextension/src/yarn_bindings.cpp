@@ -42,6 +42,10 @@ Dictionary YarnSession::action(const String& kind_in, int opening) {
     Dictionary r;
     r["ok"] = false;
     String kind = kind_in;
+    if (work_.finished() && kind != "finish") {
+        r["msg"] = String("the work is finished");
+        return r;
+    }
     fl::Loops which = fl::Loops::Both;
     if (kind.ends_with("_front")) { which = fl::Loops::Front; kind = kind.substr(0, kind.length() - 6); }
     else if (kind.ends_with("_back")) { which = fl::Loops::Back; kind = kind.substr(0, kind.length() - 5); }
@@ -52,6 +56,9 @@ Dictionary YarnSession::action(const String& kind_in, int opening) {
     } else if (kind == "sc" || kind == "hdc" || kind == "dc" || kind == "slst") {
         loop = work_.stitch(std::string(kind.utf8().get_data()), opening, which);
         if (loop < 0) r["msg"] = String("nothing to work into: turn the work first");
+    } else if (kind == "finish") {
+        loop = work_.finishOff();
+        if (loop < 0) r["msg"] = String("nothing to fasten off");
     } else if (kind == "skip") {
         if (work_.stitchSkip()) {
             r["ok"] = true;
@@ -328,7 +335,7 @@ Dictionary YarnSession::get_state() const {
     Array ends;
     for (size_t si = 0; si < work_.strands.size(); ++si) {
         const fl::Strand& st = work_.strands[si];
-        if (st.pts.size() < 2) continue;
+        if (st.pts.size() < 2 || st.cut) continue;   // a yarn that is cut no longer runs to its ball
         const fl::Vec3 e = st.pts.back();
         const fl::Vec3 back = st.pts[st.pts.size() - 2];
         Dictionary en;
@@ -341,6 +348,7 @@ Dictionary YarnSession::get_state() const {
     }
     d["ends"] = ends;
     d["strands"] = (int)work_.strands.size();
+    d["finished"] = work_.finished();
     d["pending_colour"] = work_.colourPending();
     const fl::Vec3 ac = work_.activeColour();
     d["colour"] = Color((float)ac.x, (float)ac.y, (float)ac.z);

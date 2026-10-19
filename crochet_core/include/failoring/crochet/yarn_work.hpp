@@ -23,6 +23,7 @@ struct Strand {
     std::vector<Vec3> pts;    // the design centre line, one point per rod node
     std::vector<Real> rest;   // rest length of segment i (pts[i] -> pts[i+1])
     Vec3 colour{0.80, 0.30, 0.22};
+    bool cut = false;         // fastened off: the yarn ends in a tail, it no longer runs to its ball
     int first = 0;            // the global index of pts[0] in the rod system (set when it is built)
 };
 
@@ -132,6 +133,10 @@ public:
     // --- colours: the next stitch changes to this colour. If a yarn of that colour was used before it is picked up where it was dropped,
     // otherwise a new yarn is started (a tail near the hook). ---
     void setNextColour(const Vec3& colour, ColourAt when = ColourAt::PullThrough);
+    // Fastens off: the yarn is cut, its end is drawn through the loop on the hook (a tail hangs from it) and the loop is pulled tight. The work is finished
+    // (no more stitches). Returns the tail as a loop (its yarn is what the hook draws through), or -1 when there is nothing to fasten off.
+    int finishOff();
+    bool finished() const { return finished_; }
     bool colourPending() const { return pending_; }
     const Vec3& activeColour() const { return strands[active].colour; }
 
@@ -192,6 +197,7 @@ private:
     int chainCount_ = 0;
     int turnChains_ = 0;         // turning chains made at the start of this row
     bool pending_ = false;
+    bool finished_ = false;
     Vec3 pendingColour_{};
     ColourAt pendingAt_ = ColourAt::PullThrough;
     Real taper_ = 0.0;           // loopAt: the ring narrows toward +U by this much (a teardrop)
