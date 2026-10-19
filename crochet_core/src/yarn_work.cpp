@@ -108,6 +108,40 @@ EyeFrame YarnWork::eye(int loop) const {
 }
 
 YarnWork::PullFrame YarnWork::pullFrame(int loopId, Real s, Real wrap) const {
+    PullFrame f = pullFrameBody(loopId, s, wrap);
+    f.pathLength = 0.0;
+    for (size_t i = 1; i < f.pts.size(); ++i) f.pathLength += length(f.pts[i] - f.pts[i - 1]);
+    if (f.pts.size() >= 2) f.runDir = normalized(f.pts.back() - f.pts[f.pts.size() - 2]);
+    {
+        Vec3 prev = f.base;
+        for (const Vec3& q : f.natural) {
+            f.natLength += length(q - prev);
+            prev = q;
+        }
+    }
+    return f;
+}
+
+void YarnWork::PullFrame::applyHang(const std::vector<Vec3>& curve, Real phi) {
+    if (curve.size() < 2 || phi >= 1.0) return;
+    phi = std::max(0.0, phi);
+    std::vector<Real> arc(curve.size(), 0.0);
+    for (size_t i = 1; i < curve.size(); ++i) arc[i] = arc[i - 1] + length(curve[i] - curve[i - 1]);
+    Real a = 0.0;
+    Vec3 prev = base;
+    size_t k = 0;
+    for (size_t i = 0; i < pts.size(); ++i) {
+        a += length(natural[i] - prev);
+        prev = natural[i];
+        while (k + 2 < curve.size() && arc[k + 1] < a) ++k;
+        const Real seg = std::max(arc[k + 1] - arc[k], 1e-12);
+        const Real u = std::min(1.0, std::max(0.0, (a - arc[k]) / seg));
+        const Vec3 h = curve[k] + (curve[k + 1] - curve[k]) * u;
+        pts[i] = h + (pts[i] - h) * phi;
+    }
+}
+
+YarnWork::PullFrame YarnWork::pullFrameBody(int loopId, Real s, Real wrap) const {
     PullFrame f;
     const YarnLoop& L = loops[loopId];
     const Strand& S = strands[L.strand];
@@ -116,7 +150,10 @@ YarnWork::PullFrame YarnWork::pullFrame(int loopId, Real s, Real wrap) const {
     auto cur = [&](int i) { const int g = S.first + i; return g < (int)rod.x.size() ? rod.x[g] : S.pts[i]; };
     const int start = (L.t0 >= 0 && L.t0 + 1 < L.p0) ? L.t0 + 1 : L.p0;   // the working yarn to the first eye comes with it
     f.first = S.first + start;
-    for (int i = start; i <= L.p1; ++i) f.pts.push_back(cur(i));
+    const int last = std::min(L.p1 + 1, (int)S.pts.size() - 1);   // with the node after it: where the run to the ball starts
+    for (int i = start; i <= last; ++i) f.pts.push_back(cur(i));
+    f.natural = f.pts;
+    f.base = cur(std::max(0, start - 1));
     auto at = [&](int i) -> Vec3& { return f.pts[i - start]; };
     Vec3 rc{};
     for (int i = L.r0; i <= L.r1; ++i) rc += cur(i);

@@ -54,6 +54,10 @@ var work_root: Node3D             # the piece, its hook and its markers, at tabl
 var yarn_node: MeshInstance3D
 var yarn_mat: StandardMaterial3D
 var hook_node: Node3D
+var hook_sway := Vector3.ZERO      # a hand is never still: a small offset and tilt that come and go while the hook travels
+var hook_tilt := Vector3.ZERO
+var _run_ov := {}                  # while the hook makes a stitch: the run to the ball starts where the yarn is now (strand, end, dir, spin, rem, blend)
+var _pre_ends: Array = []          # the yarns' ends before the stitch was made
 var hook_roll := 0.0               # about the hook's own axis: 0 the throat faces up (going in), PI down (the yarn is over it, being drawn through)
 var _hook_axis := Vector3.ZERO     # where the shaft lies (the piece's coordinates) when it is through an eye, and how much of the way from the usual position it is
 var _hook_blend := 0.0
@@ -408,38 +412,68 @@ func _build_hook() -> void:
 	steel.albedo_color = Color(0.78, 0.80, 0.84)
 	steel.metallic = 0.85
 	steel.roughness = 0.28
-	var shaft := MeshInstance3D.new()
-	var cyl := CylinderMesh.new()
-	cyl.top_radius = HOOK_RADIUS
-	cyl.bottom_radius = HOOK_RADIUS
-	cyl.height = HOOK_LENGTH
-	cyl.radial_segments = 14
-	shaft.mesh = cyl
-	shaft.material_override = steel
-	# the node's -z axis points from the handle to the tip: the cylinder lies along z with its tip at the origin
-	shaft.rotation = Vector3(PI * 0.5, 0, 0)
-	shaft.position = Vector3(0, 0, HOOK_LENGTH * 0.5 + HOOK_RADIUS * 3.4)
-	hook_node.add_child(shaft)
-	# the throat: a narrow neck behind a beak that leans to the +y side of the hook (the side the yarn is caught on); `hook_roll` turns it up or down
+	# An inline crochet hook, the tip at the origin and the shaft along +z. The throat faces +y (`hook_roll` turns it): behind a rounded head with a lip that overhangs it,
+	# the neck is thinner and lies a little to -y, which leaves the groove the yarn sits in; then the shaft widens to its full thickness, with the thumb rest on it.
+	var rr := HOOK_RADIUS
+	var head := MeshInstance3D.new()
+	var hm := CapsuleMesh.new()
+	hm.radius = rr * 0.95
+	hm.height = rr * 2.4
+	hm.radial_segments = 16
+	hm.rings = 6
+	head.mesh = hm
+	head.material_override = steel
+	head.rotation = Vector3(PI * 0.5, 0, 0)
+	head.position = Vector3(0, rr * 0.08, rr * 1.2)
+	hook_node.add_child(head)
+	var lip := MeshInstance3D.new()   # the lip: the head's back edge, swept toward the throat so the yarn cannot slip off forward
+	var lm := SphereMesh.new()
+	lm.radius = rr * 0.5
+	lm.height = rr * 1.0
+	lip.mesh = lm
+	lip.material_override = steel
+	lip.position = Vector3(0, rr * 0.62, rr * 1.9)
+	hook_node.add_child(lip)
 	var neck := MeshInstance3D.new()
 	var nc := CylinderMesh.new()
-	nc.top_radius = HOOK_RADIUS * 0.55
-	nc.bottom_radius = HOOK_RADIUS * 0.55
-	nc.height = HOOK_RADIUS * 3.0
-	nc.radial_segments = 12
+	nc.top_radius = rr * 0.6
+	nc.bottom_radius = rr * 0.6
+	nc.height = rr * 3.0
+	nc.radial_segments = 14
 	neck.mesh = nc
 	neck.material_override = steel
 	neck.rotation = Vector3(PI * 0.5, 0, 0)
-	neck.position = Vector3(0, 0, HOOK_RADIUS * 1.9)
+	neck.position = Vector3(0, -rr * 0.3, rr * 3.0)
 	hook_node.add_child(neck)
-	var head := MeshInstance3D.new()
-	var sph := SphereMesh.new()
-	sph.radius = HOOK_RADIUS * 1.1
-	sph.height = HOOK_RADIUS * 2.2
-	head.mesh = sph
-	head.material_override = steel
-	head.position = Vector3(0, HOOK_RADIUS * 0.45, HOOK_RADIUS * 0.1)
-	hook_node.add_child(head)
+	var taper := MeshInstance3D.new()
+	var tc := CylinderMesh.new()
+	tc.top_radius = rr
+	tc.bottom_radius = rr * 0.6
+	tc.height = rr * 1.2
+	tc.radial_segments = 16
+	taper.mesh = tc
+	taper.material_override = steel
+	taper.rotation = Vector3(PI * 0.5, 0, 0)
+	taper.position = Vector3(0, -rr * 0.05, rr * 4.4)
+	hook_node.add_child(taper)
+	var shaft := MeshInstance3D.new()
+	var cyl := CylinderMesh.new()
+	cyl.top_radius = rr
+	cyl.bottom_radius = rr
+	cyl.height = HOOK_LENGTH - rr * 5.0
+	cyl.radial_segments = 18
+	shaft.mesh = cyl
+	shaft.material_override = steel
+	shaft.rotation = Vector3(PI * 0.5, 0, 0)
+	shaft.position = Vector3(0, 0, rr * 5.0 + cyl.height * 0.5)
+	hook_node.add_child(shaft)
+	var rest := MeshInstance3D.new()   # the thumb rest
+	var bm := BoxMesh.new()
+	bm.size = Vector3(rr * 3.4, rr * 1.0, rr * 7.0)
+	rest.mesh = bm
+	rest.material_override = steel
+	rest.position = Vector3(0, 0, HOOK_LENGTH * 0.55)
+	hook_node.add_child(rest)
 	var handle := MeshInstance3D.new()
 	var hc := CylinderMesh.new()
 	hc.top_radius = HOOK_RADIUS * 2.0
@@ -498,13 +532,14 @@ func do_action(kind: String, opening: int = -2, turn_chains: int = -1) -> bool:
 		busy = false
 		return false
 	var open_id := opening if opening >= 0 else int(st.get("next", -1))
-	if animate and kind != "turn" and kind != "skip":   # (a turn's chains are drawn through where the hook is)
+	if animate and kind == "skip":   # (the other stitches come at their eye themselves)
 		var at := _opening_centre(open_id) if ((_is_stitch(kind) or kind == "skip") and open_id >= 0) else _live_centre()
 		await _move_hook(at, 0.30)
 	var before := session.get_particle_count()
 	var arg := opening
 	if kind == "turn":
 		arg = turn_chains if turn_chains >= 0 else (0 if int(st["row"]) == 0 else int(TURNING_CHAINS.get(last_kind, 1)))
+	_pre_ends = session.get_state()["ends"]
 	var r: Dictionary = session.action(kind, arg)
 	if not bool(r.get("ok", false)):
 		status_label.text = String(r.get("msg", "that did not work"))
@@ -576,48 +611,97 @@ func _replay(actions: Array) -> void:
 	_frame_work(true)
 	_place_hook(_live_centre())
 
-# The hook makes the stitch. For each loop the stitch made: the hook comes at the eye it works into from the front, the throat up, and goes in through it to
-# behind (insert); the working yarn is laid over the shaft from behind and the throat turns down (yarn over); the hook is drawn back through the eye with the
-# yarn in its throat and the new loop opens as it comes (pull). A loop with no eye (a double's first yarn over) just closes round the hook. `before` is how
-# many particles the yarn had.
+# The hook makes the stitch, and the yarn is the yarn: it hangs from the work to its ball, and the ball turns as it is drawn off. For each loop the stitch made, the hook
+# comes at the eye it works into from the front, throat up, and goes in through it to behind (insert); it picks the yarn up off its hanging curve, lays it over the shaft
+# and turns its throat down (yarn over); and draws it back through the eye, the loop opening as it comes (pull). A loop with no eye (a double's first yarn over) is the yarn
+# picked up and wound round the hook. `before` is how many particles the yarn had.
+var _last_frame := {}
+
+func _minjerk(t: float) -> float:   # how a hand moves: no jerk at either end
+	return t * t * t * (10.0 - 15.0 * t + 6.0 * t * t)
+
+func _tween01(secs: float, fn: Callable) -> void:
+	if not animate:
+		fn.call(1.0)
+		return
+	var tw := create_tween()
+	tw.tween_method(fn, 0.0, 1.0, secs)
+	await tw.finished
+
+# One moment of the yarn while the hook works: the mesh, and the run to the ball from where the yarn is now.
+func _frame_step(id: int, s: float, wrap: float, hang: PackedVector3Array, phi: float, rem: PackedVector3Array, spin: float, has_run: bool, strand: int) -> Dictionary:
+	var d: Dictionary = session.anim_frame(id, s, wrap, hang, phi, 10, 3)
+	if d.is_empty():
+		return d
+	_show_mesh(d)
+	if has_run:
+		_run_ov = {"strand": strand, "end": d["run_end"], "dir": d["run_dir"], "spin": spin, "rem": rem, "blend": phi}
+		_update_balls()
+	return d
+
 func _pull_animation(before: int, made: Array) -> void:
 	_rebuild(before)
+	var en0 := {}
+	for en in _pre_ends:
+		if bool(en.get("active", false)):
+			en0 = en
+	var has_run := not en0.is_empty()
+	var cur_end: Vector3 = en0.get("end", Vector3.ZERO)
+	var cur_dir: Vector3 = en0.get("dir", Vector3.RIGHT)
+	var strand := int(en0.get("strand", 0))
+	var spin := float(en0.get("length", 0.0)) / BALL_RADIUS
+	if has_run:
+		_run_ov = {"strand": strand, "end": cur_end, "dir": cur_dir, "spin": spin}
+		_update_balls()
+	var prev := {}
 	for id in made:
-		var f0: Dictionary = session.anim_frame(int(id), 0.0, 0.0, 10, 3)
+		var hang := PackedVector3Array()
+		if has_run:
+			hang = _hang_points(cur_end, cur_dir, strand)
+		var f0: Dictionary = session.anim_frame(int(id), 0.0, 1.0, hang, 0.0, 10, 3)   # the yarn laid along the curve it hangs on
 		if f0.is_empty():
 			continue
-		if not bool(f0["through"]):   # a yarn over: the yarn comes round the hook
-			_show_mesh(f0)
-			await _move_hook_axis(f0["tip"], f0["axis"], 0.25, PI)
-			var ty := create_tween()
-			ty.tween_method(func(t: float) -> void:
-				var dy: Dictionary = session.anim_frame(int(id), t, 0.0, 10, 3)
-				if not dy.is_empty():
-					_show_mesh(dy), 0.0, 1.0, 0.4).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-			await ty.finished
+		var nat := float(f0["nat_length"])                # the yarn this loop takes off the ball
+		var dspin := nat / BALL_RADIUS
+		var rem := _remainder(hang, nat) if has_run else PackedVector3Array()
+		var spin0 := spin
+		var iid := int(id)
+		if not prev.is_empty():
+			_show_mesh(prev)                              # the loop before is finished and stays
+		_last_frame = {}
+		if not bool(f0["through"]):
+			await _hook_travel(f0["tip"], f0["axis"], PI, true)
+			await _tween01(0.7, func(t: float) -> void:
+				var u := _minjerk(t)
+				var d := _frame_step(iid, maxf(0.0, 2.0 * u - 1.0), 0.0, hang, minf(1.0, 2.0 * u), rem, spin0 + dspin * u, has_run, strand)
+				if not d.is_empty():
+					_last_frame = d
+				_place_hook(f0["tip"], f0["axis"], 1.0))
+		else:
+			var eye: Vector3 = f0["eye"]
+			var ax: Vector3 = f0["axis"]
+			await _hook_travel(eye + ax * 0.016, ax, 0.0, true)       # in front of the eye, throat up
+			await _hook_travel(f0["tip"], ax, 0.0, false)             # insert: through the eye to behind it
+			await _tween01(0.6, func(t: float) -> void:               # pick the yarn up and lay it over the shaft; the throat turns down
+				var u := _minjerk(t)
+				var d := _frame_step(iid, 0.0, 1.0, hang, u, rem, spin0 + dspin * 0.3 * u, has_run, strand)
+				if not d.is_empty():
+					_last_frame = d
+				hook_roll = PI * u
+				_place_hook(f0["tip"], ax, 1.0))
+			await _tween01(0.85, func(t: float) -> void:              # draw it back through the eye with the yarn in the throat
+				var u := _minjerk(t)
+				var d := _frame_step(iid, u, maxf(0.0, 1.0 - 2.0 * u), hang, 1.0, rem, spin0 + dspin * (0.3 + 0.7 * u), has_run, strand)
+				if not d.is_empty():
+					_last_frame = d
+					_place_hook(d["tip"], d["axis"], 1.0))
+		if _last_frame.is_empty():
 			continue
-		var eye: Vector3 = f0["eye"]
-		var ax: Vector3 = f0["axis"]
-		_show_mesh(f0)
-		await _move_hook_axis(eye + ax * 0.014, ax, 0.22, 0.0)         # in front of the eye, throat up
-		await _move_hook_axis(f0["tip"], ax, 0.28, 0.0)                  # insert: through the eye to behind it
-		var tw := create_tween()                                          # yarn over: the yarn laid over the shaft, the throat turns down
-		tw.tween_method(func(t: float) -> void:
-			var dw: Dictionary = session.anim_frame(int(id), 0.0, t, 10, 3)
-			if dw.is_empty():
-				return
-			_show_mesh(dw)
-			hook_roll = PI * t
-			_place_hook(dw["tip"], dw["axis"], 1.0), 0.0, 1.0, 0.4).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-		await tw.finished
-		var tp := create_tween()                                          # pull: back through the eye with the yarn in the throat
-		tp.tween_method(func(t: float) -> void:
-			var dp: Dictionary = session.anim_frame(int(id), t, maxf(0.0, 1.0 - 2.0 * t), 10, 3)
-			if dp.is_empty():
-				return
-			_show_mesh(dp)
-			_place_hook(dp["tip"], dp["axis"], 1.0), 0.0, 1.0, 0.6).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-		await tp.finished
+		prev = _last_frame
+		cur_end = _last_frame["run_end"]
+		cur_dir = _last_frame["run_dir"]
+		spin += dspin
+	_run_ov = {}
 	_rebuild(-1)
 
 func _grow(from_particles: int, to_particles: int) -> void:
@@ -779,6 +863,64 @@ func _update_marker() -> void:
 func _ball_position(i: int) -> Vector3:
 	return Vector3(0.13 + 0.065 * i, WORK_HEIGHT - 0.016 + 0.003 + BALL_RADIUS, -0.11)
 
+# The run of a yarn from `e0` (leaving along `d0`, world coordinates) to its ball at `bp`: a curve that hangs a little, `n` points.
+func _run_curve(e0: Vector3, d0: Vector3, bp: Vector3, n := 25) -> PackedVector3Array:
+	var surf := bp + (e0 - bp).normalized() * BALL_RADIUS * 0.96
+	var p1 := e0 + d0 * 0.03
+	var p2 := surf + ((e0 - surf).normalized() * 0.035 + Vector3.UP * 0.012)
+	var table_y := WORK_HEIGHT - 0.016 + 0.003 + 0.0016
+	var pts := PackedVector3Array()
+	for k in n:
+		var t := float(k) / float(n - 1)
+		var u := 1.0 - t
+		var pt := u * u * u * e0 + 3.0 * u * u * t * p1 + 3.0 * u * t * t * p2 + t * t * t * surf
+		pt.y -= 0.010 * sin(PI * t)   # it hangs a little
+		pt.y = maxf(pt.y, table_y)
+		pts.append(pt)
+	return pts
+
+# The yarn as it hangs from the work to its ball, in the piece's coordinates (what the hook picks up).
+func _hang_points(e_loc: Vector3, d_loc: Vector3, strand: int) -> PackedVector3Array:
+	var w := _run_curve(work_root.to_global(e_loc), (work_root.global_transform.basis * d_loc).normalized(), _ball_position(strand), 80)
+	var out := PackedVector3Array()
+	for q in w:
+		out.append(work_root.to_local(q))
+	return out
+
+# The part of a hanging yarn beyond `arc` from its start (world coordinates), `n` points evenly along it: the run left when the hook has taken the first part.
+func _remainder(hang_local: PackedVector3Array, arc: float, n := 25) -> PackedVector3Array:
+	var w := PackedVector3Array()
+	for q in hang_local:
+		w.append(work_root.to_global(q))
+	var acc := 0.0
+	var start := w.size() - 2
+	var from := w[start]
+	for i in range(1, w.size()):
+		var seg := w[i].distance_to(w[i - 1])
+		if acc + seg >= arc:
+			start = i - 1
+			from = w[i - 1].lerp(w[i], (arc - acc) / maxf(seg, 1.0e-9))
+			break
+		acc += seg
+	var chain := PackedVector3Array([from])
+	for i in range(start + 1, w.size()):
+		chain.append(w[i])
+	var total := 0.0
+	for i in range(1, chain.size()):
+		total += chain[i].distance_to(chain[i - 1])
+	var out := PackedVector3Array()
+	var k := 1
+	var run := 0.0
+	out.append(chain[0])
+	for j in range(1, n):
+		var want := total * float(j) / float(n - 1)
+		while k < chain.size() - 1 and run + chain[k].distance_to(chain[k - 1]) < want:
+			run += chain[k].distance_to(chain[k - 1])
+			k += 1
+		var seg2 := chain[k].distance_to(chain[k - 1])
+		out.append(chain[k - 1].lerp(chain[k], clampf((want - run) / maxf(seg2, 1.0e-9), 0.0, 1.0)))
+	return out
+
 func _update_balls() -> void:
 	if session == null or work_root == null:
 		return
@@ -810,24 +952,30 @@ func _update_balls() -> void:
 			continue
 		var en: Dictionary = ends[i]
 		var col: Color = en["colour"]
-		var bp := _ball_position(int(en["strand"]))
+		var strand := int(en["strand"])
+		var bp := _ball_position(strand)
 		var b: MeshInstance3D = ball_nodes[i]
 		b.position = bp
 		(b.material_override as ShaderMaterial).set_shader_parameter("albedo", col)
-		var e0: Vector3 = work_root.to_global(en["end"])
-		var d0: Vector3 = (work_root.global_transform.basis * (en["dir"] as Vector3)).normalized()
-		var surf := bp + (e0 - bp).normalized() * BALL_RADIUS * 0.96
-		var p1 := e0 + d0 * 0.03
-		var p2 := surf + ((e0 - surf).normalized() * 0.035 + Vector3.UP * 0.012)
-		var pts := PackedVector3Array()
-		var table_y := WORK_HEIGHT - 0.016 + 0.003 + 0.0016
-		for k in 25:
-			var t := float(k) / 24.0
-			var u := 1.0 - t
-			var pt := u * u * u * e0 + 3.0 * u * u * t * p1 + 3.0 * u * t * t * p2 + t * t * t * surf
-			pt.y -= 0.010 * sin(PI * t)   # it hangs a little
-			pt.y = maxf(pt.y, table_y)
-			pts.append(pt)
+		var e_loc: Vector3 = en["end"]
+		var d_loc: Vector3 = en["dir"]
+		var spin := float(en.get("length", 0.0)) / BALL_RADIUS   # the ball turns as its yarn is drawn off
+		var ov: Dictionary = _run_ov if (not _run_ov.is_empty() and int(_run_ov["strand"]) == strand) else {}
+		if not ov.is_empty():
+			e_loc = ov["end"]
+			d_loc = ov["dir"]
+			spin = float(ov["spin"])
+		var e0 := work_root.to_global(e_loc)
+		var d0: Vector3 = (work_root.global_transform.basis * d_loc).normalized()
+		var pts := _run_curve(e0, d0, bp)
+		if not ov.is_empty() and ov.has("rem") and float(ov["blend"]) < 1.0:   # still the yarn that hung there, becoming the run as the hook takes its part
+			var rem: PackedVector3Array = ov["rem"]
+			var wb := smoothstep(0.0, 1.0, float(ov["blend"]))
+			for k in pts.size():
+				pts[k] = rem[k].lerp(pts[k], wb)
+		var spin_axis := Vector3.UP.cross(bp - e0)
+		if spin_axis.length() > 1.0e-6:
+			b.basis = Basis(spin_axis.normalized(), spin)
 		var d: Dictionary = session.tube(pts, col, 0.00125, 8, 2)
 		var arrays := []
 		arrays.resize(Mesh.ARRAY_MAX)
@@ -930,39 +1078,50 @@ func _place_hook(p: Vector3, axis := Vector3.ZERO, blend := 0.0) -> void:
 	var handle_dir := Vector3(0.86, 0.38, 0.30).normalized()
 	if blend > 0.0 and _hook_axis.length() > 0.0:
 		handle_dir = handle_dir.lerp((work_root.global_basis * _hook_axis).normalized(), blend).normalized()
-	hook_node.global_position = work_root.to_global(p)
+	handle_dir = (handle_dir + hook_tilt).normalized()
+	hook_node.global_position = work_root.to_global(p) + hook_sway
 	hook_node.global_basis = Basis.looking_at(-handle_dir, Vector3.UP) * Basis(Vector3(0, 0, 1), hook_roll)   # the node's -z points from the handle to the tip
 
-# The hook goes to `p` and turns its handle to `axis` (the way a shaft through an eye lies); `roll` is where the throat is to face when it gets there.
-func _move_hook_axis(p: Vector3, axis: Vector3, secs: float, roll := 0.0) -> void:
+var _sway_phase := 0.0
+
+# The hook travels to `p` (the piece's coordinates) the way a hand takes it: along an arc that lifts it over the work (`arc`), with no jerk at either end and a little
+# drift and tilt on the way; its shaft turns to lie along `axis` (zero: let go of the eye, back to the usual way it is held) and its throat to `roll`.
+func _hook_travel(p: Vector3, axis: Vector3, roll: float, arc: bool) -> void:
 	if not animate:
 		hook_roll = roll
-		_place_hook(p, axis, 1.0)
+		_place_hook(p, axis, 1.0 if axis.length() > 0.0 else 0.0)
 		return
-	var p0 := work_root.to_local(hook_node.global_position)
+	var p0w := hook_node.global_position - hook_sway
+	var p1w := work_root.to_global(p)
+	var dist := p0w.distance_to(p1w)
+	var secs := clampf(0.28 + dist * 7.0, 0.3, 0.8)
+	var ctrl := (p0w + p1w) * 0.5
+	if arc:
+		ctrl += (Vector3.UP + Vector3(0, 0, 0.7)).normalized() * dist * 0.3
+	var has_axis := axis.length() > 0.0
+	var a0 := _hook_axis
+	var a1 := axis if has_axis else (a0 if a0.length() > 0.0 else Vector3.RIGHT)
 	var b0 := _hook_blend
-	var a0 := _hook_axis if _hook_axis.length() > 0.0 else axis
+	var b1 := 1.0 if has_axis else 0.0
 	var r0 := hook_roll
+	_sway_phase += 1.7
+	var ph := _sway_phase
 	var tw := create_tween()
 	tw.tween_method(func(t: float) -> void:
-		hook_roll = lerpf(r0, roll, t)
-		_hook_axis = a0.lerp(axis, t).normalized()
-		_place_hook(p0.lerp(p, t), _hook_axis, lerpf(b0, 1.0, t)), 0.0, 1.0, secs).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+		var u := _minjerk(t)
+		var pw := p0w.lerp(ctrl, u).lerp(ctrl.lerp(p1w, u), u)
+		var env := sin(PI * t)
+		hook_sway = Vector3(sin(t * 9.0 + ph), sin(t * 7.0 + ph * 1.3), sin(t * 8.0 + ph * 0.7)) * 0.0007 * env
+		hook_tilt = Vector3(sin(t * 6.0 + ph), sin(t * 4.0 + ph * 1.1) * 0.5, sin(t * 5.0 + ph * 2.0)) * 0.06 * env
+		hook_roll = lerpf(r0, roll, u)
+		var ax := a0.lerp(a1, u).normalized() if a0.length() > 0.0 else a1
+		_place_hook(work_root.to_local(pw), ax, lerpf(b0, b1, u)), 0.0, 1.0, secs)
 	await tw.finished
+	hook_sway = Vector3.ZERO
+	hook_tilt = Vector3.ZERO
 
-func _move_hook(p: Vector3, secs: float) -> void:
-	if not animate:
-		hook_roll = 0.0
-		_place_hook(p)
-		return
-	var p0 := work_root.to_local(hook_node.global_position)
-	var b0 := _hook_blend
-	var r0 := hook_roll
-	var tw := create_tween()
-	tw.tween_method(func(t: float) -> void:
-		hook_roll = lerpf(r0, 0.0, t)
-		_place_hook(p0.lerp(p, t), _hook_axis, b0 * (1.0 - t)), 0.0, 1.0, secs).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
-	await tw.finished
+func _move_hook(p: Vector3, _secs: float) -> void:
+	await _hook_travel(p, Vector3.ZERO, 0.0, true)
 
 # The camera looks at the live end of the work, close enough to see the stitches.
 func _frame_work(snap: bool) -> void:

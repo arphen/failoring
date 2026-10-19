@@ -182,7 +182,17 @@ public:
     // and at 1 it is the loop as it is. `pts` are the rod particles `first` ... `first + pts.size() - 1` as they are at `s`; `tip` is where the hook's
     // throat is and `axis` the way from there toward the handle. A yarn over (no eye) just grows into its ring round the hook.
     // `wrap` (0..1) lays the working yarn over the shaft from behind, over the top, to the front (the yarn over); the yarn to the loop's first eye is part of `pts` for that.
-    struct PullFrame { std::vector<Vec3> pts; int first = 0; Vec3 tip, axis, eye; bool through = false; };
+    // The frame also holds the yarn's last node (where the run to the ball starts, `runDir` being the way it leaves) and the polyline's length. `natural` are the nodes as the
+    // loop was laid and `base` the old end of the yarn it grows from: laid along a curve (the yarn hanging from the work to its ball) the nodes show the yarn before the hook picked
+    // it up (`applyHang`, `phi` 0 = on the curve ... 1 = as posed).
+    struct PullFrame {
+        std::vector<Vec3> pts, natural;
+        int first = 0;
+        Vec3 tip, axis, eye, base, runDir;
+        Real pathLength = 0.0, natLength = 0.0;   // the yarn's length as posed and as laid (the length of yarn the stitch takes from the ball)
+        bool through = false;
+        void applyHang(const std::vector<Vec3>& curve, Real phi);
+    };
     PullFrame pullFrame(int loop, Real s, Real wrap = 0.0) const;
     // the colour of each rod segment (for drawing)
     std::vector<Vec3> segmentColours() const;
@@ -208,6 +218,7 @@ private:
     // The live loops among the eyes leave the hook; the new loop is live (a yarn over too).
     int loopAt(const Vec3& ringC, const Vec3& ringN, const std::vector<int>& eyesLoops, const Vec3* major = nullptr, Real semiA = -1, Real semiB = -1,
                const std::vector<int>* modes = nullptr, const Vec3* front = nullptr);
+    PullFrame pullFrameBody(int loop, Real s, Real wrap) const;
     int addLoop(int strand, int p0, int p1, bool live);
     void pushLog(const std::string& kind, int strand);
     void appendPath(const std::vector<Vec3>& way);   // to the active strand

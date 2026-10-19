@@ -165,10 +165,15 @@ Dictionary YarnSession::get_mesh(int up_to, int sides, int subdiv) {
     return mesh_to_dict(m);
 }
 
-Dictionary YarnSession::anim_frame(int loop, double s, double wrap, int sides, int subdiv) {
+Dictionary YarnSession::anim_frame(int loop, double s, double wrap, const PackedVector3Array& hang, double phi, int sides, int subdiv) {
     Dictionary out;
     if (loop < 0 || loop >= (int)work_.loops.size()) return out;
-    const fl::YarnWork::PullFrame f = work_.pullFrame(loop, s, wrap);
+    fl::YarnWork::PullFrame f = work_.pullFrame(loop, s, wrap);
+    if (hang.size() >= 2 && phi < 1.0) {
+        std::vector<fl::Vec3> curve;
+        for (int64_t i = 0; i < hang.size(); ++i) curve.push_back(unview(fl::Vec3{hang[i].x, hang[i].y, hang[i].z}));
+        f.applyHang(curve, phi);
+    }
     const fl::YarnLoop& L = work_.loops[loop];
     std::vector<fl::Vec3> saved;
     for (size_t i = 0; i < f.pts.size(); ++i) {
@@ -191,6 +196,11 @@ Dictionary YarnSession::anim_frame(int loop, double s, double wrap, int sides, i
     out["tip"] = v3(view(f.tip));
     out["axis"] = v3(f.axis);
     out["eye"] = v3(view(f.eye));
+    out["run_end"] = v3(view(f.pts.back()));
+    out["run_dir"] = v3(view(f.pts.back()) - view(f.pts[f.pts.size() - 2]));
+    out["path_length"] = f.pathLength;
+    out["nat_length"] = f.natLength;
+    out["strand"] = L.strand;
     out["through"] = f.through;
     return out;
 }
@@ -344,6 +354,9 @@ Dictionary YarnSession::get_state() const {
         en["dir"] = v3(fl::normalized(view(e) - view(back)));
         en["colour"] = Color((float)st.colour.x, (float)st.colour.y, (float)st.colour.z);
         en["active"] = (int)si == work_.active;
+        double len = 0.0;
+        for (size_t k = 1; k < st.pts.size(); ++k) len += fl::length(st.pts[k] - st.pts[k - 1]);
+        en["length"] = len;
         ends.push_back(en);
     }
     d["ends"] = ends;
@@ -411,7 +424,7 @@ void YarnSession::release() {
 void YarnSession::_bind_methods() {
     ClassDB::bind_method(D_METHOD("reset"), &YarnSession::reset);
     ClassDB::bind_method(D_METHOD("action", "kind", "opening"), &YarnSession::action);
-    ClassDB::bind_method(D_METHOD("anim_frame", "loop", "s", "wrap", "sides", "subdiv"), &YarnSession::anim_frame);
+    ClassDB::bind_method(D_METHOD("anim_frame", "loop", "s", "wrap", "hang", "phi", "sides", "subdiv"), &YarnSession::anim_frame);
     ClassDB::bind_method(D_METHOD("tick", "n"), &YarnSession::tick);
     ClassDB::bind_method(D_METHOD("get_mesh", "up_to", "sides", "subdiv"), &YarnSession::get_mesh);
     ClassDB::bind_method(D_METHOD("get_particle_count"), &YarnSession::get_particle_count);

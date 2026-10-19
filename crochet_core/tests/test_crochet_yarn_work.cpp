@@ -308,6 +308,25 @@ void testPullFrames() {
             for (size_t i = 0; i < f0.pts.size(); ++i) moved = std::max(moved, length(f1.pts[i] - f0.pts[i]));
             CHECKP(near >= 3 && moved > 1e-3, "loop %d: with the yarn over, %d points of the working yarn lie round the shaft (moved up to %.1f mm)", id, near, moved * 1e3);
         }
+        {   // before the hook picks the yarn up it hangs along a curve from the old end: phi 0 puts every node on it, in order; phi 1 leaves the pose alone
+            YarnWork::PullFrame a = w.pullFrame(id, 0.4, 0.5), b = a;
+            const Vec3 d = normalized(Vec3{0.3, -1.0, 0.2});
+            const std::vector<Vec3> curve{a.base, a.base + d * 0.2};
+            b.applyHang(curve, 0.0);
+            Real off = 0, back = 0, prevT = -1;
+            bool ordered = true;
+            for (const Vec3& q : b.pts) {
+                const Vec3 r = q - a.base;
+                off = std::max(off, length(r - d * dot(r, d)));
+                ordered = ordered && dot(r, d) >= prevT - 1e-12;
+                prevT = dot(r, d);
+            }
+            YarnWork::PullFrame c = a;
+            c.applyHang(curve, 1.0);
+            for (size_t i = 0; i < a.pts.size(); ++i) back = std::max(back, length(c.pts[i] - a.pts[i]));
+            CHECKP(off < 1e-9 && ordered && back < 1e-15 && a.pathLength > 0 && length(a.runDir) > 0.99,
+                   "loop %d: laid on the hanging yarn the nodes lie on its curve, in order (%.2g mm off), and a full phi leaves the pose alone", id, off * 1e3);
+        }
         CHECKP(finite, "loop %d: every frame is finite", id);
         CHECKP(mono, "loop %d: the hook only moves toward the loop's side as it draws", id);
         CHECKP(stretch < 4.0, "loop %d: the yarn is never pulled absurdly long between particles (%.1fx)", id, stretch);

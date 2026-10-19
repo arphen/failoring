@@ -29,8 +29,8 @@ public:
     // {ok, loop, loops (the loops it made, in order), msg, particles (the yarn now has), row, cursor}.
     Dictionary action(const String& kind, int opening);
     // The yarn while the hook draws `loop` (one of the loops `action` reports in "loops") through its eye, `s` 0..1: {positions, normals, colors, indices (as get_mesh),
-    // tip, axis (from the hook's throat toward the handle, in the piece's coordinates), eye (the middle of the eye it goes through), through}. `wrap` 0..1 lays the working yarn over the shaft (the yarn over). Only the yarn up to that loop is in the mesh.
-    Dictionary anim_frame(int loop, double s, double wrap, int sides, int subdiv);
+    // tip, axis (from the hook's throat toward the handle, in the piece's coordinates), eye (the middle of the eye it goes through), through}. `wrap` 0..1 lays the working yarn over the shaft (the yarn over). `hang` (the piece's coordinates, may be empty) is the yarn as it hangs from the work to its ball before the hook picks it up: with `phi` below 1 the yarn is laid along it (0) and brought to its pose (1). Also {run_end, run_dir (where the run to the ball starts and the way it leaves), path_length (the yarn's length as posed)}. Only the yarn up to that loop is in the mesh.
+    Dictionary anim_frame(int loop, double s, double wrap, const PackedVector3Array& hang, double phi, int sides, int subdiv);
     // `n` soft-physics steps (the yarn settling)
     void tick(int n);
     // The yarn as a mesh: {positions, normals, colors, indices}; `up_to` draws only the first that many particles (-1: all).

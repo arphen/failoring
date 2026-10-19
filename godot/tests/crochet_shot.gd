@@ -90,7 +90,7 @@ func _ready() -> void:
 				sv = float(parts[0])
 				wv = maxf(0.0, 1.0 - 2.0 * sv)
 				yv.hook_roll = PI
-			var d: Dictionary = yv.session.anim_frame(int(live[live.size() - 1]), sv, wv, 10, 3)
+			var d: Dictionary = yv.session.anim_frame(int(live[live.size() - 1]), sv, wv, PackedVector3Array(), 1.0, 10, 3)
 			yv._show_mesh(d)
 			yv._place_hook(d["tip"], d["axis"], 1.0)
 		for i in 8:
