@@ -994,7 +994,7 @@ func _run_curve(e0: Vector3, d0: Vector3, bp: Vector3, n := 25) -> PackedVector3
 	var pts := PackedVector3Array()
 	for k in n1:
 		var t := float(k) / float(n1 - 1)
-		pts.append(e0.lerp(f, t))
+		pts.append(e0.lerp(f, t) + Vector3.DOWN * 0.004 * sin(PI * t))   # held taut, but not like a rod
 	var rest := _run_curve_plain(f, up, bp, n - n1 + 1)
 	for k in range(1, rest.size()):
 		pts.append(rest[k])
@@ -1112,7 +1112,7 @@ func _update_balls() -> void:
 		var spin_axis := Vector3.UP.cross(bp - e0)
 		if spin_axis.length() > 1.0e-6:
 			b.basis = Basis(spin_axis.normalized(), spin)
-		var d: Dictionary = session.tube(pts, col, 0.00125, 8, 2)
+		var d: Dictionary = session.tube(pts, col, 0.00125 * thick_slider.value, 8, 2)
 		var arrays := []
 		arrays.resize(Mesh.ARRAY_MAX)
 		arrays[Mesh.ARRAY_VERTEX] = d["positions"]

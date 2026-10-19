@@ -192,3 +192,14 @@ From the user's sc swatch motion spec (docs/YARN_SC_SWATCH_SPEC.md): no rotation
 pull (`YarnWork::pullFrame(loop, s, wrap)`: the working yarn to the first eye is part of the frame so it can be laid over the shaft). Fastening off is `YarnWork::finishOff()` and the "Finish off" button.
 Tests: test_crochet_yarn_work (pull frames end exactly at the design, the wrap lies round the shaft, the tail goes through the loop once), yarn_view_check (70 PASS: the spec's flow, the turn, the animated
 stitch and turn, finishing off and undoing it).
+
+### 13.w Polish after the user's photographs (2026-10-19)
+
+The user's complaints: the hook did not move like a hand, the new loop appeared from nothing, the hook had no real hook. Then six reference photographs: three aluminium hooks, a red hook with a
+loop standing on it, a teal sc swatch with a standing loop, a round swatch worked with both hands, an orange chain being worked, hands holding work and hook with the yarn over the left index finger.
+Done: the yarn runs from its ball to the work all the time and the ball turns as it is drawn off (`PullFrame::applyHang`: the loop's yarn lies along the hanging yarn until the hook picks it up);
+the hook travels along arcs with minimum-jerk speed and a little sway; the hook is one lofted piece (curled head, lip over the throat, neck, thumb-rest paddle); the loop on the hook
+stands round it, hinged about its legs, riding the hook and lying down when the next stitch is drawn through it (`YarnWork::standRing`); hands (right on the thumb rest, left by the loop with the
+index finger carrying the yarn, the yarn goes over its tip); the yarn is drawn 1.3x thicker by default (the photographs' stitches are dense).
+Not like the photographs yet: the hands are stylised capsules, the yarn is a plain tube (the photographs show flat, plied yarn with visible twist), the fabric still has gaps the photographs
+do not have (the Y2 look is still the user's call), the hairpin of a pull-through is a fold of the design's own loop rather than yarn physically drawn through.
