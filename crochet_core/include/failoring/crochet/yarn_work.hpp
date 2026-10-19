@@ -29,6 +29,7 @@ struct Strand {
 struct YarnLoop {
     int strand = 0;       // the strand it is made of
     int p0 = 0, p1 = 0;   // its nodes (inclusive, indices into the strand): the two legs and the ring round the hook
+    int t0 = -1;          // the strand's last node before this loop's yarn began: the loop's working yarn to its first eye is t0 + 1 ... p0 - 1 (-1: unknown)
     int r0 = 0, r1 = 0;   // the ring part (inclusive); its eye is the area it encloses, closed by the chord r1 -> r0
     bool live = false;    // on the hook
     int row = 0;          // the row it was made in
@@ -175,8 +176,9 @@ public:
     // behind the eye, the legs run through the eye to the yarn already worked; the hook draws it to the worker's side and the loop opens out as it comes,
     // and at 1 it is the loop as it is. `pts` are the rod particles `first` ... `first + pts.size() - 1` as they are at `s`; `tip` is where the hook's
     // throat is and `axis` the way from there toward the handle. A yarn over (no eye) just grows into its ring round the hook.
-    struct PullFrame { std::vector<Vec3> pts; int first = 0; Vec3 tip, axis; bool through = false; };
-    PullFrame pullFrame(int loop, Real s) const;
+    // `wrap` (0..1) lays the working yarn over the shaft from behind, over the top, to the front (the yarn over); the yarn to the loop's first eye is part of `pts` for that.
+    struct PullFrame { std::vector<Vec3> pts; int first = 0; Vec3 tip, axis, eye; bool through = false; };
+    PullFrame pullFrame(int loop, Real s, Real wrap = 0.0) const;
     // the colour of each rod segment (for drawing)
     std::vector<Vec3> segmentColours() const;
 

@@ -54,6 +54,9 @@ var work_root: Node3D             # the piece, its hook and its markers, at tabl
 var yarn_node: MeshInstance3D
 var yarn_mat: StandardMaterial3D
 var hook_node: Node3D
+var hook_roll := 0.0               # about the hook's own axis: 0 the throat faces up (going in), PI down (the yarn is over it, being drawn through)
+var _hook_axis := Vector3.ZERO     # where the shaft lies (the piece's coordinates) when it is through an eye, and how much of the way from the usual position it is
+var _hook_blend := 0.0
 var marker: MeshInstance3D
 var extra_markers: Array = []       # yellow rings on the loops picked up in the next last pull-through
 var _click_shift := false
@@ -412,14 +415,27 @@ func _build_hook() -> void:
 	shaft.material_override = steel
 	# the node's -z axis points from the handle to the tip: the cylinder lies along z with its tip at the origin
 	shaft.rotation = Vector3(PI * 0.5, 0, 0)
-	shaft.position = Vector3(0, 0, HOOK_LENGTH * 0.5)
+	shaft.position = Vector3(0, 0, HOOK_LENGTH * 0.5 + HOOK_RADIUS * 3.4)
 	hook_node.add_child(shaft)
+	# the throat: a narrow neck behind a beak that leans to the +y side of the hook (the side the yarn is caught on); `hook_roll` turns it up or down
+	var neck := MeshInstance3D.new()
+	var nc := CylinderMesh.new()
+	nc.top_radius = HOOK_RADIUS * 0.55
+	nc.bottom_radius = HOOK_RADIUS * 0.55
+	nc.height = HOOK_RADIUS * 3.0
+	nc.radial_segments = 12
+	neck.mesh = nc
+	neck.material_override = steel
+	neck.rotation = Vector3(PI * 0.5, 0, 0)
+	neck.position = Vector3(0, 0, HOOK_RADIUS * 1.9)
+	hook_node.add_child(neck)
 	var head := MeshInstance3D.new()
 	var sph := SphereMesh.new()
-	sph.radius = HOOK_RADIUS * 1.15
-	sph.height = HOOK_RADIUS * 2.3
+	sph.radius = HOOK_RADIUS * 1.1
+	sph.height = HOOK_RADIUS * 2.2
 	head.mesh = sph
 	head.material_override = steel
+	head.position = Vector3(0, HOOK_RADIUS * 0.45, HOOK_RADIUS * 0.1)
 	hook_node.add_child(head)
 	var handle := MeshInstance3D.new()
 	var hc := CylinderMesh.new()
@@ -555,24 +571,48 @@ func _replay(actions: Array) -> void:
 	_frame_work(true)
 	_place_hook(_live_centre())
 
-# The hook makes the stitch: for each loop the stitch made, the hook goes in behind the eye it works into (the yarn is over it), and draws the new loop
-# out through the eye toward the worker; the loop opens as it comes. `before` is how many particles the yarn had.
+# The hook makes the stitch. For each loop the stitch made: the hook comes at the eye it works into from the front, the throat up, and goes in through it to
+# behind (insert); the working yarn is laid over the shaft from behind and the throat turns down (yarn over); the hook is drawn back through the eye with the
+# yarn in its throat and the new loop opens as it comes (pull). A loop with no eye (a double's first yarn over) just closes round the hook. `before` is how
+# many particles the yarn had.
 func _pull_animation(before: int, made: Array) -> void:
 	_rebuild(before)
 	for id in made:
-		var f0: Dictionary = session.anim_frame(int(id), 0.0, 10, 3)
+		var f0: Dictionary = session.anim_frame(int(id), 0.0, 0.0, 10, 3)
 		if f0.is_empty():
 			continue
+		if not bool(f0["through"]):   # a yarn over: the yarn comes round the hook
+			_show_mesh(f0)
+			await _move_hook_axis(f0["tip"], f0["axis"], 0.25, PI)
+			var ty := create_tween()
+			ty.tween_method(func(t: float) -> void:
+				var dy: Dictionary = session.anim_frame(int(id), t, 0.0, 10, 3)
+				if not dy.is_empty():
+					_show_mesh(dy), 0.0, 1.0, 0.4).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+			await ty.finished
+			continue
+		var eye: Vector3 = f0["eye"]
+		var ax: Vector3 = f0["axis"]
 		_show_mesh(f0)
-		await _move_hook_axis(f0["tip"], f0["axis"], 0.28)
-		var tw := create_tween()
+		await _move_hook_axis(eye + ax * 0.014, ax, 0.22, 0.0)         # in front of the eye, throat up
+		await _move_hook_axis(f0["tip"], ax, 0.28, 0.0)                  # insert: through the eye to behind it
+		var tw := create_tween()                                          # yarn over: the yarn laid over the shaft, the throat turns down
 		tw.tween_method(func(t: float) -> void:
-			var d: Dictionary = session.anim_frame(int(id), t, 10, 3)
-			if d.is_empty():
+			var dw: Dictionary = session.anim_frame(int(id), 0.0, t, 10, 3)
+			if dw.is_empty():
 				return
-			_show_mesh(d)
-			_place_hook(d["tip"], d["axis"], 1.0), 0.0, 1.0, 0.55).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+			_show_mesh(dw)
+			hook_roll = PI * t
+			_place_hook(dw["tip"], dw["axis"], 1.0), 0.0, 1.0, 0.4).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 		await tw.finished
+		var tp := create_tween()                                          # pull: back through the eye with the yarn in the throat
+		tp.tween_method(func(t: float) -> void:
+			var dp: Dictionary = session.anim_frame(int(id), t, maxf(0.0, 1.0 - 2.0 * t), 10, 3)
+			if dp.is_empty():
+				return
+			_show_mesh(dp)
+			_place_hook(dp["tip"], dp["axis"], 1.0), 0.0, 1.0, 0.6).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+		await tp.finished
 	_rebuild(-1)
 
 func _grow(from_particles: int, to_particles: int) -> void:
@@ -870,29 +910,44 @@ func _opening_centre(id: int) -> Vector3:
 
 # The hook's tip goes to `p` (in the piece's coordinates). Its shaft comes from the worker's right hand, up and a little toward the worker.
 func _place_hook(p: Vector3, axis := Vector3.ZERO, blend := 0.0) -> void:
-	var handle_dir := Vector3(0.86, 0.38, 0.30).normalized()
 	if blend > 0.0 and axis.length() > 0.0:   # `axis` (the piece's coordinates) is the way from the tip to the handle: the shaft goes through the eye
-		handle_dir = handle_dir.lerp((work_root.global_basis * axis).normalized(), blend).normalized()
+		_hook_axis = axis
+	_hook_blend = blend
+	var handle_dir := Vector3(0.86, 0.38, 0.30).normalized()
+	if blend > 0.0 and _hook_axis.length() > 0.0:
+		handle_dir = handle_dir.lerp((work_root.global_basis * _hook_axis).normalized(), blend).normalized()
 	hook_node.global_position = work_root.to_global(p)
-	hook_node.global_basis = Basis.looking_at(-handle_dir, Vector3.UP)   # the node's -z points from the handle to the tip
+	hook_node.global_basis = Basis.looking_at(-handle_dir, Vector3.UP) * Basis(Vector3(0, 0, 1), hook_roll)   # the node's -z points from the handle to the tip
 
-# The hook goes to `p` and turns its handle to `axis` (the way a shaft through an eye lies).
-func _move_hook_axis(p: Vector3, axis: Vector3, secs: float) -> void:
+# The hook goes to `p` and turns its handle to `axis` (the way a shaft through an eye lies); `roll` is where the throat is to face when it gets there.
+func _move_hook_axis(p: Vector3, axis: Vector3, secs: float, roll := 0.0) -> void:
 	if not animate:
+		hook_roll = roll
 		_place_hook(p, axis, 1.0)
 		return
 	var p0 := work_root.to_local(hook_node.global_position)
+	var b0 := _hook_blend
+	var a0 := _hook_axis if _hook_axis.length() > 0.0 else axis
+	var r0 := hook_roll
 	var tw := create_tween()
-	tw.tween_method(func(t: float) -> void: _place_hook(p0.lerp(p, t), axis, t), 0.0, 1.0, secs).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	tw.tween_method(func(t: float) -> void:
+		hook_roll = lerpf(r0, roll, t)
+		_hook_axis = a0.lerp(axis, t).normalized()
+		_place_hook(p0.lerp(p, t), _hook_axis, lerpf(b0, 1.0, t)), 0.0, 1.0, secs).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 	await tw.finished
 
 func _move_hook(p: Vector3, secs: float) -> void:
 	if not animate:
+		hook_roll = 0.0
 		_place_hook(p)
 		return
 	var p0 := work_root.to_local(hook_node.global_position)
+	var b0 := _hook_blend
+	var r0 := hook_roll
 	var tw := create_tween()
-	tw.tween_method(func(t: float) -> void: _place_hook(p0.lerp(p, t)), 0.0, 1.0, secs).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	tw.tween_method(func(t: float) -> void:
+		hook_roll = lerpf(r0, 0.0, t)
+		_place_hook(p0.lerp(p, t), _hook_axis, b0 * (1.0 - t)), 0.0, 1.0, secs).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 	await tw.finished
 
 # The camera looks at the live end of the work, close enough to see the stitches.

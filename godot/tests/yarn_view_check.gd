@@ -303,8 +303,8 @@ func _ready() -> void:
 	for i in 3:
 		await yv.do_action("chain")
 	var live: Array = yv.session.get_state()["live"]
-	var fr0: Dictionary = yv.session.anim_frame(int(live[live.size() - 1]), 0.0, 8, 2)
-	var fr1: Dictionary = yv.session.anim_frame(int(live[live.size() - 1]), 1.0, 8, 2)
+	var fr0: Dictionary = yv.session.anim_frame(int(live[live.size() - 1]), 0.0, 0.0, 8, 2)
+	var fr1: Dictionary = yv.session.anim_frame(int(live[live.size() - 1]), 1.0, 0.0, 8, 2)
 	var tip_travel: float = (fr1["tip"] as Vector3).distance_to(fr0["tip"])
 	check("the hook goes through the eye (%.1f mm between the start and the end of the pull)" % (tip_travel * 1000), bool(fr0["through"]) and tip_travel > 0.006)
 	check("...the last moment of the pull is the finished yarn (same vertices as the whole mesh)", (fr1["positions"] as PackedVector3Array).size() == (yv.session.get_mesh(-1, 8, 2)["positions"] as PackedVector3Array).size())

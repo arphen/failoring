@@ -158,10 +158,10 @@ Dictionary YarnSession::get_mesh(int up_to, int sides, int subdiv) {
     return mesh_to_dict(m);
 }
 
-Dictionary YarnSession::anim_frame(int loop, double s, int sides, int subdiv) {
+Dictionary YarnSession::anim_frame(int loop, double s, double wrap, int sides, int subdiv) {
     Dictionary out;
     if (loop < 0 || loop >= (int)work_.loops.size()) return out;
-    const fl::YarnWork::PullFrame f = work_.pullFrame(loop, s);
+    const fl::YarnWork::PullFrame f = work_.pullFrame(loop, s, wrap);
     const fl::YarnLoop& L = work_.loops[loop];
     std::vector<fl::Vec3> saved;
     for (size_t i = 0; i < f.pts.size(); ++i) {
@@ -183,6 +183,7 @@ Dictionary YarnSession::anim_frame(int loop, double s, int sides, int subdiv) {
     out = mesh_to_dict(m);
     out["tip"] = v3(view(f.tip));
     out["axis"] = v3(f.axis);
+    out["eye"] = v3(view(f.eye));
     out["through"] = f.through;
     return out;
 }
@@ -402,7 +403,7 @@ void YarnSession::release() {
 void YarnSession::_bind_methods() {
     ClassDB::bind_method(D_METHOD("reset"), &YarnSession::reset);
     ClassDB::bind_method(D_METHOD("action", "kind", "opening"), &YarnSession::action);
-    ClassDB::bind_method(D_METHOD("anim_frame", "loop", "s", "sides", "subdiv"), &YarnSession::anim_frame);
+    ClassDB::bind_method(D_METHOD("anim_frame", "loop", "s", "wrap", "sides", "subdiv"), &YarnSession::anim_frame);
     ClassDB::bind_method(D_METHOD("tick", "n"), &YarnSession::tick);
     ClassDB::bind_method(D_METHOD("get_mesh", "up_to", "sides", "subdiv"), &YarnSession::get_mesh);
     ClassDB::bind_method(D_METHOD("get_particle_count"), &YarnSession::get_particle_count);

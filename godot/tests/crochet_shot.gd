@@ -74,10 +74,20 @@ func _ready() -> void:
 			yv._set_flip(yv.flip + PI - PI * tt, pvt, wp)
 			yv._update_balls()
 			yv._place_hook(yv._live_centre())
-		if OS.has_environment("FL_SHOT_PULL"):   # the hook drawing the last loop through its eye, a moment s (0..1) of it: "s" or "s:loopsback"
+		if OS.has_environment("FL_SHOT_PULL"):   # the hook drawing the last loop through its eye: "insert", "yo" (the yarn over) or a moment s (0..1) of the pull
 			var parts := OS.get_environment("FL_SHOT_PULL").split(":")
 			var live: Array = yv.session.get_state()["live"]
-			var d: Dictionary = yv.session.anim_frame(int(live[live.size() - 1]), float(parts[0]), 10, 3)
+			var sv := 0.0
+			var wv := 0.0
+			yv.hook_roll = 0.0
+			if parts[0] == "yo":
+				wv = 1.0
+				yv.hook_roll = PI
+			elif parts[0] != "insert":
+				sv = float(parts[0])
+				wv = maxf(0.0, 1.0 - 2.0 * sv)
+				yv.hook_roll = PI
+			var d: Dictionary = yv.session.anim_frame(int(live[live.size() - 1]), sv, wv, 10, 3)
 			yv._show_mesh(d)
 			yv._place_hook(d["tip"], d["axis"], 1.0)
 		for i in 8:

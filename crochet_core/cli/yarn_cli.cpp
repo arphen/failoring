@@ -58,7 +58,7 @@ void pullViews(const YarnWork& w, int loop, const std::string& prefix) {
     const Real sv[] = {0.0, 0.3, 0.6, 1.0};
     int k = 0;
     for (Real s : sv) {
-        const YarnWork::PullFrame f = w.pullFrame(loop, s);
+        const YarnWork::PullFrame f = w.pullFrame(loop, s, std::max(0.0, 1.0 - 2.0 * s));
         RodSystem r = w.rod;
         for (size_t i = 0; i < f.pts.size(); ++i) r.x[f.first + i] = f.pts[i];
         YarnMeshOptions mo;

@@ -107,24 +107,27 @@ EyeFrame YarnWork::eye(int loop) const {
     return e;
 }
 
-YarnWork::PullFrame YarnWork::pullFrame(int loopId, Real s) const {
+YarnWork::PullFrame YarnWork::pullFrame(int loopId, Real s, Real wrap) const {
     PullFrame f;
     const YarnLoop& L = loops[loopId];
     const Strand& S = strands[L.strand];
     s = std::min(1.0, std::max(0.0, s));
     const Real e = s * s * (3.0 - 2.0 * s);
     auto cur = [&](int i) { const int g = S.first + i; return g < (int)rod.x.size() ? rod.x[g] : S.pts[i]; };
-    f.first = S.first + L.p0;
-    for (int i = L.p0; i <= L.p1; ++i) f.pts.push_back(cur(i));
+    const int start = (L.t0 >= 0 && L.t0 + 1 < L.p0) ? L.t0 + 1 : L.p0;   // the working yarn to the first eye comes with it
+    f.first = S.first + start;
+    for (int i = start; i <= L.p1; ++i) f.pts.push_back(cur(i));
+    auto at = [&](int i) -> Vec3& { return f.pts[i - start]; };
     Vec3 rc{};
     for (int i = L.r0; i <= L.r1; ++i) rc += cur(i);
     rc = rc / (Real)(L.r1 - L.r0 + 1);
     f.tip = rc;
+    f.eye = rc;
     const EyeFrame own = eye(loopId);
     f.axis = own.normal;
     if (L.through.empty()) {   // a yarn over: the yarn closes round the hook into its ring
         const Real k = 0.25 + 0.75 * e;
-        for (Vec3& q : f.pts) q = rc + (q - rc) * k;
+        for (int i = L.p0; i <= L.p1; ++i) at(i) = rc + (at(i) - rc) * k;
         return f;
     }
     f.through = true;
@@ -145,7 +148,7 @@ YarnWork::PullFrame YarnWork::pullFrame(int loopId, Real s) const {
     const Real k = 0.10 + 0.90 * e * e;               // how much of the loop beyond the throat is still folded onto the hook
     const Real w = 0.30 + 0.70 * e;                   // and how closely its two sides lie together
     for (int i = L.p0; i <= L.p1; ++i) {
-        Vec3& q = f.pts[i - L.p0];
+        Vec3& q = at(i);
         const Real x = xi(q);
         if (x <= xiH) continue;
         const Vec3 lat = (q - E) - a * x;
@@ -155,6 +158,26 @@ YarnWork::PullFrame YarnWork::pullFrame(int loopId, Real s) const {
     }
     f.tip = E + a * xiH + latRC * e;
     f.axis = a;
+    f.eye = E;
+    if (wrap > 0.0 && start < L.p0) {
+        // the yarn over: the working yarn from where it was left comes from behind the work, over the shaft a little behind the throat, to its front
+        const Vec3 back = -zAxis();
+        Vec3 bperp = back - a * dot(back, a);
+        if (length2(bperp) < 1e-8) bperp = cross(a, upDir);
+        bperp = normalized(bperp);
+        Vec3 top = upDir - a * dot(upDir, a) - bperp * dot(upDir, bperp);
+        if (length2(top) < 1e-8) top = cross(a, bperp);
+        top = normalized(top);
+        const Real Rw = 0.0033, lam = 0.003;
+        const Vec3 C = f.tip + a * lam;
+        const int m = L.p0 - start;
+        for (int j = 0; j < m; ++j) {
+            const Real ph = kPi * (m > 1 ? j / (m - 1.0) : 0.5);
+            const Vec3 on = C + (bperp * std::cos(ph) + top * std::sin(ph)) * Rw;
+            Vec3& q = at(start + j);
+            q = q + (on - q) * std::min(1.0, wrap);
+        }
+    }
     return f;
 }
 
@@ -293,6 +316,7 @@ int YarnWork::loopAt(const Vec3& ringC, const Vec3& ringN0, const std::vector<in
         }
     }
     Strand& S = strands[active];
+    const int oldEnd = (int)S.pts.size() - 1;
     {   // the working yarn to the first eye: pulled taut
         const int t0 = (int)S.rest.size();
         appendPath(travel);
@@ -332,6 +356,7 @@ int YarnWork::loopAt(const Vec3& ringC, const Vec3& ringN0, const std::vector<in
     const int id = addLoop(active, e0 + 1, p1, true);
     loops[id].r0 = r0;
     loops[id].r1 = r1;
+    loops[id].t0 = oldEnd;
     loops[id].through = eyesLoops;
     return id;
 }

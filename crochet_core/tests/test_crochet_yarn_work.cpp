@@ -294,7 +294,19 @@ void testPullFrames() {
             if (along < prev - 1e-9) mono = false;
             prev = along;
             for (const Vec3& q : f.pts) finite = finite && std::isfinite(q.x) && std::isfinite(q.y) && std::isfinite(q.z);
-            for (size_t i = 0; i + 1 < f.pts.size(); ++i) stretch = std::max(stretch, length(f.pts[i + 1] - f.pts[i]) / (0.5e-3 + w.strands[L.strand].rest[L.p0 + i]));
+            for (size_t i = 0; i + 1 < f.pts.size(); ++i) stretch = std::max(stretch, length(f.pts[i + 1] - f.pts[i]) / (0.5e-3 + w.strands[L.strand].rest[(end.first - w.strands[L.strand].first) + i]));
+        }
+        {   // the yarn over: with wrap the working yarn goes round the shaft (some of it lies at the shaft's surface), without it it does not move
+            const YarnWork::PullFrame f0 = w.pullFrame(id, 0.0, 0.0), f1 = w.pullFrame(id, 0.0, 1.0);
+            int near = 0;
+            for (const Vec3& q : f1.pts) {
+                const Vec3 d = q - f1.tip;
+                const Real lat = length(d - f1.axis * dot(d, f1.axis));
+                if (dot(d, f1.axis) > 0 && lat > 2.2e-3 && lat < 4.2e-3) ++near;
+            }
+            Real moved = 0;
+            for (size_t i = 0; i < f0.pts.size(); ++i) moved = std::max(moved, length(f1.pts[i] - f0.pts[i]));
+            CHECKP(near >= 3 && moved > 1e-3, "loop %d: with the yarn over, %d points of the working yarn lie round the shaft (moved up to %.1f mm)", id, near, moved * 1e3);
         }
         CHECKP(finite, "loop %d: every frame is finite", id);
         CHECKP(mono, "loop %d: the hook only moves toward the loop's side as it draws", id);
