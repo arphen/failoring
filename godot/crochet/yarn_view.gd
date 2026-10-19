@@ -10,6 +10,7 @@ extends Control
 const Studio = preload("res://studio.gd")
 const Look = preload("res://look.gd")
 const Orbit = preload("res://crochet/crochet_orbit.gd")
+const Pattern = preload("res://crochet/yarn_pattern.gd")
 
 signal closed
 
@@ -44,6 +45,9 @@ var _click_shift := false
 var status_label: Label
 var target_label: Label
 var overlay_panel: PanelContainer
+var pattern_panel: PanelContainer
+var pattern_edit: TextEdit
+var pattern_status: Label
 var overlay_text: RichTextLabel
 var follow_check: CheckBox
 var expand_slider: HSlider
@@ -154,6 +158,7 @@ func _build_ui() -> void:
 	bar.add_child(colour_when)
 	colour_label = Label.new()
 	bar.add_child(colour_label)
+	bar.add_child(_button("Pattern...", "Type or paste a pattern and have it made, or edit the pattern of what you have made", func() -> void: _toggle_pattern()))
 	follow_check = CheckBox.new()
 	follow_check.text = "Follow the hook"
 	follow_check.button_pressed = true
@@ -251,6 +256,7 @@ func _build_ui() -> void:
 	overlay_text.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	overlay_panel.add_child(overlay_text)
 	holder.add_child(overlay_panel)
+	_build_pattern_panel(holder)
 	target_label = Label.new()
 	target_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	target_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.8))
@@ -293,6 +299,59 @@ func choose_colour(c: Color) -> void:
 	session.set_colour(c, when)
 	history.append(["colour", c, when])
 	_refresh()
+
+func _build_pattern_panel(holder: Control) -> void:
+	pattern_panel = PanelContainer.new()
+	pattern_panel.visible = false
+	pattern_panel.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+	pattern_panel.offset_left = -400
+	pattern_panel.offset_right = -12
+	pattern_panel.offset_top = 12
+	var box := VBoxContainer.new()
+	pattern_panel.add_child(box)
+	var t := Label.new()
+	t.text = "Pattern: one row per line"
+	box.add_child(t)
+	pattern_edit = TextEdit.new()
+	pattern_edit.custom_minimum_size = Vector2(380, 230)
+	pattern_edit.placeholder_text = "ch 12\nhdc 11\nch 2, hdc 5, colour orange, hdc 6"
+	box.add_child(pattern_edit)
+	var row := HFlowContainer.new()
+	box.add_child(row)
+	row.add_child(_button("Build now", "Start again and make it all at once", func() -> void: build_pattern(false)))
+	row.add_child(_button("Play", "Start again and watch each stitch being made", func() -> void: build_pattern(true)))
+	row.add_child(_button("Show mine", "The pattern of what you have made", func() -> void: pattern_edit.text = Pattern.text_from_rows(session.get_pattern_rows())))
+	pattern_status = Label.new()
+	pattern_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	box.add_child(pattern_status)
+	holder.add_child(pattern_panel)
+
+func _toggle_pattern() -> void:
+	pattern_panel.visible = not pattern_panel.visible
+	if pattern_panel.visible and pattern_edit.text == "":
+		pattern_edit.text = Pattern.text_from_rows(session.get_pattern_rows())
+
+# Makes the pattern in the text box from a slip knot: at once, or stitch by stitch with the animations.
+func build_pattern(play: bool) -> bool:
+	if busy:
+		return false
+	var r: Dictionary = Pattern.parse(pattern_edit.text)
+	if not bool(r["ok"]):
+		pattern_status.text = "Line %d: %s" % [int(r["line"]), String(r["error"])]
+		return false
+	pattern_status.text = ""
+	if not play:
+		_replay(r["actions"])
+		return true
+	_replay([])
+	for a in r["actions"]:
+		if String(a[0]) == "colour":
+			choose_colour(a[1])
+		elif String(a[0]) == "turn":
+			await do_action("turn", -2, int(a[1]))
+		else:
+			await do_action(String(a[0]))
+	return true
 
 func _button(text: String, tip: String, cb: Callable) -> Button:
 	var b := Button.new()
@@ -380,7 +439,7 @@ func _build_marker() -> void:
 
 # One hook action. Everything the stitch needs is chosen: it goes into the next stitch of the row below (both loops), or into the loop the
 # user clicked. Returns false when it could not be made (the status line says why).
-func do_action(kind: String, opening: int = -2) -> bool:
+func do_action(kind: String, opening: int = -2, turn_chains: int = -1) -> bool:
 	if busy:
 		return false
 	if opening == -2:
@@ -398,7 +457,7 @@ func do_action(kind: String, opening: int = -2) -> bool:
 	var before := session.get_particle_count()
 	var arg := opening
 	if kind == "turn":
-		arg = -1 if int(st["row"]) == 0 else int(TURNING_CHAINS.get(last_kind, 1))
+		arg = turn_chains if turn_chains >= 0 else (0 if int(st["row"]) == 0 else int(TURNING_CHAINS.get(last_kind, 1)))
 	var r: Dictionary = session.action(kind, arg)
 	if not bool(r.get("ok", false)):
 		status_label.text = String(r.get("msg", "that did not work"))

@@ -1,6 +1,7 @@
 # Checks yarn mode (docs/YARN_MODE_PLAN.md section 11): one click per stitch with the choices made, the cursor, turning, undo, picking a loop.
 # Run headless:  godot --headless --path godot res://tests/yarn_view_check.tscn     (PASS/FAIL lines, then "RESULT: n failed")
 extends Node
+const Pattern = preload("res://crochet/yarn_pattern.gd")
 var fails := 0
 func check(name: String, ok: bool) -> void:
 	print(("PASS  " if ok else "FAIL  ") + name)
@@ -188,6 +189,23 @@ func _ready() -> void:
 	check("Shift + click marks the loop as an extra one for the next last pull-through (and does not pick it as the opening)", (yv.session.get_state()["extra"] as PackedInt32Array).has(ex_id) and yv.picked == -1)
 	await yv.do_action("sc")
 	check("making the stitch clears the mark", (yv.session.get_state()["extra"] as PackedInt32Array).size() == 0)
+
+	# pattern text -> work -> pattern text
+	var pr: Dictionary = Pattern.parse("ch 6\nhdc 5\nch 2, hdc 2, colour orange, hdc 3")
+	check("the parser reads rows, turning chains and a colour change (%d actions: 6 chains, a turn and 5 hdc, a turn with 2 chains, 2 hdc, a colour, 3 hdc)" % (pr["actions"] as Array).size(), bool(pr["ok"]) and (pr["actions"] as Array).size() == 19)
+	yv.pattern_edit.text = "ch 6\nhdc 5\nch 2, hdc 2, colour orange, hdc 3\n"
+	check("build now makes it", yv.build_pattern(false))
+	var rebuilt: String = Pattern.text_from_rows(yv.session.get_pattern_rows())
+	print("  rebuilt pattern: ", rebuilt.replace("\n", " / "))
+	check("the pattern read back from the work is the same pattern, with the colour", rebuilt.contains("ch 6\n") and rebuilt.contains("hdc 5\n") and rebuilt.contains("ch 2, hdc 2, colour #f2") and rebuilt.contains("hdc 3"))
+	yv.pattern_edit.text = rebuilt
+	yv.build_pattern(false)
+	check("...and making that gives the same work (same yarn: %d particles)" % yv.session.get_particle_count(), Pattern.text_from_rows(yv.session.get_pattern_rows()) == rebuilt)
+	yv.pattern_edit.text = "ch 6\nsc 3, wibble 2"
+	var bad: bool = yv.build_pattern(false)
+	check("a pattern with an unknown stitch is refused with its line and the word", not bad and yv.pattern_status.text.contains("Line 2") and yv.pattern_status.text.contains("wibble"))
+	yv.pattern_edit.text = "ch 6\nsc 3\nch 1, sc blo 2, sl st 1, sk 1"
+	check("one-loop and slip stitch and skip are read", yv.build_pattern(false) and yv.session.get_pattern_text().contains("sc blo 2") and yv.session.get_pattern_text().contains("sl st 1"))
 
 	# soft yarn: take hold of a strand, pull it, let go
 	yv.reset_piece()

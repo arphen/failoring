@@ -146,3 +146,18 @@ Phase Y3 builds to this; it is the point of the whole mode.
   chain built that way, with no physics, is a recognisable crochet chain. A real photograph of an sc swatch showed that a stitch is a vertical post of two strands
   topped by a flat slanted bar (not a round ring facing the viewer); `yarn_tune` searches the lattice parameters for clean threading and no overlap (strands may
   squeeze to half a diameter). The result, with plies, is in `docs/crochet/reports/Y2.md`: the Y2 gate, the user to look at it.
+
+## 13. Where it stands (2026-10-19)
+
+| phase | state |
+|---|---|
+| Y1 rod core | done (`docs/crochet/reports/Y1.md`) |
+| Y2 chain and sc, plied tubes, sliders | built; **the gate (the user looks at the sc swatch) is open** (`docs/crochet/reports/Y2.md`) |
+| Y3 editor | first cut built to the brief of section 11: one click per stitch, hook, animated turn, loop picking, overlay, pattern text both ways, undo, soft pull |
+| Y4 more stitches | hdc, dc, sl st, front / back loop, skip: built, not compared with photographs; foundation sc, post stitches, between-stitch openings, increases and decreases: not yet |
+| Y5 colours | built: a new yarn or a dropped one picked up, at the last pull-through or from the start of the stitch, extra loops in the last pull-through; **the Compare view for seam variants is not built, and the gate (the user's list of seam variants, and a look at each) is open** |
+| Y6 performance | not started: the soft physics costs about 50 ms a step at 4000 particles; the hook picks only the neighbourhood of a grip (freezeOutside) |
+
+The seam variants that can be made today: (1) colour at the last pull-through, (2) colour from the start of the stitch, (3) the last pull-through also takes loops of the other colour
+(Shift + click), (4) a seam stitch worked into one loop only. Each is a click or two; the user's own list of what to compare, and which of the real techniques these stand for, is the
+open question of section 10.

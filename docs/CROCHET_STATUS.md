@@ -384,3 +384,10 @@ acceptance, with the measured numbers. Honest numbers; "not measured" where not 
   expand / thin-yarn view sliders, front-loop / back-loop / skip. Tests: `test_crochet_rod` 7 groups + sharp corners, `test_crochet_yarn_work` (new),
   `yarn_view_check` (new, 31 PASS). **Y2 gate: the user to look at the sc swatch** (pictures in the report). Open: hdc, dc, sl st, foundation sc, colours (Y5), a
   faster soft solve (Y6), the rows' lean after a turn.
+
+### 2026-10-19 (later) — yarn mode: stitches, colours, soft pull, pattern text
+
+* Strands (the design is per yarn, the rod is derived and soft), colours (a colour change at the last pull-through or from the start of the stitch, a dropped yarn picked up
+  again, extra loops in the last pull-through for seam variants), hdc / dc / sl st, soft yarn you can pull on (found: at an interactive step every spring was a hard
+  constraint because a yarn node weighs micrograms; a pseudo-mass makes them soft), the pattern text both ways, a colour overlay. `test_crochet_yarn_work` (new, 8 groups),
+  `yarn_view_check` 50 PASS. Details and the open gates (the user's look, the seam variants) in `docs/crochet/reports/Y2.md` and `docs/YARN_MODE_PLAN.md` section 13.
