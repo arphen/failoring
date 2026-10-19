@@ -1,4 +1,4 @@
-// Yarn mode Y2: the work made one hook action at a time. See include/failoring/crochet/yarn_work.hpp.
+// Yarn mode: the work made one hook action at a time, from one or more yarns. See include/failoring/crochet/yarn_work.hpp.
 #include "failoring/crochet/yarn_work.hpp"
 
 #include <algorithm>
@@ -22,25 +22,60 @@ std::vector<Vec3> resample(const Vec3& from, const std::vector<Vec3>& way, Real 
     return out;
 }
 
+constexpr Real kMassScale = 1.0e4;   // see RodSystem::setMassScale: the springs of a piece worked by hand are soft
+
 }  // namespace
 
 YarnWork::YarnWork() {
-    rod.params.gravity = Vec3{};   // the work floats: the shape of the loops is what is being looked at
-    rod.params.damping = 25.0;
-    rod.params.substeps = 4;
-    rod.params.iterations = 2;
-    rod.params.EA = 30.0;
-    rod.params.damping = 60.0;
-    rod.setMassScale(1.0e4);             // heavy pseudo-mass: the springs of a piece worked by hand are soft (see RodSystem::setMassScale)
-    rod.setRotationalInertiaScale(1.0e4);
-    rod.params.EI = 4.0e-6;
-    rod.params.GJ = 4.0e-6;
+    rodParams.gravity = Vec3{};   // the work floats: the shape of the loops is what is being looked at
+    rodParams.EA = 30.0;
+    rodParams.EI = 4.0e-6;
+    rodParams.GJ = 4.0e-6;
+    rodParams.damping = 60.0;
+    rodParams.substeps = 2;       // the soft settling is for feel: cheap
+    rodParams.iterations = 1;
+    rodParams.radiusScale = 0.55; // worsted is soft: strands may be squeezed
+    rodParams.shapeStiffness = 40.0;
+    rod.params = rodParams;
 }
 
-Vec3 YarnWork::endPosition() const { return rod.x.back(); }
+// ---------------------------------------------------------------------------------------------------------------- the rod from the design
 
-int YarnWork::addLoop(int p0, int p1, bool live) {
+void YarnWork::materialize() {
+    RodSystem fresh;
+    fresh.params = rodParams;
+    fresh.setMassScale(kMassScale);
+    fresh.setRotationalInertiaScale(kMassScale);
+    for (Strand& s : strands) {
+        if (s.pts.size() < 2) continue;
+        const int ci = fresh.addChain(s.pts, false, true);   // the yarn keeps the bend it was made with
+        const RodChain& ch = fresh.chains[ci];
+        s.first = ch.firstParticle;
+        for (int i = 0; i < ch.segments && i < (int)s.rest.size(); ++i) fresh.restLen[ch.firstSegment + i] = s.rest[i];
+        fresh.pin(ch.firstParticle);   // the tail end is held
+    }
+    rod = std::move(fresh);
+}
+
+void YarnWork::settle(int steps) {
+    const int n = steps > 0 ? steps : wp.settleSteps;
+    for (int i = 0; i < n; ++i) rod.step(1.0 / 120.0);
+}
+
+std::vector<Vec3> YarnWork::segmentColours() const {
+    std::vector<Vec3> out(rod.segmentCount(), Vec3{0.8, 0.3, 0.22});
+    for (int s = 0; s < rod.segmentCount(); ++s) {
+        const int c = rod.segChain[s];
+        if (c >= 0 && c < (int)strands.size()) out[s] = strands[c].colour;
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------------------------------------------------------- loops
+
+int YarnWork::addLoop(int strand, int p0, int p1, bool live) {
     YarnLoop l;
+    l.strand = strand;
     l.p0 = l.r0 = p0;
     l.p1 = l.r1 = p1;
     l.live = live;
@@ -53,15 +88,16 @@ int YarnWork::addLoop(int p0, int p1, bool live) {
 
 EyeFrame YarnWork::eye(int loop) const {
     const YarnLoop& l = loops[loop];
+    const std::vector<Vec3>& P = strands[l.strand].pts;
     EyeFrame e;
     const int n = l.r1 - l.r0 + 1;
     Vec3 c{};
-    for (int i = l.r0; i <= l.r1; ++i) c += rod.x[i];
+    for (int i = l.r0; i <= l.r1; ++i) c += P[i];
     c = c / (Real)n;
     Vec3 area{};
     for (int i = l.r0; i <= l.r1; ++i) {
-        const Vec3& a = rod.x[i];
-        const Vec3& b = rod.x[i == l.r1 ? l.r0 : i + 1];
+        const Vec3& a = P[i];
+        const Vec3& b = P[i == l.r1 ? l.r0 : i + 1];
         area += cross(a - c, b - c);
     }
     e.centre = c;
@@ -81,135 +117,28 @@ YarnWork::HookPose YarnWork::hookPose() const {
 }
 
 void YarnWork::appendPath(const std::vector<Vec3>& way) {
-    const std::vector<Vec3> pts = resample(rod.x.back(), way, wp.segmentLength);
-    const int first = rod.segmentCount();
-    rod.extendChain(pts);
-    for (int s = first; s < rod.segmentCount(); ++s) rod.restLen[s] *= wp.tighten * slack_;
-}
-
-// A finger through the eyes of `eyesLoops` in the order given. The hook's axis goes through each eye along its normal, from the side the
-// yarn is on. Both legs pass each eye beside the shaft, side by side (leg a on the side of the yarn's end); beyond the last eye they flare
-// out and the yarn goes once round the shaft (the ring) and comes back as leg b. The yarn then runs on a little toward the ball.
-int YarnWork::finger(const std::vector<int>& eyesLoops, bool consume, const Vec3* axisHint) {
-    const Real r = rod.params.radius;
-    const Real off = wp.hookRadius + r + 0.0004;   // the legs' distance from the shaft's axis
-    struct Pass { Vec3 c, a, w, u; };               // eye centre, axis direction, toward the legs (in the eye's plane), across the legs
-    std::vector<Pass> passes;
-    Vec3 cursor = endPosition();
-    for (int li : eyesLoops) {
-        const EyeFrame e = eye(li);
-        Vec3 a = e.normal;
-        if (axisHint != nullptr && length2(*axisHint) > 0.5) a = normalized(*axisHint);
-        // through the eye away from where the yarn is
-        if (dot(cursor - e.centre, a) > 0) a = -a;
-        Vec3 w = (cursor - e.centre) - a * dot(cursor - e.centre, a);
-        if (length2(w) < 1e-10) w = upDir - a * dot(upDir, a);
-        if (length2(w) < 1e-10) w = Vec3{1, 0, 0} - a * dot(Vec3{1, 0, 0}, a);
-        w = normalized(w);
-        const Vec3 u = cross(a, w);
-        passes.push_back({e.centre, a, w, u});
-        cursor = e.centre + a * wp.approach + w * off;
+    Strand& s = strands[active];
+    const std::vector<Vec3> pts = resample(s.pts.back(), way, wp.segmentLength);
+    for (const Vec3& p : pts) {
+        const Real d = length(p - s.pts.back());
+        if (d < 1e-9) continue;   // a node on top of the last one would be a segment of no length
+        s.rest.push_back(d * wp.tighten);
+        s.pts.push_back(p);
     }
-    if (passes.empty()) return -1;
-    const Real eps = std::asin(std::min(0.9, wp.legGap / off));   // the legs sit at +-eps round the shaft
-    std::vector<Vec3> way, travel;
-    Real travelStraight = 0;
-    {   // the working yarn goes from its end round the outside of the work to the first eye (never through the eyes of the loops on the way)
-        const Pass& f = passes.front();
-        const Vec3 entry = f.c + f.w * off + f.u * wp.legGap - f.a * wp.approach;
-        Vec3 lift = upDir - f.a * dot(upDir, f.a);
-        if (length2(lift) < 1e-8) lift = f.w;
-        lift = normalized(lift) * wp.travelLift;
-        travel.push_back(endPosition() + lift);
-        travel.push_back(entry + lift);
-        travel.push_back(entry);
-        travelStraight = length(entry - endPosition());
-    }
-    for (const Pass& p : passes) {
-        const Vec3 leg = p.c + p.w * off + p.u * wp.legGap;
-        way.push_back(leg - p.a * wp.approach);
-        way.push_back(leg);
-        way.push_back(leg + p.a * wp.approach);
-    }
-    const Pass& L = passes.back();
-    auto at = [&](Real z, Real rho, Real phi) { return L.c + L.a * z + (L.w * std::cos(phi) + L.u * std::sin(phi)) * rho; };
-    const Real zf = wp.approach + wp.fingerLength, zr = zf + wp.flare;
-    const Real pitch = 2.4 * r;   // the ring is a helix of a strand's width so that it does not cut across its own legs
-    way.push_back(at(zf, off, eps));
-    for (int k = 1; k <= 3; ++k) {
-        const Real f = k / 3.0, sm = f * f * (3.0 - 2.0 * f);
-        way.push_back(at(zf + wp.flare * f, off + (wp.ringRadius - off) * sm, eps));
-    }
-    const int ringSteps = 22;
-    const Real sweep = 2.0 * kPi - 2.0 * eps;
-    const int ringFirstWay = (int)way.size();   // the ring starts after this many waypoints
-    for (int k = 1; k <= ringSteps; ++k) way.push_back(at(zr + pitch * k / ringSteps, wp.ringRadius, eps + sweep * k / ringSteps));
-    const int ringLastWay = (int)way.size() - 1;
-    for (int k = 1; k <= 3; ++k) {
-        const Real f = k / 3.0, sm = f * f * (3.0 - 2.0 * f);
-        way.push_back(at(zr + pitch - (zr + pitch - zf) * f, wp.ringRadius + (off - wp.ringRadius) * sm, -eps));
-    }
-    for (int k = (int)passes.size() - 1; k >= 0; --k) {
-        const Pass& p = passes[k];
-        const Vec3 leg = p.c + p.w * off - p.u * wp.legGap;
-        way.push_back(leg + p.a * wp.approach);
-        way.push_back(leg);
-        way.push_back(leg - p.a * wp.approach);
-    }
-    rod.statics.clear();  // the hook leaves the old loop before the new one is pulled through
-    const int e0 = rod.particleCount() - 1;
-    {   // the working yarn to the first eye: laid round the outside, but pulled taut (it is the yarn running to the hook)
-        const int t0 = rod.segmentCount();
-        appendPath(travel);
-        Real made = 0;
-        for (int sIdx = t0; sIdx < rod.segmentCount(); ++sIdx) made += rod.restLen[sIdx];
-        const Real want = std::max(travelStraight * wp.travelSlack, 1e-4);
-        if (made > want)
-            for (int sIdx = t0; sIdx < rod.segmentCount(); ++sIdx) rod.restLen[sIdx] *= want / made;
-    }
-    // where the ring starts and ends among the particles: appendPath resamples, so read the counts off after each part
-    std::vector<Vec3> head(way.begin(), way.begin() + ringFirstWay);
-    std::vector<Vec3> ring(way.begin() + ringFirstWay, way.begin() + ringLastWay + 1);
-    std::vector<Vec3> tail(way.begin() + ringLastWay + 1, way.end());
-    appendPath(head);
-    const int r0 = rod.particleCount();
-    appendPath(ring);
-    const int r1 = rod.particleCount() - 1;
-    appendPath(tail);
-    const int p1 = rod.particleCount() - 1;
-    rod.statics.push_back({L.c - L.a * (0.5 * wp.approach), L.c + L.a * (zr + 0.6 * wp.ringRadius), wp.hookRadius});
-    const Pass& first = passes.front();
-    appendPath({first.c + first.w * off - first.u * wp.legGap - first.a * (wp.approach + wp.workingRun)});
-    for (int li : eyesLoops) {   // the loops the finger went through are pulled in onto it
-        YarnLoop& L = loops[li];
-        const Real target = std::max(wp.closeFloor, L.ringScale * wp.closeFactor);
-        const Real f = target / L.ringScale;
-        for (int sIdx = L.r0; sIdx < L.r1; ++sIdx) rod.restLen[sIdx] *= f;   // segment sIdx joins particles sIdx and sIdx + 1 (one chain)
-        L.ringScale = target;
-    }
-    if (consume)
-        for (int li : eyesLoops) {
-            loops[li].live = false;
-            hook.erase(std::remove(hook.begin(), hook.end(), li), hook.end());
-        }
-    const int id = addLoop(e0 + 1, p1, true);
-    loops[id].r0 = r0;
-    loops[id].r1 = r1;
-    loops[id].through = eyesLoops;
-    return id;
 }
 
 // A loop with its ring put at `ringC` (plane square to `ringN`) and its legs through the eyes of `eyesLoops`, in order.
-int YarnWork::loopAt(const Vec3& ringC, const Vec3& ringN0, const std::vector<int>& eyesLoops, bool consume, const Vec3* major, Real semiA, Real semiB,
-                     const std::vector<int>* modes, const Vec3* front) {
-    const Real r = rod.params.radius;
+int YarnWork::loopAt(const Vec3& ringC, const Vec3& ringN0, const std::vector<int>& eyesLoops, const Vec3* major, Real semiA, Real semiB, const std::vector<int>* modes,
+                     const Vec3* front) {
+    const Real r = rodParams.radius;
     const Vec3 ringN = normalized(ringN0);
+    const std::vector<int>& eyesV = eyesLoops;   // the eyes are visited in the order given: the tip's loop first
     struct Pass { Vec3 c, a, u; };
     std::vector<Pass> passes;
     Vec3 cursor = endPosition();
-    for (size_t k = 0; k < eyesLoops.size(); ++k) {
-        const EyeFrame e = eye(eyesLoops[k]);
-        const Vec3 target = (k + 1 < eyesLoops.size()) ? eye(eyesLoops[k + 1]).centre : ringC;
+    for (size_t k = 0; k < eyesV.size(); ++k) {
+        const EyeFrame e = eye(eyesV[k]);
+        const Vec3 target = (k + 1 < eyesV.size()) ? eye(eyesV[k + 1]).centre : ringC;
         Vec3 toward = normalized(target - e.centre);
         Vec3 n = e.normal;
         if (dot(toward, n) < 0) n = -n;
@@ -223,17 +152,18 @@ int YarnWork::loopAt(const Vec3& ringC, const Vec3& ringN0, const std::vector<in
         Real gap = wp.legGap;
         const int mode = (modes != nullptr && k < modes->size()) ? (*modes)[k] : 0;
         if (mode != 0 && front != nullptr) {
-            // round one strand of the ring only: the ring's particle farthest toward (mode +1) or away from (mode -1) the worker is on that strand;
-            // the legs pass either side of it, across it (one between the two strands, one outside)
-            const YarnLoop& Lp = loops[eyesLoops[k]];
+            // round one strand of the ring only: the ring's node farthest toward (mode +1) or away from (mode -1) the worker is on that strand; the
+            // legs pass either side of it, across it (one between the two strands, one outside)
+            const YarnLoop& Lp = loops[eyesV[k]];
+            const std::vector<Vec3>& P = strands[Lp.strand].pts;
             const Vec3 F = normalized(*front - e.normal * dot(*front, e.normal));
             int best = Lp.r0;
             Real bestV = -1e300;
             for (int pi = Lp.r0; pi <= Lp.r1; ++pi) {
-                const Real v = mode * dot(F, rod.x[pi] - e.centre);
+                const Real v = mode * dot(F, P[pi] - e.centre);
                 if (v > bestV) { bestV = v; best = pi; }
             }
-            centre = rod.x[best];
+            centre = P[best];
             u = F;
             gap = std::max(wp.legGap, 1.6 * r);
         }
@@ -241,151 +171,202 @@ int YarnWork::loopAt(const Vec3& ringC, const Vec3& ringN0, const std::vector<in
         passes.push_back({centre, a, u * sg * (gap / std::max(wp.legGap, 1e-9))});
         cursor = centre + a * wp.approach;
     }
-    if (passes.empty()) return -1;
+    const Real ra = semiA > 0 ? semiA : wp.ringRadius, rb = semiB > 0 ? semiB : wp.ringRadius;
+    const Real pitch = 2.4 * r;
     std::vector<Vec3> way, travel;
     Real travelStraight = 0;
-    {
-        const Pass& f = passes.front();
-        const Vec3 entry = f.c + f.u * wp.legGap - f.a * wp.approach;
-        travel.push_back(entry);
-        travelStraight = length(entry - endPosition());
+    int ringFirstWay = 0, ringLastWay = 0;
+    if (passes.empty()) {
+        // a yarn over: a ring round the hook, on the side the yarn is on; the yarn goes round once and on
+        Vec3 U = major != nullptr ? (*major) - ringN * dot(*major, ringN) : Vec3{1, 0, 0} - ringN * dot(Vec3{1, 0, 0}, ringN);
+        U = normalized(U);
+        const Vec3 V = cross(ringN, U);
+        const Vec3 toEnd = (endPosition() - ringC) - ringN * dot(endPosition() - ringC, ringN);
+        const Real th0 = length2(toEnd) > 1e-12 ? std::atan2(dot(toEnd, V) / rb, dot(toEnd, U) / ra) : 0.0;
+        auto onRing = [&](Real phi) { return ringC + U * (ra * std::cos(th0 + phi)) + V * (rb * std::sin(th0 + phi)); };
+        travel.push_back(onRing(0.0));
+        travelStraight = length(onRing(0.0) - endPosition());
+        ringFirstWay = 0;
+        const int steps = 22;
+        for (int k = 1; k <= steps; ++k) way.push_back(onRing(2.0 * kPi * k / steps) + ringN * (pitch * k / steps));
+        ringLastWay = (int)way.size() - 1;
+    } else {
+        {
+            const Pass& f = passes.front();
+            const Vec3 entry = f.c + f.u * wp.legGap - f.a * wp.approach;
+            travel.push_back(entry);
+            travelStraight = length(entry - endPosition());
+        }
+        for (const Pass& p : passes) {
+            const Vec3 leg = p.c + p.u * wp.legGap;
+            way.push_back(leg - p.a * wp.approach);
+            way.push_back(leg);
+            way.push_back(leg + p.a * wp.approach);
+        }
+        // the ring: legs flare out to it from the side of the last eye
+        const Pass& L = passes.back();
+        Vec3 U = major != nullptr ? (*major) - ringN * dot(*major, ringN) : Vec3{};
+        const Vec3 toEye = (L.c - ringC) - ringN * dot(L.c - ringC, ringN);
+        if (length2(U) < 1e-10) {
+            U = toEye;
+            if (length2(U) < 1e-10) U = L.u;
+        }
+        U = normalized(U);
+        const Vec3 V = cross(ringN, U);   // (U, V, ringN) right handed
+        const Real th0 = std::atan2(dot(toEye, V) / rb, dot(toEye, U) / ra);   // the ring starts on the side that faces the eye
+        const Real eps = std::asin(std::min(0.9, wp.legGap / std::max(std::min(ra, rb), 1e-6)));
+        auto onRing = [&](Real phi) { return ringC + U * (ra * std::cos(th0 + phi)) + V * (rb * std::sin(th0 + phi)); };
+        way.push_back(L.c + L.a * wp.approach + L.u * wp.legGap);
+        const int ringSteps = 22;
+        const Real sweep = 2.0 * kPi - 2.0 * eps;
+        for (int k = 1; k <= 2; ++k) {
+            const Real f = k / 3.0;
+            const Vec3 from = L.c + L.a * wp.approach + L.u * wp.legGap;
+            way.push_back(from + (onRing(eps) - from) * f);
+        }
+        ringFirstWay = (int)way.size();
+        for (int k = 0; k <= ringSteps; ++k) way.push_back(onRing(eps + sweep * k / ringSteps) + ringN * (pitch * k / ringSteps));
+        ringLastWay = (int)way.size() - 1;
+        for (int k = 2; k >= 1; --k) {
+            const Real f = k / 3.0;
+            const Vec3 from = L.c + L.a * wp.approach - L.u * wp.legGap;
+            way.push_back(from + (onRing(-eps) + ringN * pitch - from) * f);
+        }
+        for (int k = (int)passes.size() - 1; k >= 0; --k) {
+            const Pass& p = passes[k];
+            const Vec3 leg = p.c - p.u * wp.legGap;
+            way.push_back(leg + p.a * wp.approach);
+            way.push_back(leg);
+            way.push_back(leg - p.a * wp.approach);
+        }
     }
-    for (const Pass& p : passes) {
-        const Vec3 leg = p.c + p.u * wp.legGap;
-        way.push_back(leg - p.a * wp.approach);
-        way.push_back(leg);
-        way.push_back(leg + p.a * wp.approach);
-    }
-    // the ring: legs flare out to it from the side of the last eye
-    const Pass& L = passes.back();
-    const Real ra = semiA > 0 ? semiA : wp.ringRadius, rb = semiB > 0 ? semiB : wp.ringRadius;
-    Vec3 U = major != nullptr ? (*major) - ringN * dot(*major, ringN) : Vec3{};
-    const Vec3 toEye = (L.c - ringC) - ringN * dot(L.c - ringC, ringN);
-    if (length2(U) < 1e-10) {
-        U = toEye;
-        if (length2(U) < 1e-10) U = L.u;
-    }
-    U = normalized(U);
-    const Vec3 V = cross(ringN, U);   // (U, V, ringN) right handed
-    // the ring starts on the side that faces the eye
-    const Real th0 = std::atan2(dot(toEye, V) / rb, dot(toEye, U) / ra);
-    const Real eps = std::asin(std::min(0.9, wp.legGap / std::max(std::min(ra, rb), 1e-6)));
-    auto onRing = [&](Real phi) { return ringC + U * (ra * std::cos(th0 + phi)) + V * (rb * std::sin(th0 + phi)); };
-    const Real pitch = 2.4 * r;
-    way.push_back(L.c + L.a * wp.approach + L.u * wp.legGap);
-    const int ringSteps = 22;
-    const Real sweep = 2.0 * kPi - 2.0 * eps;
-    for (int k = 1; k <= 2; ++k) {
-        const Real f = k / 3.0;
-        const Vec3 from = L.c + L.a * wp.approach + L.u * wp.legGap;
-        const Vec3 to = onRing(eps);
-        way.push_back(from + (to - from) * f);
-    }
-    const int ringFirstWay = (int)way.size();
-    for (int k = 0; k <= ringSteps; ++k) way.push_back(onRing(eps + sweep * k / ringSteps) + ringN * (pitch * k / ringSteps));
-    const int ringLastWay = (int)way.size() - 1;
-    for (int k = 2; k >= 1; --k) {
-        const Real f = k / 3.0;
-        const Vec3 from = L.c + L.a * wp.approach - L.u * wp.legGap;
-        const Vec3 to = onRing(-eps) + ringN * pitch;
-        way.push_back(from + (to - from) * f);
-    }
-    for (int k = (int)passes.size() - 1; k >= 0; --k) {
-        const Pass& p = passes[k];
-        const Vec3 leg = p.c - p.u * wp.legGap;
-        way.push_back(leg + p.a * wp.approach);
-        way.push_back(leg);
-        way.push_back(leg - p.a * wp.approach);
-    }
-    rod.statics.clear();
+    Strand& S = strands[active];
     {   // the working yarn to the first eye: pulled taut
-        const int t0 = rod.segmentCount();
+        const int t0 = (int)S.rest.size();
         appendPath(travel);
         Real made = 0;
-        for (int sIdx = t0; sIdx < rod.segmentCount(); ++sIdx) made += rod.restLen[sIdx];
+        for (int i = t0; i < (int)S.rest.size(); ++i) made += S.rest[i];
         const Real want = std::max(travelStraight * wp.travelSlack, 1e-4);
         if (made > want)
-            for (int sIdx = t0; sIdx < rod.segmentCount(); ++sIdx) rod.restLen[sIdx] *= want / made;
+            for (int i = t0; i < (int)S.rest.size(); ++i) S.rest[i] *= want / made;
     }
-    const int e0 = rod.particleCount() - 1;
+    const int e0 = (int)S.pts.size() - 1;
     std::vector<Vec3> head(way.begin(), way.begin() + ringFirstWay);
     std::vector<Vec3> ring(way.begin() + ringFirstWay, way.begin() + ringLastWay + 1);
     std::vector<Vec3> tail(way.begin() + ringLastWay + 1, way.end());
-    appendPath(head);
-    const int r0 = rod.particleCount();
+    if (!head.empty()) appendPath(head);
+    const int r0 = (int)S.pts.size();
     appendPath(ring);
-    const int r1 = rod.particleCount() - 1;
-    appendPath(tail);
-    const int p1 = rod.particleCount() - 1;
-    if (wp.hookRadius > 1e-3) rod.statics.push_back({ringC - ringN * (0.6 * wp.ringRadius), ringC + ringN * (pitch + 0.6 * wp.ringRadius), wp.hookRadius});
-    const Pass& first = passes.front();
-    appendPath({first.c - first.u * wp.legGap - first.a * (wp.approach + wp.workingRun)});
+    const int r1 = (int)S.pts.size() - 1;
+    if (!tail.empty()) appendPath(tail);
+    const int p1 = (int)S.pts.size() - 1;
+    if (!passes.empty()) {
+        const Pass& first = passes.front();
+        appendPath({first.c - first.u * wp.legGap - first.a * (wp.approach + wp.workingRun)});
+    }
     for (int li : eyesLoops) {   // the loops the finger went through are pulled in onto it
         YarnLoop& Lp = loops[li];
         const Real target = std::max(wp.closeFloor, Lp.ringScale * wp.closeFactor);
         const Real f = target / Lp.ringScale;
-        for (int sIdx = Lp.r0; sIdx < Lp.r1; ++sIdx) rod.restLen[sIdx] *= f;
+        std::vector<Real>& rest = strands[Lp.strand].rest;
+        for (int i = Lp.r0; i < Lp.r1 && i < (int)rest.size(); ++i) rest[i] *= f;
         Lp.ringScale = target;
     }
-    if (consume)
-        for (int li : eyesLoops) {
+    for (int li : eyesLoops)   // the live loops among the eyes leave the hook
+        if (loops[li].live) {
             loops[li].live = false;
             hook.erase(std::remove(hook.begin(), hook.end(), li), hook.end());
         }
-    const int id = addLoop(e0 + 1, p1, true);
+    const int id = addLoop(active, e0 + 1, p1, true);
     loops[id].r0 = r0;
     loops[id].r1 = r1;
     loops[id].through = eyesLoops;
     return id;
 }
 
-int YarnWork::slipKnot(const Vec3& at) {
-    // the tail runs in along the work direction, makes one turn round that axis (a helix a strand and a bit long, so it does not cut itself:
-    // the ring of the slip knot), then the yarn leaves round the outside and a finger of it goes through the ring
-    const Real R = 0.0055, r = rod.params.radius;
+// ---------------------------------------------------------------------------------------------------------------- yarns and colours
+
+int YarnWork::startYarn(const Vec3& colour) {
+    // a tail behind the work, by the hook: it is held there while the yarn is used
+    const Vec3 z = zAxis();
+    const HookPose hp = hookPose();
+    const Vec3 at = hp.valid ? hp.tip : endPosition();
+    Strand s;
+    s.colour = colour;
+    s.pts.push_back(at - progress * wp.tailLength - z * 0.0045 + upDir * 0.001);
+    strands.push_back(s);
+    active = (int)strands.size() - 1;
+    appendPath({at - z * 0.0045 + upDir * 0.001});
+    return active;
+}
+
+void YarnWork::setNextColour(const Vec3& colour, ColourAt when) {
+    if (length(colour - strands[active].colour) < 1e-6) {   // already this colour
+        pending_ = false;
+        return;
+    }
+    pending_ = true;
+    pendingColour_ = colour;
+    pendingAt_ = when;
+}
+
+// Switches to the pending colour if it is due now (`now` is the moment this is called from): picks up a yarn of that colour that was dropped, or
+// starts a new one.
+void YarnWork::applyPendingColour(ColourAt now) {
+    if (!pending_ || pendingAt_ != now) return;
+    pending_ = false;
+    for (int i = (int)strands.size() - 1; i >= 0; --i)
+        if (length(strands[i].colour - pendingColour_) < 1e-6) {
+            active = i;
+            return;
+        }
+    startYarn(pendingColour_);
+}
+
+// ---------------------------------------------------------------------------------------------------------------- the first loop and the stitches
+
+int YarnWork::slipKnot(const Vec3& at, const Vec3& colour) {
+    // the tail runs in along the work direction, makes one turn round that axis (a helix a strand and a bit long, so it does not cut itself: the
+    // ring of the slip knot), then the yarn leaves round the outside and a finger of it goes through the ring
+    strands.clear();
+    loops.clear();
+    hook.clear();
+    active = 0;
+    pending_ = false;
+    const Real R = 0.0055, r = rodParams.radius;
     const Vec3 ex = progress, ey = upDir, ez = cross(progress, upDir);
-    std::vector<Vec3> pts;
-    pts.push_back(at - ex * 0.030 + ey * R);
-    pts.push_back(at + ey * R);
+    Strand s;
+    s.colour = colour;
+    std::vector<Vec3> way;
+    way.push_back(at + ey * R);
     const int n = 16;
     for (int i = 1; i <= n; ++i) {
         const Real a = 2.0 * kPi * i / n;
-        pts.push_back(at + ex * (2.4 * r * i / n) + ey * (R * std::cos(a)) + ez * (R * std::sin(a)));
+        way.push_back(at + ex * (2.4 * r * i / n) + ey * (R * std::cos(a)) + ez * (R * std::sin(a)));
     }
-    const std::vector<Vec3> nodes = resample(pts.front(), std::vector<Vec3>(pts.begin() + 1, pts.end()), wp.segmentLength);
-    std::vector<Vec3> all;
-    all.push_back(pts.front());
-    all.insert(all.end(), nodes.begin(), nodes.end());
-    rod.addChain(all, false, true);   // the ring keeps the bend it is made with
-    slack_ = 1.0;
-    for (int s = 0; s < rod.segmentCount(); ++s) rod.restLen[s] *= wp.tighten;
-    rod.pin(0);  // the tail end stays where it is
-    const int ring = addLoop(0, rod.particleCount() - 1, false);
-    // find where the ring starts: the first particle past the straight tail
-    loops[ring].r0 = std::min(rod.particleCount() - 2, (int)std::ceil(0.030 / wp.segmentLength));
+    s.pts.push_back(at - ex * wp.tailLength + ey * R);
+    strands.push_back(s);
+    appendPath(way);
+    const int ring = addLoop(0, 0, (int)strands[0].pts.size() - 1, false);
+    loops[ring].r0 = std::min((int)strands[0].pts.size() - 2, (int)std::ceil(wp.tailLength / wp.segmentLength));
     // out round the ring and back to the side the finger will come from
     appendPath({at + ex * (2.4 * r) + ey * (R * 1.7), at - ex * (4.0 * r) + ey * (R * 1.7), at - ex * (4.0 * r) + ey * (R * 0.3)});
     origin_ = at;
     chainCount_ = 0;
+    turnChains_ = 0;
     target_.clear();
     made_.clear();
     cursor_ = 0;
     log_.clear();
-    const int id = loopAt(at + progress * wp.stitchWidth + zAxis() * wp.layerGap, zAxis(), {ring}, false);
-    settle();
-    return id;
-}
-
-int YarnWork::pullThrough(int k) {
-    k = std::min<int>(k, (int)hook.size());
-    std::vector<int> eyes;
-    for (int i = 0; i < k; ++i) eyes.push_back(hook[hook.size() - 1 - i]);  // the tip's loop first
-    const int id = finger(eyes, true);
-    settle();
+    row = 0;
+    const int id = loopAt(at + progress * wp.stitchWidth + zAxis() * wp.layerGap, zAxis(), {ring});
+    materialize();
     return id;
 }
 
 int YarnWork::chain() {
+    applyPendingColour(ColourAt::Stitch);
+    applyPendingColour(ColourAt::PullThrough);   // a chain is a single pull-through
     const Vec3 z = zAxis();
     Vec3 c;
     int id;
@@ -393,43 +374,96 @@ int YarnWork::chain() {
         // the foundation chain: the next ring one stitch on along the row, alternating between the two layers
         ++chainCount_;
         c = origin_ + progress * (wp.stitchWidth * (chainCount_ + 1)) + z * ((chainCount_ % 2 == 0 ? 1.0 : -1.0) * wp.layerGap);
-        id = loopAt(c, z, {hook.back()}, true);
+        id = loopAt(c, z, {hook.back()});
     } else {
-        // a turning chain: a ring standing a row above the stitch on the hook, at the end of the row
+        // a turning chain: rings standing above the stitch on the hook, at the end of the row
         const EyeFrame e = eye(hook.back());
         const Vec3 base = e.centre - z * dot(e.centre, z);
         const Vec3 lean = normalized(upDir * std::cos(wp.barTilt) + z * std::sin(wp.barTilt));
         const Vec3 along = progress;
-        c = base + upDir * wp.stitchHeight - along * (0.5 * wp.stitchWidth) + z * (0.3 * wp.layerGap);
-        id = loopAt(c, lean, {hook.back()}, true, &along, wp.barA, wp.barB);
+        const Real rise = turnChains_ == 0 ? 1.0 : 0.8;
+        c = base + upDir * (wp.stitchHeight * rise) - along * (0.5 * wp.stitchWidth) + z * (0.3 * wp.layerGap);
+        id = loopAt(c, lean, {hook.back()}, &along, wp.barA, wp.barB);
+        ++turnChains_;
     }
-    settle();
+    materialize();
     return id;
 }
 
-int YarnWork::pullUp(int opening) {
-    const int id = finger({opening}, false);
-    settle();
-    return id;
+Real YarnWork::heightOf(const std::string& kind) const {
+    if (kind == "hdc") return wp.hdcScale;
+    if (kind == "dc") return wp.dcScale;
+    if (kind == "slst") return wp.slstScale;
+    return 1.0;
 }
 
-int YarnWork::sc(int opening, Loops which) {
-    // The opening is the eye of a loop in the row below. The loop pulled up through it is a post: it stands nearly a row up and is a bar (a flat
-    // elongated ring leaning back toward the worker, which from the front is a pair of strands side by side along the row). The loop pulled
-    // through that one and the loop on the hook is the stitch's top: another bar, half a stitch along. Position comes from the opening's place
-    // along the row; the lean from the worker's side of the work.
+// The stitches. The opening is the eye of a loop in the row below. The loop pulled up through it is a post: it stands up to the height of the stitch
+// and is a bar (a flat elongated ring leaning back toward the worker, which from the front is a pair of strands side by side along the row). The loop
+// pulled through that and the loops on the hook is the stitch's top: another bar, half a stitch along. hdc and dc have yarn overs (rings on the hook
+// that lie behind the post) and dc pulls through twice. Position comes from the opening's place along the row; the lean from the worker's side.
+int YarnWork::tallStitch(const std::string& kind, int opening, Loops which) {
     const EyeFrame b = eye(opening);
     const Vec3 z = zAxis();
     const Vec3 along = progress;
     const Vec3 lean = normalized(upDir * std::cos(wp.barTilt) + z * std::sin(wp.barTilt));
     const Vec3 base = b.centre - z * dot(b.centre, z);
+    const Real h = heightOf(kind) * wp.stitchHeight;
     const std::vector<int> modes{which == Loops::Both ? 0 : (which == Loops::Front ? 1 : -1)};
-    const int b1 = loopAt(base + upDir * (wp.postRise * wp.stitchHeight) + z * (0.5 * wp.layerGap), lean, {opening}, false, &along, wp.barA, wp.barB, &modes, &z);
-    settle();
-    const int top = loopAt(base + upDir * wp.stitchHeight + along * (0.5 * wp.stitchWidth) - z * (0.3 * wp.layerGap), lean,
-                           {b1, hook.front() == b1 ? hook.back() : hook.front()}, true, &along, wp.barA, wp.barB);
-    settle();
-    return top;
+    applyPendingColour(ColourAt::Stitch);
+    int y1 = -1;
+    if (kind == "hdc" || kind == "dc") {   // yarn over before the hook goes into the stitch
+        const Real yh = kind == "dc" ? wp.yoDc : wp.yoHdc;
+        y1 = loopAt(base + upDir * (yh * h) - z * (wp.yoLayer * wp.layerGap), lean, {}, &along, wp.barA, wp.barB);
+    }
+    const Real rise = kind == "dc" ? wp.riseDc : wp.postRise;
+    const int b1 = loopAt(base + upDir * (rise * h) + z * (0.5 * wp.layerGap), lean, {opening}, &along, wp.barA, wp.barB, &modes, &z);
+    if (kind == "dc") {
+        // pull through two: the loop just pulled up and the yarn over; then through that and the loop that was on the hook
+        const int m = loopAt(base + upDir * (wp.midDc * h) + z * (0.2 * wp.layerGap), lean, {b1, y1}, &along, wp.barA, wp.barB);
+        applyPendingColour(ColourAt::PullThrough);
+        return loopAt(base + upDir * h + along * (0.5 * wp.stitchWidth) - z * (0.3 * wp.layerGap), lean, {m, hook[hook.size() - 2]}, &along, wp.barA, wp.barB);
+    }
+    if (kind == "hdc") {
+        applyPendingColour(ColourAt::PullThrough);
+        // the hook has [.., L, yarn over, pulled-up loop]
+        return loopAt(base + upDir * h + along * (0.5 * wp.stitchWidth) - z * (0.3 * wp.layerGap), lean, {b1, y1, hook[hook.size() - 3]}, &along, wp.barA, wp.barB);
+    }
+    applyPendingColour(ColourAt::PullThrough);
+    return loopAt(base + upDir * h + along * (0.5 * wp.stitchWidth) - z * (0.3 * wp.layerGap), lean, {b1, hook[hook.size() - 2]}, &along, wp.barA, wp.barB);
+}
+
+int YarnWork::sc(int opening, Loops which) {
+    const int id = tallStitch("sc", opening, which);
+    materialize();
+    return id;
+}
+
+int YarnWork::hdc(int opening, Loops which) {
+    const int id = tallStitch("hdc", opening, which);
+    materialize();
+    return id;
+}
+
+int YarnWork::dc(int opening, Loops which) {
+    const int id = tallStitch("dc", opening, which);
+    materialize();
+    return id;
+}
+
+int YarnWork::slst(int opening, Loops which) {
+    const EyeFrame b = eye(opening);
+    const Vec3 z = zAxis();
+    const Vec3 along = progress;
+    const Vec3 lean = normalized(upDir * std::cos(wp.barTilt) + z * std::sin(wp.barTilt));
+    const Vec3 base = b.centre - z * dot(b.centre, z);
+    const std::vector<int> modes{which == Loops::Both ? 0 : (which == Loops::Front ? 1 : -1), 0};
+    applyPendingColour(ColourAt::Stitch);
+    applyPendingColour(ColourAt::PullThrough);
+    const Real h = heightOf("slst") * wp.stitchHeight;
+    // through the opening and then the loop on the hook, in one go: a flat loop half a stitch along
+    const int id = loopAt(base + upDir * h + along * (0.5 * wp.stitchWidth) - z * (0.3 * wp.layerGap), lean, {opening, hook.back()}, &along, wp.barA, wp.barB, &modes, &z);
+    materialize();
+    return id;
 }
 
 void YarnWork::turn() {
@@ -448,15 +482,21 @@ int YarnWork::stitchChain() {
     return id;
 }
 
-int YarnWork::stitchSc(int opening, Loops which) {
+int YarnWork::stitch(const std::string& kind, int opening, Loops which) {
     if (opening < 0) opening = nextOpening();
     if (opening < 0 || hook.empty()) return -1;
     if (opening == nextOpening()) ++cursor_;
-    const int id = sc(opening, which);
+    int id = -1;
+    if (kind == "sc") id = sc(opening, which);
+    else if (kind == "hdc") id = hdc(opening, which);
+    else if (kind == "dc") id = dc(opening, which);
+    else if (kind == "slst") id = slst(opening, which);
+    else return -1;
     made_.push_back(id);
-    const char* kind = which == Loops::Both ? "sc" : (which == Loops::Front ? "sc flo" : "sc blo");
-    if (!log_.empty() && log_.back().first == kind) ++log_.back().second;
-    else log_.push_back({kind, 1});
+    const std::string name = kind == "slst" ? "sl st" : kind;
+    const std::string logged = which == Loops::Both ? name : name + (which == Loops::Front ? " flo" : " blo");
+    if (!log_.empty() && log_.back().first == logged) ++log_.back().second;
+    else log_.push_back({logged, 1});
     return id;
 }
 
@@ -477,6 +517,7 @@ void YarnWork::stitchTurn(int turningChain) {
     cursor_ = 0;
     log_.push_back({"turn", 1});
     turn();   // the work is turned over before its turning chain is made: the chain goes the new way
+    turnChains_ = 0;
     for (int i = 0; i < turningChain; ++i) {
         chain();
         if (!log_.empty() && log_.back().first == "ch") ++log_.back().second;
@@ -499,60 +540,55 @@ std::string YarnWork::patternText() const {
     return out;
 }
 
-void YarnWork::settle(int steps) {
-    const int n = steps > 0 ? steps : wp.settleSteps;
-    const int last = rod.particleCount() - 1;
-    if (last >= 4) {
-        const Vec3 dir = normalized(rod.x[last] - rod.x[last - 4]);
-        for (Vec3& f : rod.extForce) f = Vec3{};
-        rod.extForce[last] = dir * wp.workTension;
+// ---------------------------------------------------------------------------------------------------------------- checks on the topology
+
+namespace {
+
+// does the segment a -> a + d pierce the fan of triangles (c, t[i], t[i+1]) over the polygon `ring`? returns +1 / -1 per crossing, summed
+int pierce(const Vec3& a, const Vec3& d, const Vec3& c, const std::vector<Vec3>& ring) {
+    int total = 0;
+    const size_t n = ring.size();
+    for (size_t i = 0; i < n; ++i) {
+        const Vec3 &t0 = ring[i], &t1 = ring[(i + 1) % n];
+        const Vec3 e1 = t0 - c, e2 = t1 - c, pv = cross(d, e2);
+        const Real det = dot(e1, pv);
+        if (std::fabs(det) < 1e-30) continue;
+        const Vec3 tv = a - c;
+        const Real uu = dot(tv, pv) / det;
+        if (uu < 0 || uu > 1) continue;
+        const Vec3 qv = cross(tv, e1);
+        const Real vv = dot(d, qv) / det;
+        if (vv < 0 || uu + vv > 1) continue;
+        const Real tt = dot(e2, qv) / det;
+        if (tt < 0 || tt >= 1) continue;
+        total += dot(d, cross(e1, e2)) > 0 ? 1 : -1;
     }
-    for (int i = 0; i < n; ++i) rod.step(1.0 / 120.0);
+    return total;
 }
 
-void YarnWork::setSlack(Real factor, int steps) {
-    const Real ratio = factor / slack_;
-    rod.scaleRestLengths(ratio);
-    slack_ = factor;
-    settle(steps);
-}
-
-// ---------------------------------------------------------------------------------------------------------------- piercings
+}  // namespace
 
 std::vector<std::array<int, 3>> loopPiercings(const YarnWork& w) {
     std::vector<std::array<int, 3>> out;
-    const RodSystem& rs = w.rod;
-    std::vector<int> owner(rs.particleCount(), -1);
+    std::vector<std::vector<int>> owner(w.strands.size());
+    for (size_t s = 0; s < w.strands.size(); ++s) owner[s].assign(w.strands[s].pts.size(), -1);
     for (size_t li = 0; li < w.loops.size(); ++li)
-        for (int i = w.loops[li].p0; i <= w.loops[li].p1; ++i) owner[i] = (int)li;
+        for (int i = w.loops[li].p0; i <= w.loops[li].p1; ++i) owner[w.loops[li].strand][i] = (int)li;
     for (size_t li = 0; li < w.loops.size(); ++li) {
         const YarnLoop& L = w.loops[li];
-        const int n = L.p1 - L.p0 + 1;
-        if (n < 3) continue;
+        if (L.r1 - L.r0 + 1 < 3) continue;
+        const std::vector<Vec3>& P = w.strands[L.strand].pts;
+        std::vector<Vec3> ring(P.begin() + L.r0, P.begin() + L.r1 + 1);
         Vec3 c{};
-        for (int i = L.p0; i <= L.p1; ++i) c += rs.x[i];
-        c = c / (Real)n;
+        for (const Vec3& p : ring) c += p;
+        c = c / (Real)ring.size();
         std::map<int, int> byOwner;
-        for (int s = 0; s < rs.segmentCount(); ++s) {
-            const int a = rs.segA[s], b = rs.segB[s];
-            if (a >= L.p0 - 1 && b <= L.p1 + 1) continue;  // the ring's own segments and the two that join it
-            const Vec3 d = rs.x[b] - rs.x[a];
-            for (int i = L.p0; i <= L.p1; ++i) {
-                const Vec3 &t0 = rs.x[i], &t1 = rs.x[i == L.p1 ? L.p0 : i + 1];
-                // segment a + t d against the triangle (c, t0, t1): Moller-Trumbore
-                const Vec3 e1 = t0 - c, e2 = t1 - c, pv = cross(d, e2);
-                const Real det = dot(e1, pv);
-                if (std::fabs(det) < 1e-30) continue;
-                const Vec3 tv = rs.x[a] - c;
-                const Real uu = dot(tv, pv) / det;
-                if (uu < 0 || uu > 1) continue;
-                const Vec3 qv = cross(tv, e1);
-                const Real vv = dot(d, qv) / det;
-                if (vv < 0 || uu + vv > 1) continue;
-                const Real tt = dot(e2, qv) / det;
-                if (tt < 0 || tt >= 1) continue;
-                const Vec3 nrm = cross(e1, e2);
-                byOwner[owner[a]] += dot(d, nrm) > 0 ? 1 : -1;
+        for (size_t s = 0; s < w.strands.size(); ++s) {
+            const std::vector<Vec3>& Q = w.strands[s].pts;
+            for (int i = 0; i + 1 < (int)Q.size(); ++i) {
+                if ((int)s == L.strand && i >= L.p0 - 1 && i + 1 <= L.p1 + 1) continue;   // the ring's own segments and the two that join it
+                const int k = pierce(Q[i], Q[i + 1] - Q[i], c, ring);
+                if (k != 0) byOwner[owner[s][i]] += k;
             }
         }
         for (const auto& kv : byOwner)
@@ -564,35 +600,23 @@ std::vector<std::array<int, 3>> loopPiercings(const YarnWork& w) {
 
 std::vector<std::array<int, 4>> threadingReport(const YarnWork& w) {
     std::vector<std::array<int, 4>> out;
-    const RodSystem& rs = w.rod;
     for (size_t li = 0; li < w.loops.size(); ++li) {
         const YarnLoop& M = w.loops[li];
+        const std::vector<Vec3>& Q = w.strands[M.strand].pts;
         for (int eyeLoop : M.through) {
             const YarnLoop& L = w.loops[eyeLoop];
-            const int n = L.r1 - L.r0 + 1;
-            if (n < 3) continue;
+            if (L.r1 - L.r0 + 1 < 3) continue;
+            const std::vector<Vec3>& P = w.strands[L.strand].pts;
+            std::vector<Vec3> ring(P.begin() + L.r0, P.begin() + L.r1 + 1);
             Vec3 c{};
-            for (int i = L.r0; i <= L.r1; ++i) c += rs.x[i];
-            c = c / (Real)n;
+            for (const Vec3& p : ring) c += p;
+            c = c / (Real)ring.size();
             int plus = 0, minus = 0;
             for (int s = std::max(0, M.p0 - 1); s < M.p1; ++s) {   // from the segment that brings the yarn to the first leg
-                if (s >= M.r0 - 1 && s <= M.r1) continue;   // the ring itself is not a leg
-                const Vec3 a = rs.x[s], d = rs.x[s + 1] - rs.x[s];
-                for (int i = L.r0; i <= L.r1; ++i) {
-                    const Vec3 &t0 = rs.x[i], &t1 = rs.x[i == L.r1 ? L.r0 : i + 1];
-                    const Vec3 e1 = t0 - c, e2 = t1 - c, pv = cross(d, e2);
-                    const Real det = dot(e1, pv);
-                    if (std::fabs(det) < 1e-30) continue;
-                    const Vec3 tv = a - c;
-                    const Real uu = dot(tv, pv) / det;
-                    if (uu < 0 || uu > 1) continue;
-                    const Vec3 qv = cross(tv, e1);
-                    const Real vv = dot(d, qv) / det;
-                    if (vv < 0 || uu + vv > 1) continue;
-                    const Real tt = dot(e2, qv) / det;
-                    if (tt < 0 || tt >= 1) continue;
-                    if (dot(d, cross(e1, e2)) > 0) ++plus; else ++minus;
-                }
+                if (s >= M.r0 - 1 && s <= M.r1) continue;           // the ring itself is not a leg
+                const int k = pierce(Q[s], Q[s + 1] - Q[s], c, ring);
+                if (k > 0) plus += k;
+                else if (k < 0) minus += -k;
             }
             out.push_back({(int)li, eyeLoop, plus, minus});
         }

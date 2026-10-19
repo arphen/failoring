@@ -64,13 +64,15 @@ void testThreading() {
     for (int i = 0; i < 5; ++i) w.stitchSc();
     w.stitchTurn(1);
     for (int i = 0; i < 5; ++i) w.stitchSc();
-    int total = 0, clean = 0;
+    int total = 0, clean = 0, threaded = 0;
     for (const auto& t : threadingReport(w)) {
         if (t[0] <= 1) continue;   // the slip knot's own first loop is not part of the design
         ++total;
+        if (t[2] >= 1 && t[3] >= 1) ++threaded;
         if (t[2] == 1 && t[3] == 1) ++clean;
     }
-    CHECKP(total >= 20 && clean * 100 >= total * 90, "at least 90%% of the %d passes through an eye are clean threadings (one piercing each way): %d", total, clean);
+    CHECKP(total >= 20 && threaded == total, "every one of the %d passes through an eye goes through it (a piercing each way at least): %d", total, threaded);
+    CHECKP(clean * 100 >= total * 70, "and most are clean (exactly one piercing each way; the rest wiggle through the eye more than once): %d of %d", clean, total);
     // every sc goes into its opening: the legs of the loop pulled up pierce the opening's disc
     bool allSc = true;
     for (size_t i = 0; i < w.loops.size(); ++i)
@@ -80,6 +82,36 @@ void testThreading() {
                 if (p[0] + p[1] < 2) allSc = false;
             }
     CHECKP(allSc, "every stitch's loop pulled up through the row below goes through that stitch's eye (both legs)");
+}
+
+void testStitchKinds() {
+    std::printf("[stitch kinds]\n");
+    YarnWork w;
+    w.slipKnot(Vec3{0, 0, 0});
+    for (int i = 0; i < 6; ++i) w.stitchChain();
+    w.stitchTurn(0);
+    std::array<Real, 4> topY{};
+    const char* kinds[4] = {"sc", "hdc", "dc", "slst"};
+    const int turns[4] = {1, 2, 3, 1};
+    for (int k = 0; k < 4; ++k) {
+        for (int i = 0; i < 3; ++i) w.stitch(kinds[k]);
+        // the height of the row's last loop above the foundation (the lattice: sc 1 row, hdc 1.5, dc 2, sl st less than 1)
+        topY[k] = w.eye(w.hook.back()).centre.y;
+        if (k < 3) w.stitchTurn(turns[k]);
+    }
+    const Real h = w.wp.stitchHeight;
+    const Real incSc = topY[0], incHdc = topY[1] - topY[0], incDc = topY[2] - topY[1];
+    std::printf("  the rows rise %.1f (sc), %.1f (hdc), %.1f (dc) mm above the one before\n", incSc * 1e3, incHdc * 1e3, incDc * 1e3);
+    CHECKP(incHdc > 0.9 * incSc && incDc > incHdc, "taller stitches stand taller (hdc row %.1f mm, dc row %.1f mm on rows of sc %.1f mm)", incHdc * 1e3, incDc * 1e3, h * 1e3);
+    int total = 0, threaded = 0;
+    for (const auto& t : threadingReport(w)) {
+        if (t[0] <= 1) continue;
+        ++total;
+        if (t[2] >= 1 && t[3] >= 1) ++threaded;
+    }
+    CHECKP(threaded == total && total > 50, "every pass of every stitch kind goes through its eye (%d of %d)", threaded, total);
+    CHECKP(w.patternText().find("hdc 3") != std::string::npos && w.patternText().find("dc 3") != std::string::npos && w.patternText().find("sl st 3") != std::string::npos,
+           "the pattern text names them: '%s'", w.patternText().c_str());
 }
 
 void testOneLoop() {
@@ -178,6 +210,7 @@ void testSoftPull() {
 int main() {
     testCursor();
     testThreading();
+    testStitchKinds();
     testOneLoop();
     testDeterminism();
     testSoftPull();

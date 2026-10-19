@@ -17,6 +17,8 @@ const HOOK_LENGTH := 0.07
 const HOOK_RADIUS := 0.0022
 const PICK_RADIUS_PX := 28.0
 const YARN_COLOUR := Color(0.80, 0.30, 0.22)
+const SWATCHES := [Color(0.80, 0.30, 0.22), Color(0.95, 0.58, 0.18), Color(0.93, 0.88, 0.76), Color(0.25, 0.45, 0.78), Color(0.30, 0.62, 0.38), Color(0.14, 0.14, 0.16)]
+const TURNING_CHAINS := {"sc": 1, "hdc": 2, "dc": 3, "slst": 1}
 const WORK_HEIGHT := 0.95          # the work is held at about the height of a table in the studio
 const WORK_TILT := 1.0             # rad: the work leans back like a piece held in the left hand, its face toward the worker above the table
 
@@ -48,6 +50,13 @@ var view_label: Label
 var overlay_check: CheckBox
 var b_chain: Button
 var b_sc: Button
+var b_hdc: Button
+var b_dc: Button
+var b_slst: Button
+var colour_picker: ColorPickerButton
+var colour_when: OptionButton
+var colour_label: Label
+var last_kind := "sc"            # the stitch last made: the turning chain after a row follows it (sc 1, hdc 2, dc 3)
 var loop_front: CheckBox
 var loop_back: CheckBox
 var b_turn: Button
@@ -84,8 +93,17 @@ func _build_ui() -> void:
 	b_chain = _button("Chain", "yarn over, pull through the loop on the hook", func() -> void: do_action("chain"))
 	bar.add_child(b_chain)
 	b_sc = _button("Single crochet", "into the next stitch of the row below, under both loops; click a loop first to work into that one instead",
-			func() -> void: do_action(_sc_kind()))
+			func() -> void: do_action(_stitch_kind("sc")))
 	bar.add_child(b_sc)
+	b_hdc = _button("Half double", "yarn over first, then as a single crochet, and pull through all three loops",
+			func() -> void: do_action(_stitch_kind("hdc")))
+	bar.add_child(b_hdc)
+	b_dc = _button("Double", "yarn over, pull up a loop, then pull through two loops twice",
+			func() -> void: do_action(_stitch_kind("dc")))
+	bar.add_child(b_dc)
+	b_slst = _button("Slip stitch", "through the stitch below and the loop on the hook in one go: a flat stitch",
+			func() -> void: do_action(_stitch_kind("slst")))
+	bar.add_child(b_slst)
 	loop_front = CheckBox.new()
 	loop_front.text = "front loop"
 	loop_front.button_pressed = true
@@ -103,6 +121,37 @@ func _build_ui() -> void:
 	b_undo = _button("Undo", "take the last stitch back", func() -> void: undo())
 	bar.add_child(b_undo)
 	bar.add_child(_button("New piece", "start again from a slip knot", func() -> void: reset_piece()))
+	bar.add_child(VSeparator.new())
+	var cl := Label.new()
+	cl.text = "Colour"
+	cl.tooltip_text = "Pick a colour: the next stitch changes to it. A colour used before is picked up where it was dropped."
+	bar.add_child(cl)
+	for c in SWATCHES:
+		var sw := Button.new()
+		sw.custom_minimum_size = Vector2(22, 22)
+		var st := StyleBoxFlat.new()
+		st.bg_color = c
+		st.set_corner_radius_all(4)
+		sw.add_theme_stylebox_override("normal", st)
+		sw.add_theme_stylebox_override("hover", st)
+		sw.add_theme_stylebox_override("pressed", st)
+		sw.tooltip_text = cl.tooltip_text
+		sw.pressed.connect(func() -> void: choose_colour(c))
+		bar.add_child(sw)
+	colour_picker = ColorPickerButton.new()
+	colour_picker.custom_minimum_size = Vector2(34, 22)
+	colour_picker.color = SWATCHES[1]
+	colour_picker.edit_alpha = false
+	colour_picker.tooltip_text = "Any other colour"
+	colour_picker.color_changed.connect(func(c: Color) -> void: choose_colour(c))
+	bar.add_child(colour_picker)
+	colour_when = OptionButton.new()
+	colour_when.add_item("at the last pull-through")
+	colour_when.add_item("from the start of the stitch")
+	colour_when.tooltip_text = "How the stitch that changes colour is made: finished in the new colour (the usual way: its top is the new colour), or all of it in the new colour"
+	bar.add_child(colour_when)
+	colour_label = Label.new()
+	bar.add_child(colour_label)
 	follow_check = CheckBox.new()
 	follow_check.text = "Follow the hook"
 	follow_check.button_pressed = true
@@ -209,15 +258,39 @@ func _build_ui() -> void:
 	target_label.offset_top = -34
 	target_label.offset_bottom = -8
 
-# What the single crochet button does, from the loop ticks: both -> under both loops, one -> that loop only, none -> skip the stitch.
-func _sc_kind() -> String:
+# What a stitch button does, from the loop ticks: both -> under both loops, one -> that loop only, none -> skip the stitch.
+func _stitch_kind(base: String) -> String:
 	if loop_front.button_pressed and loop_back.button_pressed:
-		return "sc"
+		return base
 	if loop_front.button_pressed:
-		return "sc_front"
+		return base + "_front"
 	if loop_back.button_pressed:
-		return "sc_back"
+		return base + "_back"
 	return "skip"
+
+func _sc_kind() -> String:
+	return _stitch_kind("sc")
+
+func _is_stitch(kind: String) -> bool:
+	for b in ["sc", "hdc", "dc", "slst"]:
+		if kind == b or kind.begins_with(b + "_"):
+			return true
+	return false
+
+func _base_kind(kind: String) -> String:
+	for b in ["sc", "hdc", "dc", "slst"]:
+		if kind == b or kind.begins_with(b + "_"):
+			return b
+	return kind
+
+# The next stitch changes to this colour (history keeps it so that undo replays it).
+func choose_colour(c: Color) -> void:
+	if busy:
+		return
+	var when := "stitch" if colour_when.selected == 1 else "pull"
+	session.set_colour(c, when)
+	history.append(["colour", c, when])
+	_refresh()
 
 func _button(text: String, tip: String, cb: Callable) -> Button:
 	var b := Button.new()
@@ -312,21 +385,26 @@ func do_action(kind: String, opening: int = -2) -> bool:
 		opening = picked
 	busy = true
 	var st: Dictionary = session.get_state()
-	if (kind.begins_with("sc") or kind == "skip") and opening < 0 and int(st.get("next", -1)) < 0:
+	if (_is_stitch(kind) or kind == "skip") and opening < 0 and int(st.get("next", -1)) < 0:
 		status_label.text = "Nothing to work into: turn the work over first."
 		busy = false
 		return false
 	var open_id := opening if opening >= 0 else int(st.get("next", -1))
 	if animate and kind != "turn" and kind != "skip":
-		var at := _opening_centre(open_id) if ((kind.begins_with("sc") or kind == "skip") and open_id >= 0) else _live_centre()
+		var at := _opening_centre(open_id) if ((_is_stitch(kind) or kind == "skip") and open_id >= 0) else _live_centre()
 		await _move_hook(at, 0.30)
 	var before := session.get_particle_count()
-	var r: Dictionary = session.action(kind, opening)
+	var arg := opening
+	if kind == "turn":
+		arg = -1 if int(st["row"]) == 0 else int(TURNING_CHAINS.get(last_kind, 1))
+	var r: Dictionary = session.action(kind, arg)
 	if not bool(r.get("ok", false)):
 		status_label.text = String(r.get("msg", "that did not work"))
 		busy = false
 		return false
-	history.append([kind, opening])
+	history.append([kind, arg])
+	if _is_stitch(kind):
+		last_kind = _base_kind(kind)
 	picked = -1
 	if kind == "turn":
 		_rebuild(-1)
@@ -362,10 +440,17 @@ func _replay(actions: Array) -> void:
 	history.clear()
 	picked = -1
 	flip = 0.0
+	last_kind = "sc"
 	for a in actions:
+		if String(a[0]) == "colour":
+			session.set_colour(a[1], String(a[2]))
+			history.append(a)
+			continue
 		var r: Dictionary = session.action(String(a[0]), int(a[1]))
 		if bool(r.get("ok", false)):
 			history.append(a)
+			if _is_stitch(String(a[0])):
+				last_kind = _base_kind(String(a[0]))
 			if String(a[0]) == "turn":
 				flip += PI
 	flip = fmod(flip, TAU)
@@ -442,7 +527,12 @@ func _refresh() -> void:
 	var targets: PackedInt32Array = st["targets"]
 	var cursor := int(st["cursor"])
 	b_sc.disabled = next_id < 0 and picked < 0
-	b_sc.text = "Skip stitch" if _sc_kind() == "skip" else ("Single crochet" if _sc_kind() == "sc" else ("sc, front loop only" if _sc_kind() == "sc_front" else "sc, back loop only"))
+	var sk := _sc_kind() == "skip"
+	b_sc.text = "Skip stitch" if sk else ("Single crochet" if _sc_kind() == "sc" else ("sc, front loop only" if _sc_kind() == "sc_front" else "sc, back loop only"))
+	b_hdc.disabled = b_sc.disabled or sk
+	b_dc.disabled = b_sc.disabled or sk
+	b_slst.disabled = b_sc.disabled or sk
+	colour_label.text = ("  next stitch changes colour" if bool(st.get("pending_colour", false)) else "")
 	b_undo.disabled = history.size() == 0
 	var row := int(st["row"])
 	var made := int(st["made"])

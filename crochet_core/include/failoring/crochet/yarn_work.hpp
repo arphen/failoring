@@ -1,15 +1,17 @@
 #pragma once
-// Yarn mode, phase Y2 (docs/YARN_MODE_PLAN.md sections 3-4): a piece of crochet made one hook action at a time, as ONE continuous
-// yarn. The hook is not simulated; its motion is cosmetic and the topology is constructive: an action appends yarn along a path through
-// the chosen openings, and the rod solver (rod.hpp) relaxes it, with strand contact keeping every loop hooked into the ones it passes
-// through.
+// Yarn mode (docs/YARN_MODE_PLAN.md): a piece of crochet made one hook action at a time, from one or more yarns. The hook is not simulated; its
+// motion is cosmetic and the topology is constructive: an action lays yarn along a path through the chosen openings, on a lattice, tight.
 //
-// Vocabulary. A LOOP is a stretch of the yarn that is a finger (a hairpin): its two legs pass through the eye of the loop(s) it was
-// pulled through, and its own eye is the space between its legs, closed at the bottom by the loop it was pulled through. Every loop is
-// an OPENING: a later finger can be threaded through its eye. The LIVE loops are the ones on the hook. `pullUp(opening)` is
-// "insert the hook into the opening, yarn over, pull a loop through": one new live loop, the opening is not consumed.
-// `pullThrough(k)` is "yarn over, pull through the top k loops on the hook": they are consumed and one new live loop is left.
+// The DESIGN is the truth: every yarn is a STRAND, a polyline of nodes (`pts`) with a rest length per segment and a colour. The rod system
+// (`rod`) is derived from the strands after every action (it is rebuilt from them) and is only there for softness: a shape memory spring pulls
+// each node back to its designed place while strands push each other apart and can be pulled on. Eye frames, threading checks and the editor's
+// cursor all read the design, so they do not depend on the soft state.
+//
+// Vocabulary. A LOOP is a stretch of a strand that is a finger (a hairpin): its two legs pass through the eye of the loop(s) it was pulled
+// through, and its own eye is the ring it makes. Every loop is an OPENING: a later finger can be threaded through its eye. The LIVE loops are the
+// ones on the hook; a loop leaves the hook when a finger is pulled through it. A yarn over is a ring with no legs (it wraps the hook).
 #include <array>
+#include <string>
 #include <vector>
 
 #include "failoring/crochet/rod.hpp"
@@ -17,11 +19,19 @@
 
 namespace fl {
 
+struct Strand {
+    std::vector<Vec3> pts;    // the design centre line, one point per rod node
+    std::vector<Real> rest;   // rest length of segment i (pts[i] -> pts[i+1])
+    Vec3 colour{0.80, 0.30, 0.22};
+    int first = 0;            // the global index of pts[0] in the rod system (set when it is built)
+};
+
 struct YarnLoop {
-    int p0 = 0, p1 = 0;   // the loop's particles (inclusive): the two legs and the ring round the hook
-    int r0 = 0, r1 = 0;   // the ring part (inclusive); its eye is the circle it encloses, closed by the chord r1 -> r0
+    int strand = 0;       // the strand it is made of
+    int p0 = 0, p1 = 0;   // its nodes (inclusive, indices into the strand): the two legs and the ring round the hook
+    int r0 = 0, r1 = 0;   // the ring part (inclusive); its eye is the area it encloses, closed by the chord r1 -> r0
     bool live = false;    // on the hook
-    int row = 0;          // the row it was made in (for the caller's bookkeeping)
+    int row = 0;          // the row it was made in
     Real ringScale = 1.0; // how far the ring's yarn has been pulled in (1 = as made)
     std::vector<int> through;  // the loops whose eyes this loop's legs were pulled through
 };
@@ -30,119 +40,149 @@ struct YarnLoop {
 // straddle that strand alone and the other loop is left free: a ridge).
 enum class Loops { Both, Front, Back };
 
+// When a colour change takes effect in a stitch: at its last pull-through (the usual way: the stitch is finished in the new colour, so its top is
+// the new colour's first loop) or from the start of the stitch (the whole stitch, post and top, is the new colour).
+enum class ColourAt { PullThrough, Stitch };
+
 struct EyeFrame {
     Vec3 centre, normal;  // the normal follows the yarn's direction by the right hand rule
     Real radius = 0;      // of the circle of the ring's area
 };
 
 struct WorkParams {
-    // The shape of a finger as it is made (m). A loop on the hook is a ring round the hook's shaft with its two legs running back along
-    // the shaft, side by side, through the loops it was pulled through. It is made roomy and then tightened (tension on the working end):
-    // the loops it passed through close onto its legs, the live ring stays open round the hook.
-    Real hookRadius = 0.0;     // the hook's shaft (a 4 mm hook)
+    // The shape of a finger as it is made (m): two legs side by side through the eyes it is pulled through, then a ring (a bar, for the stitches).
+    // The design is made tight, on a lattice; these were found by `yarn_tune` for clean threading with no overlap beyond what worsted squeezes.
+    Real hookRadius = 0.0;
     Real legGap = 0.00134;         // half the distance between the two legs
     Real approach = 0.00162;       // the straight run of the legs either side of an eye
     Real fingerLength = 0.00103;   // legs beyond the last eye before they flare out to the ring
-    Real flare = 0.0030;          // length over which the legs spread out to the ring
-    Real ringRadius = 0.0040;     // the live ring while it is made (the hook's radius and a strand's, once it is tight)
-    Real workingRun = 0.0010;     // the yarn laid out after a finger toward the ball
-    Real travelSlack = 3.0;      // the working yarn to the next eye is pulled taut: its rest length is this times the straight distance
-    Real travelLift = 0.0085;     // the working yarn goes round the outside of the work to the next eye, this far out (m)
-    Real segmentLength = 0.0020;  // the rod's node spacing
-    Real tighten = 1.0;           // the rest length of every segment is its made length times this
-    Real closeFactor = 1.0;       // a loop that a finger is pulled through is pulled in: its ring's rest length times this (once per pass)
-    Real closeFloor = 1.0;       // ... but no further than this fraction of the ring as made
-    int settleSteps = 0;         // rod steps after each action
-    // the lattice the rings are placed on (flat work: rings lie in the fabric plane, rows alternate which side of it they sit on)
+    Real flare = 0.0030;           // length over which the legs spread out to the ring
+    Real ringRadius = 0.0040;      // a chain's ring
+    Real workingRun = 0.0010;      // the yarn laid out after a finger toward the ball
+    Real travelSlack = 3.0;        // the working yarn to the next eye is pulled taut: its rest length is this times the straight distance
+    Real segmentLength = 0.0020;   // the rod's node spacing
+    Real tighten = 1.0;            // the rest length of every segment is its made length times this
+    Real closeFactor = 1.0;        // a loop that a finger is pulled through is pulled in: its ring's rest length times this (once per pass)
+    Real closeFloor = 1.0;         // ... but no further than this fraction of the ring as made
+    int settleSteps = 0;           // rod steps after each action
+    // the lattice the rings are placed on
     Real stitchWidth = 0.00846;    // between neighbouring rings in a row
-    Real stitchHeight = 0.00568;   // between rows
+    Real stitchHeight = 0.00568;   // one row of single crochet
     Real layerGap = 0.00216;       // between the front and the back layer of rings (about a strand)
     Real barA = 0.00304;           // a stitch's top loop is a bar: semi-axis along the row
-    Real barB = 0.0022;           // ... and across it
-    Real barTilt = 0.75157;          // rad: how far the bar leans back from the horizontal toward the worker (its normal is up, tipped this far toward the front)
-    Real postRise = 0.99442;          // the loop pulled up through the stitch below stands this fraction of a row up
-    Real workTension = 0.0;      // N pulling the working end along its last run, as the crocheter's hand does
+    Real barB = 0.0022;            // ... and across it
+    Real barTilt = 0.75157;        // rad: how far the bar leans back from the horizontal toward the worker
+    Real postRise = 0.99442;       // the loop pulled up through the stitch below stands this fraction of its stitch up
+    Real hdcScale = 1.58008;           // the heights of the other stitches, in rows of single crochet
+    Real dcScale = 2.1;
+    Real slstScale = 0.6;
+    Real yoHdc = 0.51777;             // where the yarn over of an hdc / dc lies, as a fraction of the stitch's height
+    Real yoDc = 0.58307;
+    Real riseDc = 0.55;            // the loop pulled up through the stitch (dc), and the middle loop after the first pull-through
+    Real midDc = 1.0;
+    Real yoLayer = 1.54755;            // how far behind the post the yarn overs lie, in layer gaps
+    Real workTension = 0.0;        // N pulling the working end along its last run
+    Real tailLength = 0.030;       // the tail of a yarn that is started
 };
 
 class YarnWork {
 public:
-    RodSystem rod;
+    RodSystem rod;                 // derived from the strands; rebuilt after every action
+    RodParams rodParams;           // the soft physics' settings (rod.params is set from this whenever the rod is rebuilt)
     WorkParams wp;
+    std::vector<Strand> strands;
     std::vector<YarnLoop> loops;
-    std::vector<int> hook;        // the live loops, the last one nearest the hook's tip
-    Vec3 progress{1, 0, 0};       // the way the work advances along a row (the hook's axis)
-    Vec3 upDir{0, 1, 0};          // the way rows stack
+    std::vector<int> hook;         // the live loops, the last one nearest the hook's tip
+    Vec3 progress{1, 0, 0};        // the way the work advances along a row (the hook's axis)
+    Vec3 upDir{0, 1, 0};           // the way rows stack
     int row = 0;
-    int side = 1;                 // which layer (+1 front, -1 back) this row's rings sit in
+    int active = 0;                // the strand being worked with
 
     YarnWork();
 
-    // Starts the yarn: a tail, the slip knot's ring and one loop on the hook, at `at`. Returns the new live loop.
-    int slipKnot(const Vec3& at);
+    // Starts the first yarn: a tail, the slip knot's ring and one loop on the hook, at `at`. Returns the new live loop.
+    int slipKnot(const Vec3& at, const Vec3& colour = Vec3{0.80, 0.30, 0.22});
     // yarn over, pull through the loop on the hook: a chain stitch. Returns the new live loop.
     int chain();
-    // insert the hook in `opening` (a loop), yarn over, pull a loop up through it. The new loop is live; the opening stays.
-    int pullUp(int opening);
-    // yarn over, pull through the top `k` live loops (they are consumed). Returns the new live loop.
-    int pullThrough(int k);
-    // single crochet into `opening`: pullUp, then pullThrough(2). Returns the final live loop.
+    // single crochet / half double / double into `opening`. Returns the final live loop.
     int sc(int opening, Loops which = Loops::Both);
-    // turns the work over: the next row goes back the other way, on the other side
+    int hdc(int opening, Loops which = Loops::Both);
+    int dc(int opening, Loops which = Loops::Both);
+    // slip stitch into `opening`: insert, yarn over, pull through the opening and the loop on the hook in one go (a flat loop)
+    int slst(int opening, Loops which = Loops::Both);
+    // turns the work over: the next row goes back the other way
     void turn();
+
+    // --- colours: the next stitch changes to this colour. If a yarn of that colour was used before it is picked up where it was dropped,
+    // otherwise a new yarn is started (a tail near the hook). ---
+    void setNextColour(const Vec3& colour, ColourAt when = ColourAt::PullThrough);
+    bool colourPending() const { return pending_; }
+    const Vec3& activeColour() const { return strands[active].colour; }
+
     // --- the editor's view of the work (docs/YARN_MODE_PLAN.md section 11): one click per stitch, with the usual choices made ---
     // The opening the next stitch goes into when the user does not pick one: the next stitch of the row below, in the order they are worked.
     int nextOpening() const;
-    // single crochet into `opening` (-1: the next opening); the cursor moves on. Returns the new live loop, or -1 when there is nothing to work into.
-    int stitchSc(int opening = -1, Loops which = Loops::Both);
+    // `kind` is "sc", "hdc", "dc" or "slst"; `opening` -1 means the next opening; the cursor moves on. Returns the new live loop, or -1 when there is
+    // nothing to work into.
+    int stitch(const std::string& kind, int opening = -1, Loops which = Loops::Both);
+    int stitchSc(int opening = -1, Loops which = Loops::Both) { return stitch("sc", opening, which); }
     // skips the next stitch of the row below (no yarn: the hook just moves on)
     bool stitchSkip();
     // a chain stitch (it is not worked into anything, so the cursor stays)
     int stitchChain();
-    // turns the work over: `turningChain` chain stitches (1 for sc), then the next row goes back along the row just made. After the foundation
-    // chain the loop on the hook is the first chain from the hook and is skipped (sc in the 2nd chain from the hook).
+    // turns the work over: `turningChain` chain stitches (1 for sc, 2 for hdc, 3 for dc), then the next row goes back along the row just made. After the
+    // foundation chain the loop on the hook is the first chain from the hook and is skipped.
     void stitchTurn(int turningChain);
-    // The openings the work is going into, in order, and how far along (for the editor to highlight).
     const std::vector<int>& targetRow() const { return target_; }
     int cursor() const { return cursor_; }
     int rowStitches() const { return (int)made_.size(); }
     // The pattern so far as CrochetPARADE text, one line per row ("ch 8", "sc 7").
     std::string patternText() const;
+
+    // Rebuilds the rod system from the strands (every action does it; call it after changing `rodParams`).
+    void materialize();
     // runs `steps` rod steps (settleSteps when 0)
     void settle(int steps = 0);
-    // Pulls the whole yarn up to its rest lengths scaled by `factor` (< 1 tightens, > 1 loosens) and relaxes.
-    void setSlack(Real factor, int steps = 200);
 
     EyeFrame eye(int loop) const;
+    Vec3 point(int strand, int i) const { return strands[strand].pts[i]; }
     // where a (cosmetic) hook would be: at the ring of the live loop, along its axis; invalid before the slip knot
     struct HookPose { Vec3 tip, axis; bool valid = false; };
     HookPose hookPose() const;
-    Vec3 endPosition() const;
+    Vec3 endPosition() const { return strands[active].pts.back(); }
     int particleCount() const { return rod.particleCount(); }
+    // the colour of each rod segment (for drawing)
+    std::vector<Vec3> segmentColours() const;
 
 private:
     std::vector<int> target_;    // the openings of the row being worked into, in the order they will be worked
     std::vector<int> made_;      // the loops this row has made, in order (the stitches' top loops)
     int cursor_ = 0;
     std::vector<std::pair<std::string, int>> log_;   // (kind, count) of the actions, a turn starts a new row
-    Real slack_ = 1.0;
     Vec3 origin_{0, 0, 0};
     int chainCount_ = 0;
+    int turnChains_ = 0;         // turning chains made at the start of this row
+    bool pending_ = false;
+    Vec3 pendingColour_{};
+    ColourAt pendingAt_ = ColourAt::PullThrough;
     Vec3 zAxis() const { return cross(Vec3{1, 0, 0}, upDir); }   // the front of the work (it does not turn with the row direction)
-    int finger(const std::vector<int>& eyesLoops, bool consume, const Vec3* axisHint = nullptr);
-    // A loop whose ring is put at `ringC`, its plane square to `ringN`; its legs go from the ring through the eyes of `eyesLoops` (in order)
-    // and back. The legs pass each eye towards the ring, bending to face it when the line is too slanting.
-    // The ring is a circle of ringRadius, or an ellipse with semi-axes semiA along `major` and semiB across it (a top loop seen edge on is a bar).
-    // `modes` (parallel to `eyesLoops`, optional): 0 through the eye, +1 / -1 round the strand of the ring nearest the worker (`front`) / farthest from it.
-    int loopAt(const Vec3& ringC, const Vec3& ringN, const std::vector<int>& eyesLoops, bool consume, const Vec3* major = nullptr, Real semiA = -1, Real semiB = -1,
+    // A loop whose ring is put at `ringC`, its plane square to `ringN`; its legs go from the ring through the eyes of `eyesLoops` (in order) and
+    // back (none: a yarn over, a ring and nothing else). The ring is a circle of ringRadius or an ellipse (a top loop seen edge on is a bar). `modes`
+    // (parallel to `eyesLoops`, optional): 0 through the eye, +1 / -1 round the strand of the ring nearest the worker (`front`) / farthest from it.
+    // The live loops among the eyes leave the hook; the new loop is live (a yarn over too).
+    int loopAt(const Vec3& ringC, const Vec3& ringN, const std::vector<int>& eyesLoops, const Vec3* major = nullptr, Real semiA = -1, Real semiB = -1,
                const std::vector<int>* modes = nullptr, const Vec3* front = nullptr);
-    int addLoop(int p0, int p1, bool live);
-    void appendPath(const std::vector<Vec3>& pts);
+    int addLoop(int strand, int p0, int p1, bool live);
+    void appendPath(const std::vector<Vec3>& way);   // to the active strand
+    int startYarn(const Vec3& colour);                // a new strand: a tail by the hook; returns its index
+    void applyPendingColour(ColourAt now);
+    int tallStitch(const std::string& kind, int opening, Loops which);
+    Real heightOf(const std::string& kind) const;
 };
 
-// The signed piercings of each loop's ring by the yarn's segments: for every loop, the segments (other than the ring's own) that cross
-// the disc of the ring (a fan of triangles from its centroid), as {loop, segment, +1 or -1}, sorted. For a given set of loops this list
-// is unchanged by any motion of the yarn that does not pass a strand through another one: the check that expanding and tightening the
-// work keeps every loop hooked into what it was hooked into.
+// The signed piercings of each loop's ring by the yarn's segments: for every loop, the segments (other than the ring's own) that cross the disc of
+// the ring (a fan of triangles from its centroid), as {loop, strand of the segment's owner loop or -1, +1 or -1} summed, sorted. For a given set of
+// loops this list is unchanged by any motion of the yarn that does not pass a strand through another one.
 std::vector<std::array<int, 3>> loopPiercings(const YarnWork& w);
 
 // For every loop that was pulled through other loops: the signed piercings of each of those loops' ring discs by this loop's own legs, as

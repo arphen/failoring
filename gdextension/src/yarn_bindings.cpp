@@ -32,26 +32,24 @@ void YarnSession::set_view(double expand, double thickness) {
 
 void YarnSession::reset() {
     grip_ = -1;
-    work_ = fl::YarnWork();
-    // the settings of a piece being worked by hand: the tuned tight lattice (WorkParams' defaults), a soft shape memory, strands that give a little
-    work_.rod.params.radiusScale = 0.55;
-    work_.rod.params.shapeStiffness = 40.0;
-    work_.rod.params.substeps = 2;   // the soft settling is for feel: cheap
-    work_.rod.params.iterations = 1;
-    work_.slipKnot(fl::Vec3{0, 0, 0});
+    work_ = fl::YarnWork();   // the tuned tight lattice, a soft shape memory, strands that give a little (YarnWork's defaults)
+    work_.slipKnot(fl::Vec3{0, 0, 0}, fl::Vec3{0.80, 0.30, 0.22});
     started_ = true;
 }
 
-Dictionary YarnSession::action(const String& kind, int opening) {
+Dictionary YarnSession::action(const String& kind_in, int opening) {
     release();
     Dictionary r;
     r["ok"] = false;
+    String kind = kind_in;
+    fl::Loops which = fl::Loops::Both;
+    if (kind.ends_with("_front")) { which = fl::Loops::Front; kind = kind.substr(0, kind.length() - 6); }
+    else if (kind.ends_with("_back")) { which = fl::Loops::Back; kind = kind.substr(0, kind.length() - 5); }
     int loop = -1;
     if (kind == "chain") {
         loop = work_.stitchChain();
-    } else if (kind == "sc" || kind == "sc_front" || kind == "sc_back") {
-        const fl::Loops which = kind == "sc" ? fl::Loops::Both : (kind == "sc_front" ? fl::Loops::Front : fl::Loops::Back);
-        loop = work_.stitchSc(opening, which);
+    } else if (kind == "sc" || kind == "hdc" || kind == "dc" || kind == "slst") {
+        loop = work_.stitch(std::string(kind.utf8().get_data()), opening, which);
         if (loop < 0) r["msg"] = String("nothing to work into: turn the work first");
     } else if (kind == "skip") {
         if (work_.stitchSkip()) {
@@ -61,8 +59,9 @@ Dictionary YarnSession::action(const String& kind, int opening) {
             r["msg"] = String("nothing to skip");
         }
     } else if (kind == "turn") {
-        // after the foundation chain there is no turning chain (sc in the 2nd chain from the hook); after a row, one chain
-        work_.stitchTurn(work_.row == 0 ? 0 : 1);
+        // `opening` is the number of turning chains (-1: none after the foundation chain, else one)
+        const int chains = opening >= 0 ? opening : (work_.row == 0 ? 0 : 1);
+        work_.stitchTurn(chains);
         loop = work_.hook.empty() ? -1 : work_.hook.back();
         r["ok"] = true;
     } else {
@@ -76,6 +75,16 @@ Dictionary YarnSession::action(const String& kind, int opening) {
     return r;
 }
 
+void YarnSession::set_colour(const Color& c, const String& when) {
+    work_.setNextColour(fl::Vec3{c.r, c.g, c.b}, when == "stitch" ? fl::ColourAt::Stitch : fl::ColourAt::PullThrough);
+}
+
+TypedArray<Color> YarnSession::get_colours() const {
+    TypedArray<Color> out;
+    for (const fl::Strand& s : work_.strands) out.push_back(Color((float)s.colour.x, (float)s.colour.y, (float)s.colour.z));
+    return out;
+}
+
 void YarnSession::tick(int n) {
     for (int i = 0; i < n; ++i) work_.rod.step(1.0 / 120.0);
 }
@@ -86,6 +95,7 @@ Dictionary YarnSession::get_mesh(int up_to, int sides, int subdiv) {
     o.subdiv = subdiv > 0 ? subdiv : 2;
     o.maxParticles = up_to;
     o.radiusScale = thickness_;
+    o.segmentColour = work_.segmentColours();
     fl::YarnMesh m = fl::buildYarnMesh(work_.rod, o);
     if (expand_ != 1.0) {
         const fl::Vec3 pv = pivot();
@@ -152,15 +162,19 @@ Dictionary YarnSession::get_state() const {
     }
     d["text"] = String(work_.patternText().c_str());
     d["progress"] = v3(work_.progress);
+    d["strands"] = (int)work_.strands.size();
+    d["pending_colour"] = work_.colourPending();
+    const fl::Vec3 ac = work_.activeColour();
+    d["colour"] = Color((float)ac.x, (float)ac.y, (float)ac.z);
     return d;
 }
 
 String YarnSession::get_pattern_text() const { return String(work_.patternText().c_str()); }
 
 void YarnSession::set_param(const String& name, double value) {
-    if (name == "shape_stiffness") work_.rod.params.shapeStiffness = value;
-    else if (name == "contact_scale") work_.rod.params.radiusScale = value;
-    else if (name == "damping") work_.rod.params.damping = value;
+    if (name == "shape_stiffness") { work_.rodParams.shapeStiffness = value; work_.rod.params.shapeStiffness = value; }
+    else if (name == "contact_scale") { work_.rodParams.radiusScale = value; work_.rod.params.radiusScale = value; }
+    else if (name == "damping") { work_.rodParams.damping = value; work_.rod.params.damping = value; }
 }
 
 Dictionary YarnSession::grab(const Vector3& origin, const Vector3& dir) {
@@ -218,6 +232,8 @@ void YarnSession::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_state"), &YarnSession::get_state);
     ClassDB::bind_method(D_METHOD("get_pattern_text"), &YarnSession::get_pattern_text);
     ClassDB::bind_method(D_METHOD("set_param", "name", "value"), &YarnSession::set_param);
+    ClassDB::bind_method(D_METHOD("set_colour", "colour", "when"), &YarnSession::set_colour);
+    ClassDB::bind_method(D_METHOD("get_colours"), &YarnSession::get_colours);
     ClassDB::bind_method(D_METHOD("set_view", "expand", "thickness"), &YarnSession::set_view);
     ClassDB::bind_method(D_METHOD("grab", "origin", "dir"), &YarnSession::grab);
     ClassDB::bind_method(D_METHOD("drag_to", "point"), &YarnSession::drag_to);

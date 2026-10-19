@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <random>
+#include <string>
 #include <vector>
 
 #include "failoring/crochet/yarn_work.hpp"
@@ -17,27 +18,34 @@ struct Param { const char* name; Real* (*get)(WorkParams&); Real lo, hi; };
 
 #define P(field, lo, hi) {#field, [](WorkParams& w) -> Real* { return &w.field; }, lo, hi}
 const Param kParams[] = {
-    P(stitchWidth, 0.0055, 0.0085), P(stitchHeight, 0.0045, 0.0075), P(layerGap, 0.0010, 0.0040), P(ringRadius, 0.0024, 0.0040),
+    P(stitchWidth, 0.0055, 0.0085), P(stitchHeight, 0.0055, 0.0072), P(layerGap, 0.0010, 0.0040), P(ringRadius, 0.0024, 0.0040),
     P(legGap, 0.0008, 0.0018), P(approach, 0.0010, 0.0030), P(fingerLength, 0.0005, 0.0025), P(barA, 0.0030, 0.0045), P(barB, 0.0014, 0.0022),
-    P(barTilt, 0.15, 0.9), P(postRise, 0.5, 1.1), P(workingRun, 0.0010, 0.0040)};
+    P(barTilt, 0.15, 0.9), P(postRise, 0.5, 1.1), P(workingRun, 0.0010, 0.0040), P(hdcScale, 1.45, 1.6), P(dcScale, 1.9, 2.1), P(slstScale, 0.3, 0.6),
+    P(yoHdc, 0.3, 0.8), P(yoDc, 0.25, 0.6), P(riseDc, 0.55, 0.9), P(midDc, 0.7, 1.0), P(yoLayer, 0.4, 1.6)};
 const int kN = (int)(sizeof(kParams) / sizeof(kParams[0]));
+const int kFirstNew = 12;   // the parameters from here on belong to hdc, dc and sl st only (the first twelve are the sc and chain design, found earlier)
 
-struct Score { int unclean = 0, passes = 0; Real pen = 0, total = 0; };
+struct Score { int unclean = 0, passes = 0, extra = 0; Real pen = 0, total = 0; };
 
 Score evaluate(const WorkParams& base) {
     YarnWork w;
     w.wp = base;
-    w.wp.hookRadius = 0; w.wp.closeFactor = 1; w.wp.closeFloor = 1; w.wp.travelSlack = 3; w.wp.workTension = 0; w.wp.settleSteps = 0;
-    std::vector<int> chain;
-    chain.push_back(w.slipKnot(Vec3{0, 0, 0}));
-    for (int i = 0; i < 6; ++i) chain.push_back(w.stitchChain());
+    w.slipKnot(Vec3{0, 0, 0});
+    for (int i = 0; i < 6; ++i) w.stitchChain();
     w.stitchTurn(0);
     for (int i = 0; i < 4; ++i) w.stitchSc();
+    w.stitchTurn(1);
+    for (int i = 0; i < 4; ++i) w.stitch("hdc");
+    w.stitchTurn(2);
+    for (int i = 0; i < 4; ++i) w.stitch("dc");
+    w.stitchTurn(3);
+    for (int i = 0; i < 4; ++i) w.stitch("slst");
     Score s;
     for (const auto& t : threadingReport(w)) {
         ++s.passes;
         if (t[0] <= 1) continue;   // the slip knot's own first loop is not part of the design
-        if (t[2] != 1 || t[3] != 1) ++s.unclean;
+        if (t[2] < 1 || t[3] < 1) ++s.unclean;                    // a leg that misses the eye is not a stitch
+        else s.extra += (t[2] - 1) + (t[3] - 1);                   // legs that wiggle through it more than once are untidy
     }
     // overlap: segment pairs more than 6 apart whose centre lines come closer than 0.8 of two radii
     const RodSystem& rs = w.rod;
@@ -51,7 +59,7 @@ Score evaluate(const WorkParams& base) {
                 s.pen += d * d;
             }
         }
-    s.total = 1000.0 * s.unclean + s.pen;
+    s.total = 1000.0 * s.unclean + 12.0 * s.extra + s.pen;
     return s;
 }
 
@@ -59,11 +67,12 @@ Score evaluate(const WorkParams& base) {
 
 int main(int argc, char** argv) {
     const int iters = argc > 1 ? std::atoi(argv[1]) : 300;
+    const bool onlyNew = argc > 3 && std::string(argv[3]) == "new";
     std::mt19937 rng(argc > 2 ? std::atoi(argv[2]) : 1);
     std::uniform_real_distribution<Real> u01(0, 1);
     WorkParams best;
     Score bs = evaluate(best);
-    std::printf("start: %d of %d passes unclean, overlap %.1f, total %.1f\n", bs.unclean, bs.passes, bs.pen, bs.total);
+    std::printf("start: %d of %d passes miss an eye, %d extra piercings, overlap %.1f, total %.1f\n", bs.unclean, bs.passes, bs.extra, bs.pen, bs.total);
     Real temp = 30.0;
     WorkParams cur = best;
     Score cs = bs;
@@ -71,7 +80,8 @@ int main(int argc, char** argv) {
         WorkParams cand = cur;
         const int nChange = 1 + (int)(u01(rng) * 3);
         for (int k = 0; k < nChange; ++k) {
-            const Param& p = kParams[(int)(u01(rng) * kN) % kN];
+            const int lo = onlyNew ? kFirstNew : 0;
+            const Param& p = kParams[lo + (int)(u01(rng) * (kN - lo)) % (kN - lo)];
             Real* f = p.get(cand);
             const Real range = p.hi - p.lo;
             *f = std::clamp(*f + (u01(rng) - 0.5) * 0.35 * range, p.lo, p.hi);
@@ -83,7 +93,7 @@ int main(int argc, char** argv) {
             if (sc.total < bs.total) {
                 bs = sc;
                 best = cand;
-                std::printf("it %4d: %d of %d passes unclean, overlap %.1f, total %.1f\n", it, bs.unclean, bs.passes, bs.pen, bs.total);
+                std::printf("it %4d: %d of %d passes miss an eye, %d extra piercings, overlap %.1f, total %.1f\n", it, bs.unclean, bs.passes, bs.extra, bs.pen, bs.total);
             }
         }
         temp = std::max(0.5, temp * 0.993);

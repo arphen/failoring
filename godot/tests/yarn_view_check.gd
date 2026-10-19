@@ -115,6 +115,59 @@ func _ready() -> void:
 	yv.loop_front.button_pressed = true
 	yv.loop_back.button_pressed = true
 
+	# the other stitches and the turning chains that go with them
+	yv.reset_piece()
+	for i in 5:
+		await yv.do_action("chain")
+	await yv.do_action("turn")
+	await yv.do_action("sc")
+	await yv.do_action("hdc")
+	await yv.do_action("dc")
+	await yv.do_action("slst")
+	var txt0: String = yv.session.get_pattern_text()
+	check("sc, hdc, dc and sl st are one click each and are named in the pattern (%s)" % txt0.replace("\n", " / "), txt0.contains("sc 1") and txt0.contains("hdc 1") and txt0.contains("dc 1") and txt0.contains("sl st 1") and int(yv.session.get_state()["cursor"]) == 4)
+	var ch_before := txt0
+	await yv.do_action("turn")
+	var txt1: String = yv.session.get_pattern_text()
+	check("turning after a slip stitch row: a turning chain of one (the last stitch made decides it)", txt1.ends_with("ch 1\n") or txt1.contains("ch 1"))
+	yv.reset_piece()
+	for i in 4:
+		await yv.do_action("chain")
+	await yv.do_action("turn")
+	await yv.do_action("hdc")
+	await yv.do_action("hdc")
+	await yv.do_action("hdc")
+	await yv.do_action("turn")
+	check("turning after half doubles: a turning chain of two", yv.session.get_pattern_text().contains("ch 2"))
+
+	# colours: the next stitch changes colour; a colour used before is picked up where it was dropped
+	yv.reset_piece()
+	for i in 6:
+		await yv.do_action("chain")
+	await yv.do_action("turn")
+	await yv.do_action("sc")
+	yv.colour_when.select(0)
+	var orange := Color(0.95, 0.58, 0.18)
+	yv.choose_colour(orange)
+	check("choosing a colour marks the next stitch as the one that changes it", bool(yv.session.get_state()["pending_colour"]) and yv.colour_label.text.contains("changes colour"))
+	await yv.do_action("sc")
+	var cols: Array = yv.session.get_colours()
+	check("after the stitch there are two yarns, the second one orange, and it is the one on the hook", cols.size() == 2 and (cols[1] as Color).is_equal_approx(orange) and (yv.session.get_state()["colour"] as Color).is_equal_approx(orange) and not bool(yv.session.get_state()["pending_colour"]))
+	await yv.do_action("sc")
+	await yv.do_action("turn")
+	yv.choose_colour(yv.SWATCHES[0])
+	await yv.do_action("sc")
+	check("going back to the first colour picks that yarn up again: still two yarns", yv.session.get_colours().size() == 2 and (yv.session.get_state()["colour"] as Color).is_equal_approx(yv.SWATCHES[0]))
+	var parts0: int = yv.session.get_particle_count()
+	yv.undo()
+	yv.undo()
+	check("undo takes the stitch and the colour choice back (the work is rebuilt)", yv.session.get_particle_count() < parts0)
+	var m_col: Dictionary = yv.session.get_mesh(-1, 8, 2)
+	var seen := {}
+	for col in m_col["colors"] as PackedColorArray:
+		seen[snappedf(col.r, 0.2)] = true
+	check("the mesh carries both colours", seen.size() >= 2)
+
 	# soft yarn: take hold of a strand, pull it, let go
 	yv.reset_piece()
 	for i in 5:

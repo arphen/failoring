@@ -3,6 +3,7 @@
 #pragma once
 
 #include <godot_cpp/classes/ref_counted.hpp>
+#include <godot_cpp/variant/color.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/packed_color_array.hpp>
 #include <godot_cpp/variant/packed_int32_array.hpp>
@@ -21,7 +22,8 @@ public:
     YarnSession();
     // A new piece: the slip knot at the origin, one loop on the hook.
     void reset();
-    // "chain", "sc" (under both loops), "sc_front" / "sc_back" (one loop only), "skip" (the next stitch), "turn": one hook action. `opening` is the loop to work into (-1: the next one in order). Returns
+    // "chain", "sc" / "hdc" / "dc" / "slst" (under both loops), the same with "_front" / "_back" (one loop only), "skip" (the next stitch), "turn" (`opening` is
+    // then the number of turning chains): one hook action. `opening` is the loop to work into (-1: the next one in order). Returns
     // {ok, loop, msg, particles (the yarn now has), row, cursor}.
     Dictionary action(const String& kind, int opening);
     // `n` soft-physics steps (the yarn settling)
@@ -35,6 +37,10 @@ public:
     Dictionary get_state() const;
     String get_pattern_text() const;
     void set_param(const String& name, double value);
+    // The next stitch changes to this colour: `when` is "pull" (at its last pull-through, the usual way) or "stitch" (from its start). A colour used before
+    // is picked up where it was dropped, a new one is started.
+    void set_colour(const Color& colour, const String& when);
+    TypedArray<Color> get_colours() const;   // the yarns so far
     // How the piece is looked at: `expand` scales the piece about its middle (the loops open up, the yarn keeps its thickness, so you see how they
     // hook into each other); `thickness` scales the yarn's drawn radius (a thin-yarn view). Neither changes the work.
     void set_view(double expand, double thickness);

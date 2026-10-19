@@ -37,8 +37,19 @@ func _ready() -> void:
 		yv.visible = true
 		yv.animate = false
 		for tok in OS.get_environment("FL_SHOT_YARN").split(","):
-			var kind := "turn" if tok == "turn" else ("chain" if tok.begins_with("ch") else "sc")
-			var count := 1 if tok == "turn" else int(tok.substr(2))
+			if tok.begins_with("colour:"):   # colour:r:g:b[:stitch]
+				var parts := tok.split(":")
+				yv.colour_when.select(1 if parts.size() > 4 and parts[4] == "stitch" else 0)
+				yv.choose_colour(Color(float(parts[1]), float(parts[2]), float(parts[3])))
+				continue
+			var kind := "turn"
+			var count := 1
+			if tok != "turn":
+				for name in ["slst", "hdc", "dc", "sc", "ch"]:
+					if tok.begins_with(name):
+						kind = "chain" if name == "ch" else name
+						count = int(tok.substr(name.length()))
+						break
 			for i in count:
 				await yv.do_action(kind)
 		if OS.has_environment("FL_SHOT_YARN_EXPAND"):
