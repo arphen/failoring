@@ -301,7 +301,7 @@ int main(int argc, char** argv) {
             const ChainStart c0 = prepareChain(t);
             finishChain(t, c0);
             const ChainResult r = judgeChain(t, c0);
-            std::printf("%s-> carried %.0f, old on %d, yarn %.1f mm (was %.1f)%s\n", label.c_str(), r.link, r.oldOn, r.length * 1e3, c0.length * 1e3, r.made ? "  MADE" : "");
+            std::printf("%s-> %d loops, from yarn %d, winds %.2f%s\n", label.c_str(), r.loops, r.loopFrom, r.newWind, r.made ? "  MADE" : "");
             std::fflush(stdout);
             size_t k = 0;
             for (; k < axes.size(); ++k) {
@@ -316,8 +316,8 @@ int main(int argc, char** argv) {
         const ChainStart cs = prepareChain(sim);
         if (cs.ok) finishChain(sim, cs);
         const ChainResult r = judgeChain(sim, cs);
-        std::printf("chain %d: carried %.0f, old on %d, loop %d..%d (old %d..%d), yarn %.1f mm (was %.1f)%s, tip at (%.0f %.0f %.0f) mm\n", c + 1, r.link, r.oldOn, r.loopFrom, r.loopTo, cs.oldLoop.empty() ? -1 : cs.oldLoop.front(), cs.oldLoop.empty() ? -1 : cs.oldLoop.back(), r.length * 1e3, cs.length * 1e3,
-                    r.made ? "  MADE" : "", sim.hook.tip.x * 1e3, sim.hook.tip.y * 1e3, sim.hook.tip.z * 1e3);
+        std::printf("chain %d: %d loops on the hook (after the yarn over %d), yarn %.1f mm (was %.1f)%s\n", c + 1, r.loops, cs.loopsAfterYo, r.length * 1e3,
+                    cs.length * 1e3, r.made ? "  MADE" : "");
         if (std::getenv("SIM_CHAINSHOT")) { char tag[16]; std::snprintf(tag, sizeof tag, "ch%d", c + 1); snap(tag); }
         continue;
         std::printf("chain %d: loops on hook %d (up) %d (front)\n", c + 1, sim.loopsOnHook(Vec3{0, 1, 0}), sim.loopsOnHook(Vec3{0, 0, 1}));

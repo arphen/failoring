@@ -122,7 +122,11 @@ public:
     Real hookLinking() const;
     // How far the yarn from particle i0 to i1 goes round the hook's axis (turns, signed), counting only the stretches of it within `reach` of the
     // axis and level with the hook; the largest such stretch.
-    Real windingNear(int i0, int i1, Real reach = 0.008) const;
+    Real windingNear(int i0, int i1, Real reach = 0.008, int* runLo = nullptr, int* runHi = nullptr) const;
+    // The loops round the hook: every stretch of yarn near the hook (within `reach` of its axis, level with it) that winds at least `minTurns`
+    // round it, as {first particle, last particle, turns}.
+    struct HookRun { int lo, hi; Real turns; };
+    std::vector<HookRun> hookRuns(Real reach = 0.009, Real minTurns = 0.55) const;
     std::vector<Vec3> yarn() const { return rs.x; }
 
 private:
@@ -153,6 +157,8 @@ struct ChainStart {
     Vec3 tip0{};
     Real along = 0;
     std::vector<int> oldLoop;   // the particles of the loop that was on the hook
+    int oldLo = -1, oldHi = -1;
+    int loopsAtStart = 0, loopsBefore = 0, loopsAfterYo = 0;   // loopsOnHook(front) at the start and after the yarn over
     Real length = 0;            // the yarn between the tail and the hand (m) when the stitch began
 };
 ChainStart prepareChain(YarnSim& sim);
@@ -164,6 +170,7 @@ struct ChainResult {
     int loops = 0;   // loopsOnHook seen from above: exactly one loop
     int oldOn = 0;   // particles of the old loop still round the hook
     int loopFrom = -1, loopTo = -1;   // the loop on the hook (see hookLoop)
+    Real oldWind = 0, newWind = 0;    // how far the old loop's yarn and the yarn after it wind round the hook (turns)
     Real length = 0;
     bool made = false;
 };
