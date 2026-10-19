@@ -176,3 +176,11 @@ the draw-back run, but pulling the bight through a loop that the work holds make
 
 Still to do for the hook: show the yarn running over the shaft before the pull (the working yarn from the ball laid over the hook), the old loops closing as the new one
 comes through, and chains drawn with V-shaped loops.
+
+### 13.y V-shaped chains (2026-10-19)
+
+A chain loop was a round ring; a real chain shows a column of Vs (each loop closes to a V round the next one's legs). Chain loops are now teardrops: elongated along the chain
+(`chainA` 6 mm, `chainB` 3.4 mm, pitch = the stitch width 8.46 mm), narrowing toward the tip (`chainTaper` 0.5), and the next loop is threaded through them near the tip
+(`chainEye` 0.55 of `chainA`, `YarnLoop::eyeShift`), alternating two layers 1.5 mm apart. Chosen by a grid search over taper, eye, width and layer using the threading
+report (the same 32 of 33 clean passes as the round chain). Shots: `docs/crochet-shots/yarn/chain_teardrop_front.png`, `swatch_teardrop_chain_front.png`, `editor_swatch_teardrop.png`.
+Not yet right: the yarn is 2.5 mm thick against an 8.5 mm stitch, so the chain still reads as a braid of pointed loops more than the photo's thin Vs.

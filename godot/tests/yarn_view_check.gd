@@ -211,6 +211,7 @@ func _ready() -> void:
 	yv.reset_piece()
 	for i in 5:
 		await yv.do_action("chain")
+	yv.session.tick(300)   # the soft layer has settled (the loops of the design touch, and ease apart) before the work is pulled
 	var mesh0: Dictionary = yv.session.get_mesh(-1, 8, 2)
 	var pos0: PackedVector3Array = mesh0["positions"]
 	var loops0: Array = yv.session.get_loops()

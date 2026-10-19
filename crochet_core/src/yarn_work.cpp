@@ -101,7 +101,7 @@ EyeFrame YarnWork::eye(int loop) const {
         const Vec3& b = P[i == l.r1 ? l.r0 : i + 1];
         area += cross(a - c, b - c);
     }
-    e.centre = c;
+    e.centre = c + l.eyeShift;
     e.normal = length2(area) > 1e-30 ? normalized(area) : Vec3{0, 0, 1};
     e.radius = std::sqrt(0.5 * length(area) / kPi);
     return e;
@@ -235,7 +235,7 @@ int YarnWork::loopAt(const Vec3& ringC, const Vec3& ringN0, const std::vector<in
         const Vec3 V = cross(ringN, U);
         const Vec3 toEnd = (endPosition() - ringC) - ringN * dot(endPosition() - ringC, ringN);
         const Real th0 = length2(toEnd) > 1e-12 ? std::atan2(dot(toEnd, V) / rb, dot(toEnd, U) / ra) : 0.0;
-        auto onRing = [&](Real phi) { return ringC + U * (ra * std::cos(th0 + phi)) + V * (rb * std::sin(th0 + phi)); };
+        auto onRing = [&](Real phi) { const Real t = th0 + phi; return ringC + U * (ra * std::cos(t)) + V * (rb * std::sin(t) * (1.0 - taper_ * std::cos(t))); };
         travel.push_back(onRing(0.0));
         travelStraight = length(onRing(0.0) - endPosition());
         ringFirstWay = 0;
@@ -267,7 +267,7 @@ int YarnWork::loopAt(const Vec3& ringC, const Vec3& ringN0, const std::vector<in
         const Vec3 V = cross(ringN, U);   // (U, V, ringN) right handed
         const Real th0 = std::atan2(dot(toEye, V) / rb, dot(toEye, U) / ra);   // the ring starts on the side that faces the eye
         const Real eps = std::asin(std::min(0.9, wp.legGap / std::max(std::min(ra, rb), 1e-6)));
-        auto onRing = [&](Real phi) { return ringC + U * (ra * std::cos(th0 + phi)) + V * (rb * std::sin(th0 + phi)); };
+        auto onRing = [&](Real phi) { const Real t = th0 + phi; return ringC + U * (ra * std::cos(t)) + V * (rb * std::sin(t) * (1.0 - taper_ * std::cos(t))); };
         way.push_back(L.c + L.a * wp.approach + L.u * wp.legGap);
         const int ringSteps = 22;
         const Real sweep = 2.0 * kPi - 2.0 * eps;
@@ -427,7 +427,10 @@ int YarnWork::chain() {
         ++chainCount_;
         c = origin_ + progress * (wp.chainPitch * (chainCount_ + 1)) + z * ((chainCount_ % 2 == 0 ? 1.0 : -1.0) * wp.chainLayer);
         const Vec3 along = progress;
+        taper_ = wp.chainTaper;
         id = loopAt(c, z, {hook.back()}, &along, wp.chainA, wp.chainB);
+        taper_ = 0.0;
+        loops[id].eyeShift = along * (wp.chainEye * wp.chainA);
     } else {
         // a turning chain: rings standing above the stitch on the hook, at the end of the row
         const EyeFrame e = eye(hook.back());

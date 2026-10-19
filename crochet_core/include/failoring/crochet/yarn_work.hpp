@@ -34,6 +34,7 @@ struct YarnLoop {
     int row = 0;          // the row it was made in
     Real ringScale = 1.0; // how far the ring's yarn has been pulled in (1 = as made)
     std::vector<int> through;  // the loops whose eyes this loop's legs were pulled through
+    Vec3 eyeShift{};      // where the loop is threaded, relative to the middle of its ring (a chain loop is threaded near its tip)
     int top = -1;         // the stitch this loop belongs to, by its top loop (a post, a yarn over or a middle loop point at the stitch's top; a top points at itself)
 };
 
@@ -66,10 +67,12 @@ struct WorkParams {
     Real fingerLength = 0.00103;   // legs beyond the last eye before they flare out to the ring
     Real flare = 0.0030;           // length over which the legs spread out to the ring
     Real ringRadius = 0.0040;      // the ring of the slip knot's first loop
-    Real chainPitch = 0.0085;      // between the rings of a foundation chain
-    Real chainA = 0.0040;          // a chain's ring: semi-axis along the chain
-    Real chainB = 0.0040;          // ... and across it
-    Real chainLayer = 0.0040;      // the two layers the rings of a chain alternate between
+    Real chainPitch = 0.00846;     // between the rings of a foundation chain
+    Real chainA = 0.0060;          // a chain's ring: semi-axis along the chain
+    Real chainB = 0.0034;          // ... and across it
+    Real chainLayer = 0.0015;      // the two layers the rings of a chain alternate between
+    Real chainTaper = 0.5;         // a chain's ring narrows toward its tip (0: an ellipse, 0.5: a teardrop: each loop closes to a V round the next)
+    Real chainEye = 0.55;           // the next loop is threaded through this fraction of chainA toward the tip
     Real workingRun = 0.0010;      // the yarn laid out after a finger toward the ball
     Real travelSlack = 3.0;        // the working yarn to the next eye is pulled taut: its rest length is this times the straight distance
     Real segmentLength = 0.0020;   // the rod's node spacing
@@ -189,6 +192,7 @@ private:
     bool pending_ = false;
     Vec3 pendingColour_{};
     ColourAt pendingAt_ = ColourAt::PullThrough;
+    Real taper_ = 0.0;           // loopAt: the ring narrows toward +U by this much (a teardrop)
     Vec3 zAxis() const { return cross(Vec3{1, 0, 0}, upDir); }   // the front of the work (it does not turn with the row direction)
     // A loop whose ring is put at `ringC`, its plane square to `ringN`; its legs go from the ring through the eyes of `eyesLoops` (in order) and
     // back (none: a yarn over, a ring and nothing else). The ring is a circle of ringRadius or an ellipse (a top loop seen edge on is a bar). `modes`

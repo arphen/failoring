@@ -116,6 +116,8 @@ int main(int argc, char** argv) {
         else if (k == "--pitch") w.wp.chainPitch = v * 1e-3;
         else if (k == "--chA") w.wp.chainA = v * 1e-3;
         else if (k == "--chB") w.wp.chainB = v * 1e-3;
+        else if (k == "--taper") w.wp.chainTaper = v;
+        else if (k == "--chEye") w.wp.chainEye = v;
         else if (k == "--chLayer") w.wp.chainLayer = v * 1e-3;
         else if (k == "--gap") w.wp.legGap = v * 1e-3;
         else if (k == "--flare") w.wp.flare = v * 1e-3;
