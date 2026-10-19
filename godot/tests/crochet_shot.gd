@@ -35,6 +35,8 @@ func _ready() -> void:
 	if OS.has_environment("FL_SHOT_YARN"):   # yarn mode: FL_SHOT_YARN="ch5,turn,sc4" (comma separated actions: chN, scN, turn), no animations
 		var yv = c.yarn_view
 		yv.visible = true
+		if OS.has_environment("FL_SHOT_YARN_DENSE"):
+			yv.set_lattice(false)
 		yv.animate = OS.has_environment("FL_SHOT_YARN_ANIM")   # (FL_SHOT_YARN_ANIM=1: the real animations, run through)
 		for tok in OS.get_environment("FL_SHOT_YARN").split(","):
 			if tok.begins_with("colour:"):   # colour:r:g:b[:stitch]

@@ -630,10 +630,14 @@ func _build_marker() -> void:
 # One hook action. Everything the stitch needs is chosen: it goes into the next stitch of the row below (both loops), or into the loop the
 # user clicked. Returns false when it could not be made (the status line says why).
 func do_action(kind: String, opening: int = -2, turn_chains: int = -1) -> bool:
-	if busy:
-		return false
 	if opening == -2:
 		opening = picked
+	if busy:   # clicks while the hook is working are kept and made one after the other (a few at most)
+		if _queue.size() < MAX_QUEUE:
+			_queue.append([kind, opening, turn_chains])
+			status_label.text = "%s (%d waiting)" % [status_label.text.get_slice("  (", 0), _queue.size()]
+			return true
+		return false
 	busy = true
 	var st: Dictionary = session.get_state()
 	if int(st["row"]) == 0 and (_is_stitch(kind) or kind == "skip") and int(st["made"]) >= 2:
@@ -698,9 +702,15 @@ func do_action(kind: String, opening: int = -2, turn_chains: int = -1) -> bool:
 		_rest_hook()
 		_frame_work(true)
 	busy = false
+	if _queue.size() > 0:
+		var nx: Array = _queue.pop_front()
+		await do_action(String(nx[0]), int(nx[1]), int(nx[2]))
+	else:
+		idle.emit()
 	return true
 
 func undo() -> void:
+	_queue.clear()
 	if busy or history.size() == 0:
 		return
 	var keep: Array = history.duplicate()
@@ -719,6 +729,7 @@ func set_lattice(open: bool) -> void:
 	_replay(keep)
 
 func reset_piece() -> void:
+	_queue.clear()
 	if busy:
 		return
 	_replay([])
@@ -755,6 +766,9 @@ func _replay(actions: Array) -> void:
 # and turns its throat down (yarn over); and draws it back through the eye, the loop opening as it comes (pull). A loop with no eye (a double's first yarn over) is the yarn
 # picked up and wound round the hook. `before` is how many particles the yarn had.
 var _last_frame := {}
+signal idle   # the hook has done everything it was asked (nothing is waiting)
+const MAX_QUEUE := 12
+var _queue: Array = []             # clicks made while the hook was busy: [kind, opening, turn_chains]
 
 func _minjerk(t: float) -> float:   # how a hand moves: no jerk at either end
 	return t * t * t * (10.0 - 15.0 * t + 6.0 * t * t)

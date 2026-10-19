@@ -219,3 +219,12 @@ So the work is a thin yarn on an open lattice: the lattice is tuned (yarn_tune, 
 after every action the new yarn is thinned and grown back under contact (`YarnWork::relaxNew`); what comes out is the work's geometry.
 The slip knot's connecting yarn now runs outside the ring and above the tail, a quarter turn round the axis, as a smooth curve (0 pairs closer than a yarn width).
 Found on the way: a patch had dropped the stitch animation (stitches fell back to the old growing yarn, which hung in a windowed run, so a second click on Chain did nothing); restored and tested.
+
+Later the same day: a flat (ribbon) yarn 2 mm wide and 0.7 mm thick tuned over the whole lattice (4 seeds x 12000 steps) stayed at an overlap penalty of ~1000 (the thin round yarn reaches ~30 and
+relaxes clean), so flat yarn does not rescue the dense look either. Pulling the stitches closer with the yarn's length fixed (anchors scaled in the plane, contact on) stretches the yarn 4-7x:
+not physical. Shortening every rest length (tightening) jams at about half the lengths and breaks the threading. Rounding the lattice's corners with the yarn's own stiffness (EI 4e-6) keeps
+0 close pairs and 15 of 18 threadings, a stiffer one blows up at this step size (pseudo-mass).
+State: the editor starts on the OPEN lattice (a 0.4 mm radius yarn, a 20 mm stitch, relaxed under contact after every action: the work is one strand that does not pass through itself and every
+finger threads), and the DENSE lattice (the old tuned one, thick yarn, which looks like crochet but overlaps itself) is one click away. The open one looks like wire; making it look like
+the photographs without the strands overlapping needs a different way of laying the loops (compact, parallel strands that lie along each other instead of crossing), which is open research here.
+Also: clicks made while the hook is working are queued (12 at most) instead of dropped.

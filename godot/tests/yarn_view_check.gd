@@ -372,6 +372,16 @@ func _ready() -> void:
 	check("...a further stitch is refused", not refused and bool(yv.session.get_state()["finished"]))
 	yv.undo()
 	check("undo takes the fastening off back: the yarn runs to its ball again and stitches can be made", not bool(yv.session.get_state()["finished"]) and (yv.session.get_state()["ends"] as Array).size() == 1 and not yv.b_chain.disabled)
+	# clicks while the hook is working are not lost: they wait and are made in order
+	yv.reset_piece()
+	yv.animate = true
+	var act: Callable = yv.do_action
+	act.call("chain")
+	var q1: bool = act.call("chain")
+	var q2: bool = act.call("chain")
+	check("clicking Chain three times quickly: the second and third are kept (the hook is busy with the first)", yv.busy and q1 and q2 and yv._queue.size() == 2)
+	await yv.idle
+	check("...and all three chains are made, the queue is empty and the hook is free", int(yv.session.get_state()["made"]) == 3 and yv._queue.size() == 0 and not yv.busy)
 	yv.animate = false
 	print("RESULT: %d failed" % fails)
 	get_tree().quit(1 if fails > 0 else 0)
