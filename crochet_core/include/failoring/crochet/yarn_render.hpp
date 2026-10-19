@@ -29,6 +29,8 @@ struct YarnMesh {
 };
 
 YarnMesh buildYarnMesh(const RodSystem& rs, const YarnMeshOptions& o = {});
+// A yarn of the given radius along a free curve (the run to the ball), with the same plies; rounded at both ends. Every yarn drawn by buildYarnMesh is rounded at its free ends too.
+YarnMesh buildTubeMesh(const std::vector<Vec3>& pts, Real radius, const Vec3& colour, const YarnMeshOptions& o = {});
 
 struct YarnCamera {
     Vec3 target{0, 0, 0};

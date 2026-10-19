@@ -34,6 +34,7 @@ struct YarnLoop {
     int row = 0;          // the row it was made in
     Real ringScale = 1.0; // how far the ring's yarn has been pulled in (1 = as made)
     std::vector<int> through;  // the loops whose eyes this loop's legs were pulled through
+    int top = -1;         // the stitch this loop belongs to, by its top loop (a post, a yarn over or a middle loop point at the stitch's top; a top points at itself)
 };
 
 // Which loops of a stitch's top a new stitch goes under: both (through the eye, the usual), or only the front or only the back one (its legs
@@ -64,7 +65,11 @@ struct WorkParams {
     Real approach = 0.00162;       // the straight run of the legs either side of an eye
     Real fingerLength = 0.00103;   // legs beyond the last eye before they flare out to the ring
     Real flare = 0.0030;           // length over which the legs spread out to the ring
-    Real ringRadius = 0.0040;      // a chain's ring
+    Real ringRadius = 0.0040;      // the ring of the slip knot's first loop
+    Real chainPitch = 0.0085;      // between the rings of a foundation chain
+    Real chainA = 0.0040;          // a chain's ring: semi-axis along the chain
+    Real chainB = 0.0040;          // ... and across it
+    Real chainLayer = 0.0040;      // the two layers the rings of a chain alternate between
     Real workingRun = 0.0010;      // the yarn laid out after a finger toward the ball
     Real travelSlack = 3.0;        // the working yarn to the next eye is pulled taut: its rest length is this times the straight distance
     Real segmentLength = 0.0020;   // the rod's node spacing
@@ -163,6 +168,12 @@ public:
     HookPose hookPose() const;
     Vec3 endPosition() const { return strands[active].pts.back(); }
     int particleCount() const { return rod.particleCount(); }
+    // The yarn of `loop` while the hook draws it through the eye of the loop it goes through (`s` 0..1): at 0 a hairpin lies in the throat of the hook
+    // behind the eye, the legs run through the eye to the yarn already worked; the hook draws it to the worker's side and the loop opens out as it comes,
+    // and at 1 it is the loop as it is. `pts` are the rod particles `first` ... `first + pts.size() - 1` as they are at `s`; `tip` is where the hook's
+    // throat is and `axis` the way from there toward the handle. A yarn over (no eye) just grows into its ring round the hook.
+    struct PullFrame { std::vector<Vec3> pts; int first = 0; Vec3 tip, axis; bool through = false; };
+    PullFrame pullFrame(int loop, Real s) const;
     // the colour of each rod segment (for drawing)
     std::vector<Vec3> segmentColours() const;
 
@@ -191,6 +202,7 @@ private:
     int startYarn(const Vec3& colour);                // a new strand: a tail by the hook; returns its index
     void applyPendingColour(ColourAt now);
     int tallStitch(const std::string& kind, int opening, Loops which);
+    int tallStitchBody(const std::string& kind, int opening, Loops which);
     Real heightOf(const std::string& kind) const;
 };
 

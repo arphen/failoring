@@ -19,6 +19,21 @@ const HOOK_RADIUS := 0.0022
 const PICK_RADIUS_PX := 28.0
 const YARN_COLOUR := Color(0.80, 0.30, 0.22)
 const SWATCHES := [Color(0.80, 0.30, 0.22), Color(0.95, 0.58, 0.18), Color(0.93, 0.88, 0.76), Color(0.25, 0.45, 0.78), Color(0.30, 0.62, 0.38), Color(0.14, 0.14, 0.16)]
+const BALL_RADIUS := 0.026
+const BALL_SHADER := """shader_type spatial;
+uniform vec4 albedo : source_color = vec4(0.8, 0.3, 0.2, 1.0);
+varying vec3 obj;
+void vertex() { obj = VERTEX; }
+void fragment() {
+	vec3 p = normalize(obj);
+	float a = sin(46.0 * p.x + 17.0 * sin(7.0 * p.y + 3.0 * p.z));
+	float b = sin(41.0 * p.y + 14.0 * sin(5.0 * p.z + 2.0 * p.x));
+	float c = sin(49.0 * p.z + 15.0 * sin(6.0 * p.x + 4.0 * p.y));
+	float t = 0.74 + 0.26 * (0.5 + 0.5 * (a * b + b * c + c * a) / 3.0);
+	ALBEDO = albedo.rgb * t;
+	ROUGHNESS = 0.95;
+}
+"""
 const TURNING_CHAINS := {"sc": 1, "hdc": 2, "dc": 3, "slst": 1}
 const WORK_HEIGHT := 0.95          # the work is held at about the height of a table in the studio
 const WORK_TILT := 1.0             # rad: the work leans back like a piece held in the left hand, its face toward the worker above the table
@@ -42,6 +57,11 @@ var hook_node: Node3D
 var marker: MeshInstance3D
 var extra_markers: Array = []       # yellow rings on the loops picked up in the next last pull-through
 var _click_shift := false
+var ball_nodes: Array = []          # a ball of yarn for every yarn, and the run of the yarn to it
+var run_nodes: Array = []
+var hover_nodes: Array = []         # the stitch under the pointer, drawn over the yarn
+var _hover_top := -1
+var _ball_shader: Shader
 var status_label: Label
 var target_label: Label
 var overlay_panel: PanelContainer
@@ -521,6 +541,26 @@ func _replay(actions: Array) -> void:
 	_frame_work(true)
 	_place_hook(_live_centre())
 
+# The hook makes the stitch: for each loop the stitch made, the hook goes in behind the eye it works into (the yarn is over it), and draws the new loop
+# out through the eye toward the worker; the loop opens as it comes. `before` is how many particles the yarn had.
+func _pull_animation(before: int, made: Array) -> void:
+	_rebuild(before)
+	for id in made:
+		var f0: Dictionary = session.anim_frame(int(id), 0.0, 10, 3)
+		if f0.is_empty():
+			continue
+		_show_mesh(f0)
+		await _move_hook_axis(f0["tip"], f0["axis"], 0.28)
+		var tw := create_tween()
+		tw.tween_method(func(t: float) -> void:
+			var d: Dictionary = session.anim_frame(int(id), t, 10, 3)
+			if d.is_empty():
+				return
+			_show_mesh(d)
+			_place_hook(d["tip"], d["axis"], 1.0), 0.0, 1.0, 0.55).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+		await tw.finished
+	_rebuild(-1)
+
 func _grow(from_particles: int, to_particles: int) -> void:
 	if not animate or to_particles - from_particles < 4:
 		_rebuild(-1)
@@ -566,7 +606,11 @@ func _apply_view() -> void:
 		_frame_work(false)
 
 func _rebuild(up_to: int) -> void:
-	var d: Dictionary = session.get_mesh(up_to, 10, 3)
+	_show_mesh(session.get_mesh(up_to, 10, 3))
+	_shown_particles = up_to if up_to >= 0 else session.get_particle_count()
+	_update_balls()
+
+func _show_mesh(d: Dictionary) -> void:
 	var pos: PackedVector3Array = d["positions"]
 	if pos.size() == 0:
 		yarn_node.mesh = null
@@ -580,7 +624,6 @@ func _rebuild(up_to: int) -> void:
 	var m := ArrayMesh.new()
 	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	yarn_node.mesh = m
-	_shown_particles = up_to if up_to >= 0 else session.get_particle_count()
 
 func _refresh() -> void:
 	var st: Dictionary = session.get_state()
@@ -663,6 +706,114 @@ func _update_marker() -> void:
 		basis = Basis(Vector3(1, 0, 0), PI)
 	marker.basis = basis
 
+# Every yarn runs to its ball: a curve from the end of the yarn to a ball of yarn standing on the table beside the work. A yarn does not end in the air.
+func _ball_position(i: int) -> Vector3:
+	return Vector3(0.13 + 0.065 * i, WORK_HEIGHT - 0.016 + 0.003 + BALL_RADIUS, -0.11)
+
+func _update_balls() -> void:
+	if session == null or work_root == null:
+		return
+	var ends: Array = session.get_state().get("ends", [])
+	if _ball_shader == null:
+		_ball_shader = Shader.new()
+		_ball_shader.code = BALL_SHADER
+	while ball_nodes.size() < ends.size():
+		var b := MeshInstance3D.new()
+		var sp := SphereMesh.new()
+		sp.radius = BALL_RADIUS
+		sp.height = BALL_RADIUS * 2.0
+		sp.radial_segments = 32
+		sp.rings = 16
+		b.mesh = sp
+		b.material_override = ShaderMaterial.new()
+		(b.material_override as ShaderMaterial).shader = _ball_shader
+		stage.add_child(b)
+		ball_nodes.append(b)
+		var r := MeshInstance3D.new()
+		r.material_override = yarn_mat
+		stage.add_child(r)
+		run_nodes.append(r)
+	for i in ball_nodes.size():
+		var visible_i := i < ends.size()
+		(ball_nodes[i] as Node3D).visible = visible_i
+		(run_nodes[i] as Node3D).visible = visible_i
+		if not visible_i:
+			continue
+		var en: Dictionary = ends[i]
+		var col: Color = en["colour"]
+		var bp := _ball_position(int(en["strand"]))
+		var b: MeshInstance3D = ball_nodes[i]
+		b.position = bp
+		(b.material_override as ShaderMaterial).set_shader_parameter("albedo", col)
+		var e0: Vector3 = work_root.to_global(en["end"])
+		var d0: Vector3 = (work_root.global_transform.basis * (en["dir"] as Vector3)).normalized()
+		var surf := bp + (e0 - bp).normalized() * BALL_RADIUS * 0.96
+		var p1 := e0 + d0 * 0.03
+		var p2 := surf + ((e0 - surf).normalized() * 0.035 + Vector3.UP * 0.012)
+		var pts := PackedVector3Array()
+		var table_y := WORK_HEIGHT - 0.016 + 0.003 + 0.0016
+		for k in 25:
+			var t := float(k) / 24.0
+			var u := 1.0 - t
+			var pt := u * u * u * e0 + 3.0 * u * u * t * p1 + 3.0 * u * t * t * p2 + t * t * t * surf
+			pt.y -= 0.010 * sin(PI * t)   # it hangs a little
+			pt.y = maxf(pt.y, table_y)
+			pts.append(pt)
+		var d: Dictionary = session.tube(pts, col, 0.00125, 8, 2)
+		var arrays := []
+		arrays.resize(Mesh.ARRAY_MAX)
+		arrays[Mesh.ARRAY_VERTEX] = d["positions"]
+		arrays[Mesh.ARRAY_NORMAL] = d["normals"]
+		arrays[Mesh.ARRAY_COLOR] = d["colors"]
+		arrays[Mesh.ARRAY_INDEX] = d["indices"]
+		var m := ArrayMesh.new()
+		m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+		(run_nodes[i] as MeshInstance3D).mesh = m
+
+# The stitch under the pointer, drawn over the yarn so that it is clear what a click would work into.
+func _update_hover(pos: Vector2) -> void:
+	if busy or session.is_grabbed():
+		_clear_hover()
+		return
+	var ray := _local_ray(pos)
+	var r: Dictionary = session.pick(ray[0], ray[1])
+	var top := int(r["top"]) if bool(r.get("ok", false)) else -1
+	if top == _hover_top:
+		return
+	_hover_top = top
+	_clear_hover()
+	if top < 0:
+		return
+	var loops: Array = session.get_loops()
+	for l in loops:
+		if int(l["top"]) != top:
+			continue
+		var d: Dictionary = session.get_loop_mesh(int(l["id"]))
+		if d.is_empty():
+			continue
+		var arrays := []
+		arrays.resize(Mesh.ARRAY_MAX)
+		arrays[Mesh.ARRAY_VERTEX] = d["positions"]
+		arrays[Mesh.ARRAY_NORMAL] = d["normals"]
+		arrays[Mesh.ARRAY_INDEX] = d["indices"]
+		var m := ArrayMesh.new()
+		m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+		var mi := MeshInstance3D.new()
+		mi.mesh = m
+		var mt := StandardMaterial3D.new()
+		mt.albedo_color = Color(1.0, 0.9, 0.3, 0.45)
+		mt.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mt.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mt.no_depth_test = false
+		mi.material_override = mt
+		work_root.add_child(mi)
+		hover_nodes.append(mi)
+
+func _clear_hover() -> void:
+	for n in hover_nodes:
+		(n as Node).queue_free()
+	hover_nodes.clear()
+
 func _update_extra_markers() -> void:
 	var extra: PackedInt32Array = session.get_state().get("extra", PackedInt32Array())
 	var loops: Array = session.get_loops()
@@ -703,10 +854,22 @@ func _opening_centre(id: int) -> Vector3:
 	return _live_centre()
 
 # The hook's tip goes to `p` (in the piece's coordinates). Its shaft comes from the worker's right hand, up and a little toward the worker.
-func _place_hook(p: Vector3) -> void:
+func _place_hook(p: Vector3, axis := Vector3.ZERO, blend := 0.0) -> void:
 	var handle_dir := Vector3(0.86, 0.38, 0.30).normalized()
+	if blend > 0.0 and axis.length() > 0.0:   # `axis` (the piece's coordinates) is the way from the tip to the handle: the shaft goes through the eye
+		handle_dir = handle_dir.lerp((work_root.global_basis * axis).normalized(), blend).normalized()
 	hook_node.global_position = work_root.to_global(p)
 	hook_node.global_basis = Basis.looking_at(-handle_dir, Vector3.UP)   # the node's -z points from the handle to the tip
+
+# The hook goes to `p` and turns its handle to `axis` (the way a shaft through an eye lies).
+func _move_hook_axis(p: Vector3, axis: Vector3, secs: float) -> void:
+	if not animate:
+		_place_hook(p, axis, 1.0)
+		return
+	var p0 := work_root.to_local(hook_node.global_position)
+	var tw := create_tween()
+	tw.tween_method(func(t: float) -> void: _place_hook(p0.lerp(p, t), axis, t), 0.0, 1.0, secs).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	await tw.finished
 
 func _move_hook(p: Vector3, secs: float) -> void:
 	if not animate:
@@ -755,6 +918,8 @@ func _on_view_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion and session.is_grabbed():
 		_drag_to((event as InputEventMouseMotion).position)
 		return
+	if event is InputEventMouseMotion and (event as InputEventMouseMotion).button_mask == 0:
+		_update_hover((event as InputEventMouseMotion).position)
 	orbit.handle(event, view_container.size, _on_click)
 
 # A ray from the pointer, in the piece's coordinates.
@@ -789,28 +954,20 @@ func _let_go() -> void:
 	soft_steps = 80
 	_refresh()
 
-# A click that did not drag picks the loop nearest to it (within a few pixels) as the opening of the next stitch.
+# A click that did not drag picks the stitch whose yarn is under the pointer (or whose hole the pointer is in) as the opening of the next stitch.
 func _on_click(pos: Vector2) -> void:
 	if busy:
 		return
-	var best := -1
-	var best_d := PICK_RADIUS_PX
-	var loops: Array = session.get_loops()
-	for l in loops:
-		var c: Vector3 = l["centre"]
-		if orbit.cam.is_position_behind(c):
-			continue
-		var s := orbit.cam.unproject_position(c)
-		var d := s.distance_to(pos)
-		if d < best_d:
-			best_d = d
-			best = int(l["id"])
-	if best >= 0:
-		if _click_shift:   # Shift + click: this loop is picked up in the last pull-through of the next stitch as well (a seam variation)
-			session.toggle_extra(best)
-		else:
-			picked = -1 if best == picked else best
-		_refresh()
+	var ray := _local_ray(pos)
+	var r: Dictionary = session.pick(ray[0], ray[1])
+	if not bool(r.get("ok", false)):
+		return
+	var top := int(r["top"])
+	if _click_shift:   # Shift + click: this stitch's loop is picked up in the last pull-through of the next stitch as well (a seam variation)
+		session.toggle_extra(top)
+	else:
+		picked = -1 if top == picked else top
+	_refresh()
 
 func _process(delta: float) -> void:
 	_marker_t += delta

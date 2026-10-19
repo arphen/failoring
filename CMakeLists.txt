@@ -194,3 +194,7 @@ target_link_libraries(yarn_cli PRIVATE crochet_core)
 # yarn mode: searches the lattice's design parameters for clean threading and no overlap
 add_executable(yarn_tune crochet_core/cli/yarn_tune.cpp)
 target_link_libraries(yarn_tune PRIVATE crochet_core)
+
+# yarn mode: a bounded physical simulation of a chain stitch (a hook, a loop, a yarn over, a pull through)
+add_executable(yarn_presim crochet_core/cli/yarn_presim.cpp)
+target_link_libraries(yarn_presim PRIVATE crochet_core)

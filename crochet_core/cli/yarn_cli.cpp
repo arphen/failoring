@@ -52,6 +52,46 @@ void views(const YarnWork& w, const std::string& prefix, const std::vector<std::
     }
 }
 
+// The hook drawing `loop` through its eye, at a few moments (docs/YARN_MODE_PLAN.md, the pull-through animation).
+void pullViews(const YarnWork& w, int loop, const std::string& prefix) {
+    const YarnLoop& L = w.loops[loop];
+    const Real sv[] = {0.0, 0.3, 0.6, 1.0};
+    int k = 0;
+    for (Real s : sv) {
+        const YarnWork::PullFrame f = w.pullFrame(loop, s);
+        RodSystem r = w.rod;
+        for (size_t i = 0; i < f.pts.size(); ++i) r.x[f.first + i] = f.pts[i];
+        YarnMeshOptions mo;
+        mo.segmentColour = w.segmentColours();
+        mo.maxParticles = std::min(r.particleCount(), w.strands[L.strand].first + L.p1 + 2);
+        YarnMesh m = buildYarnMesh(r, mo);
+        std::vector<Vec3> hp;
+        for (int i = 0; i <= 12; ++i) hp.push_back(f.tip + f.axis * (0.06 * i / 12.0));
+        YarnMeshOptions ho;
+        ho.plyContrast = 0.0;
+        const YarnMesh hm = buildTubeMesh(hp, 0.0019, Vec3{0.62, 0.64, 0.68}, ho);
+        const int off = (int)m.pos.size();
+        m.pos.insert(m.pos.end(), hm.pos.begin(), hm.pos.end());
+        m.nrm.insert(m.nrm.end(), hm.nrm.begin(), hm.nrm.end());
+        m.col.insert(m.col.end(), hm.col.begin(), hm.col.end());
+        for (const auto& t : hm.tri) m.tri.push_back({t[0] + off, t[1] + off, t[2] + off});
+        for (const char* v : {"obl", "side"}) {
+            YarnCamera cam;
+            cam.target = f.tip;
+            cam.fovDeg = 30;
+            cam.distance = 0.07;
+            Vec3 side = cross(f.axis, Vec3{0, 1, 0});
+            if (length2(side) < 1e-8) side = Vec3{0, 0, 1};
+            side = normalized(side);
+            if (side.z < 0) side = -side;   // from the front of the work
+            cam.dir = std::string(v) == "obl" ? normalized(side + Vec3{0, 0.7, 0} + f.axis * 0.4) : side;
+            renderYarnPng(prefix + "_pull" + std::to_string(k) + "_" + v + ".png", m, cam, 700, 520);
+        }
+        if (k == 0) std::printf("pull of loop %d: axis (%.2f %.2f %.2f), through %d\n", loop, f.axis.x, f.axis.y, f.axis.z, (int)f.through);
+        ++k;
+    }
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -63,6 +103,7 @@ int main(int argc, char** argv) {
     std::string out = "yarn";
     int lastLoops = 0;
     bool colour = false;
+    int pull = -2;
     YarnWork w;
     for (int i = 2; i + 1 < argc; i += 2) {
         const std::string k = argv[i];
@@ -70,7 +111,14 @@ int main(int argc, char** argv) {
         if (k == "--out") out = argv[i + 1];
         else if (k == "--last") lastLoops = (int)v;
         else if (k == "--colour") colour = v != 0;
+        else if (k == "--pull") pull = (int)v;
         else if (k == "--cscale") w.rodParams.radiusScale = v;
+        else if (k == "--pitch") w.wp.chainPitch = v * 1e-3;
+        else if (k == "--chA") w.wp.chainA = v * 1e-3;
+        else if (k == "--chB") w.wp.chainB = v * 1e-3;
+        else if (k == "--chLayer") w.wp.chainLayer = v * 1e-3;
+        else if (k == "--gap") w.wp.legGap = v * 1e-3;
+        else if (k == "--flare") w.wp.flare = v * 1e-3;
         else if (k == "--shape") w.rodParams.shapeStiffness = v;
     }
     w.slipKnot(Vec3{0, 0, 0});
@@ -114,5 +162,6 @@ int main(int argc, char** argv) {
     std::printf("min strand gap %.3f mm (2r = %.2f)\n", minStrandGap(w.rod, 5) * 1e3, 2e3 * w.rodParams.radius);
     std::printf("%d particles, %zu strands, %zu loops\n%s", w.particleCount(), w.strands.size(), w.loops.size(), w.patternText().c_str());
     views(w, out, {"front", "back", "top", "side", "oblique"}, lastLoops, colour);
+    if (pull >= -1) pullViews(w, pull < 0 ? (int)w.loops.size() - 1 + pull + 1 : pull, out);
     return 0;
 }

@@ -261,9 +261,51 @@ void testSoftPull() {
     pullTest(false);
 }
 
+void testPullFrames() {
+    std::printf("[the hook draws a loop through]\n");
+    YarnWork w;
+    w.slipKnot(Vec3{0, 0, 0});
+    for (int i = 0; i < 5; ++i) w.stitchChain();
+    w.stitchTurn(0);
+    const int before = (int)w.loops.size();
+    w.stitch("sc", -1);
+    const int after = (int)w.loops.size();
+    CHECKP(after - before >= 2, "a single crochet makes at least two loops to draw through (the post and the top): %d", after - before);
+    for (int id = before; id < after; ++id) {
+        const YarnLoop& L = w.loops[id];
+        if (L.through.empty()) continue;
+        const YarnWork::PullFrame end = w.pullFrame(id, 1.0);
+        Real dmax = 0;
+        for (size_t i = 0; i < end.pts.size(); ++i) dmax = std::max(dmax, length(end.pts[i] - w.rod.x[end.first + i]));
+        CHECKP(dmax < 1e-12, "loop %d: at the end of the pull the yarn is the loop as it is (%.2g mm off)", id, dmax * 1e3);
+        const EyeFrame ef = w.eye(L.through[0]);
+        Vec3 rc{};
+        for (int i = L.r0; i <= L.r1; ++i) rc += w.rod.x[w.strands[L.strand].first + i];
+        rc = rc / (Real)(L.r1 - L.r0 + 1);
+        CHECKP(length(w.pullFrame(id, 1.0).tip - rc) < 1e-9, "loop %d: the hook ends at the middle of the loop", id);
+        Real prev = -1e300;
+        bool finite = true, mono = true;
+        Real stretch = 0;
+        const Real r = w.rodParams.radius;
+        for (int k = 0; k <= 10; ++k) {
+            const YarnWork::PullFrame f = w.pullFrame(id, k / 10.0);
+            const Real along = dot(f.tip - ef.centre, f.axis);
+            if (k == 0) CHECKP(along < -3 * r, "loop %d: the hook starts behind the eye (%.1f mm), the yarn over it", id, along * 1e3);
+            if (along < prev - 1e-9) mono = false;
+            prev = along;
+            for (const Vec3& q : f.pts) finite = finite && std::isfinite(q.x) && std::isfinite(q.y) && std::isfinite(q.z);
+            for (size_t i = 0; i + 1 < f.pts.size(); ++i) stretch = std::max(stretch, length(f.pts[i + 1] - f.pts[i]) / (0.5e-3 + w.strands[L.strand].rest[L.p0 + i]));
+        }
+        CHECKP(finite, "loop %d: every frame is finite", id);
+        CHECKP(mono, "loop %d: the hook only moves toward the loop's side as it draws", id);
+        CHECKP(stretch < 4.0, "loop %d: the yarn is never pulled absurdly long between particles (%.1fx)", id, stretch);
+    }
+}
+
 }  // namespace
 
 int main() {
+    testPullFrames();
     testCursor();
     testThreading();
     testStitchKinds();

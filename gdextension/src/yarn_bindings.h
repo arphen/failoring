@@ -12,6 +12,7 @@
 #include <godot_cpp/variant/string.hpp>
 #include <godot_cpp/variant/typed_array.hpp>
 
+#include "failoring/crochet/yarn_render.hpp"
 #include "failoring/crochet/yarn_work.hpp"
 
 namespace godot {
@@ -25,8 +26,11 @@ public:
     void reset();
     // "chain", "sc" / "hdc" / "dc" / "slst" (under both loops), the same with "_front" / "_back" (one loop only), "skip" (the next stitch), "turn" (`opening` is
     // then the number of turning chains): one hook action. `opening` is the loop to work into (-1: the next one in order). Returns
-    // {ok, loop, msg, particles (the yarn now has), row, cursor}.
+    // {ok, loop, loops (the loops it made, in order), msg, particles (the yarn now has), row, cursor}.
     Dictionary action(const String& kind, int opening);
+    // The yarn while the hook draws `loop` (one of the loops `action` reports in "loops") through its eye, `s` 0..1: {positions, normals, colors, indices (as get_mesh),
+    // tip, axis (from the hook's throat toward the handle, in the piece's coordinates), through}. Only the yarn up to that loop is in the mesh.
+    Dictionary anim_frame(int loop, double s, int sides, int subdiv);
     // `n` soft-physics steps (the yarn settling)
     void tick(int n);
     // The yarn as a mesh: {positions, normals, colors, indices}; `up_to` draws only the first that many particles (-1: all).
@@ -55,6 +59,13 @@ public:
     void drag_to(const Vector3& point);
     void release();
     bool is_grabbed() const { return grip_ >= 0; }
+    // What is under a ray (in the coordinates the piece is shown in): the loop whose yarn is nearest to it, or failing that the loop whose ring the ray goes through
+    // ({ok, loop, top (the stitch it belongs to), strand, point}). `top` is what a click means: the stitch to work into.
+    Dictionary pick(const Vector3& origin, const Vector3& dir);
+    // The yarn of one loop as a mesh, a little thicker than the yarn (for highlighting it); same arrays as get_mesh.
+    Dictionary get_loop_mesh(int loop);
+    // A yarn along a curve (in the coordinates given), rounded at both ends: the run from the work to its ball.
+    Dictionary tube(const PackedVector3Array& points, const Color& colour, double radius, int sides, int subdiv) const;
 
 protected:
     static void _bind_methods();
@@ -65,6 +76,7 @@ private:
     double expand_ = 1.0, thickness_ = 1.0;
     int grip_ = -1;
     fl::Vec3 unview(const fl::Vec3& p) const;
+    static Dictionary mesh_to_dict(const fl::YarnMesh& m);
     fl::Vec3 pivot() const;
     fl::Vec3 view(const fl::Vec3& p) const;   // a point of the work as it is shown
 };

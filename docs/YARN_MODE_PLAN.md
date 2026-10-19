@@ -161,3 +161,18 @@ Phase Y3 builds to this; it is the point of the whole mode.
 The seam variants that can be made today: (1) colour at the last pull-through, (2) colour from the start of the stitch, (3) the last pull-through also takes loops of the other colour
 (Shift + click), (4) a seam stitch worked into one loop only. Each is a click or two; the user's own list of what to compare, and which of the real techniques these stand for, is the
 open question of section 10.
+
+### 13.x The hook makes the stitch (2026-10-19)
+
+The editor no longer just grows the yarn: for every loop a stitch makes (a chain's loop, an sc's post and its top, a dc's yarn over, post and top) the hook goes in
+behind the eye the loop works through, with the yarn over it, and draws the loop out through the eye toward the worker; the loop opens as it comes
+(`YarnWork::pullFrame(loop, s)`, `YarnSession.anim_frame`, `yarn_view.gd::_pull_animation`). It is kinematic and driven by the design, so it always ends exactly at the
+finished loop (tested: 0 mm off). A yarn over closes into its ring round the hook. Also: yarn ends are rounded (dome caps) and there are yarn balls with the run from the
+work to the ball; any loop can be clicked (pick by yarn, with hover highlight).
+
+The bounded physical pre-simulation (`yarn_presim`) was tried: a hook as a moving capsule, a slip loop, the working yarn under tension, a yarn over laid by a guide. The yarn over and
+the draw-back run, but pulling the bight through a loop that the work holds makes the solver blow up. It stays as an experiment; the coefficients of the animation
+(how far behind the eye the hook starts, how the folded loop opens) were set by eye against the renders.
+
+Still to do for the hook: show the yarn running over the shaft before the pull (the working yarn from the ball laid over the hook), the old loops closing as the new one
+comes through, and chains drawn with V-shaped loops.

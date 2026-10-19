@@ -28,6 +28,50 @@ Quat nlerp(const Quat& a, Quat b, Real w) {
 
 }  // namespace
 
+namespace {
+
+struct RingSpec {
+    Vec3 pos, d1, d2, base;
+    Real r = 0, arc = 0;
+};
+
+void emitRing(YarnMesh& m, const RingSpec& g, const YarnMeshOptions& o, int sides) {
+    for (int j = 0; j < sides; ++j) {
+        const Real th = 2.0 * kPi * j / sides;
+        const Vec3 radial = g.d1 * std::cos(th) + g.d2 * std::sin(th);
+        m.pos.push_back(g.pos + radial * g.r);
+        m.nrm.push_back(radial);
+        const Real phase = o.plies * (th + 2.0 * kPi * g.arc / o.plyPitch);
+        const Real tone = 1.0 - o.plyContrast + o.plyContrast * (0.5 + 0.5 * std::cos(phase));
+        m.col.push_back(g.base * tone);
+    }
+}
+
+void connectRings(YarnMesh& m, int firstRing, int rings, int sides, bool closed) {
+    for (int k = 0; k + 1 < rings + (closed ? 1 : 0); ++k) {
+        const int a = firstRing + k * sides, b = firstRing + ((k + 1) % rings) * sides;
+        for (int j = 0; j < sides; ++j) {
+            const int j1 = (j + 1) % sides;
+            m.tri.push_back({a + j, b + j1, b + j});
+            m.tri.push_back({a + j, a + j1, b + j1});
+        }
+    }
+}
+
+// the rounded end of a yarn: rings shrinking toward the tip, `dir` pointing out of the yarn
+void capRings(std::vector<RingSpec>& out, const RingSpec& end, const Vec3& dir, bool atStart) {
+    static const Real ang[] = {0.55, 1.0, 1.35, 1.52};   // radians round the dome: the ring's radius is cos, its distance out is sin
+    for (int k = 0; k < 4; ++k) {
+        RingSpec g = end;
+        g.pos = end.pos + dir * (end.r * std::sin(ang[k]));
+        g.r = end.r * std::cos(ang[k]);
+        g.arc = end.arc + (atStart ? -1.0 : 1.0) * end.r * std::sin(ang[k]);
+        out.push_back(g);
+    }
+}
+
+}  // namespace
+
 YarnMesh buildYarnMesh(const RodSystem& rs, const YarnMeshOptions& o) {
     YarnMesh m;
     const int sides = std::max(3, o.sides), sub = std::max(1, o.subdiv);
@@ -47,12 +91,12 @@ YarnMesh buildYarnMesh(const RodSystem& rs, const YarnMeshOptions& o) {
             if (ch.closed) return rs.q[ch.firstSegment + ((i % S) + S) % S];
             return rs.q[ch.firstSegment + std::clamp(i, 0, S - 1)];
         };
+        std::vector<RingSpec> rings;
+        std::vector<Vec3> tangents;
         Real arc = 0;
         Vec3 prevPos;
         bool havePrev = false;
-        const int firstRing = (int)m.pos.size();
         const int samples = S * sub + (ch.closed ? 0 : 1);
-        int ringsBuilt = 0;
         for (int k = 0; k < samples; ++k) {
             const int i = std::min(k / sub, S - 1);
             const Real t = (k == S * sub) ? 1.0 : (Real)(k % sub) / sub;
@@ -68,33 +112,79 @@ YarnMesh buildYarnMesh(const RodSystem& rs, const YarnMeshOptions& o) {
             d1 = d1 - T * dot(d1, T);
             if (length2(d1) < 1e-18) d1 = cross(T, Vec3{0, 1, 0});
             d1 = normalized(d1);
-            const Vec3 d2 = cross(T, d1);
             if (havePrev) arc += length(pos - prevPos);
             prevPos = pos;
             havePrev = true;
             const int seg = ch.firstSegment + std::min(i, S - 1);
-            const Vec3 base = (!o.segmentColour.empty() && seg < (int)o.segmentColour.size()) ? o.segmentColour[seg] : o.colour;
-            const Real r = rs.radius[seg] * o.radiusScale;
-            for (int j = 0; j < sides; ++j) {
-                const Real th = 2.0 * kPi * j / sides;
-                const Vec3 radial = d1 * std::cos(th) + d2 * std::sin(th);
-                m.pos.push_back(pos + radial * r);
-                m.nrm.push_back(radial);
-                const Real phase = o.plies * (th + 2.0 * kPi * arc / o.plyPitch);
-                const Real tone = 1.0 - o.plyContrast + o.plyContrast * (0.5 + 0.5 * std::cos(phase));
-                m.col.push_back(base * tone);
-            }
-            ++ringsBuilt;
+            RingSpec g;
+            g.pos = pos;
+            g.d1 = d1;
+            g.d2 = cross(T, d1);
+            g.base = (!o.segmentColour.empty() && seg < (int)o.segmentColour.size()) ? o.segmentColour[seg] : o.colour;
+            g.r = rs.radius[seg] * o.radiusScale;
+            g.arc = arc;
+            rings.push_back(g);
+            tangents.push_back(T);
         }
-        for (int k = 0; k + 1 < ringsBuilt + (ch.closed ? 1 : 0); ++k) {
-            const int a = firstRing + k * sides, b = firstRing + ((k + 1) % ringsBuilt) * sides;
-            for (int j = 0; j < sides; ++j) {
-                const int j1 = (j + 1) % sides;
-                m.tri.push_back({a + j, b + j1, b + j});
-                m.tri.push_back({a + j, a + j1, b + j1});
-            }
+        if (rings.empty()) continue;
+        std::vector<RingSpec> all;   // the rounded ends first and last (an open yarn ends in a dome, not a cut)
+        if (!ch.closed) {
+            std::vector<RingSpec> head;
+            capRings(head, rings.front(), -tangents.front(), true);
+            all.insert(all.end(), head.rbegin(), head.rend());
         }
+        all.insert(all.end(), rings.begin(), rings.end());
+        if (!ch.closed) capRings(all, rings.back(), tangents.back(), false);
+        const int firstRing = (int)m.pos.size();
+        for (const RingSpec& g : all) emitRing(m, g, o, sides);
+        connectRings(m, firstRing, (int)all.size(), sides, ch.closed);
     }
+    return m;
+}
+
+// A yarn along a free curve (the run to the ball): the same tube, with the same plies, rounded at both ends.
+YarnMesh buildTubeMesh(const std::vector<Vec3>& pts, Real radius, const Vec3& colour, const YarnMeshOptions& o) {
+    YarnMesh m;
+    const int sides = std::max(3, o.sides), sub = std::max(1, o.subdiv);
+    const int n = (int)pts.size();
+    if (n < 2) return m;
+    auto P = [&](int i) { return pts[std::clamp(i, 0, n - 1)]; };
+    std::vector<RingSpec> rings;
+    std::vector<Vec3> tangents;
+    Real arc = 0;
+    Vec3 prevPos, prevD1;
+    bool have = false;
+    for (int k = 0; k <= (n - 1) * sub; ++k) {
+        const int i = std::min(k / sub, n - 2);
+        const Real t = (k == (n - 1) * sub) ? 1.0 : (Real)(k % sub) / sub;
+        const Vec3 pos = catmull(P(i - 1), P(i), P(i + 1), P(i + 2), t);
+        Vec3 T = catmullTangent(P(i - 1), P(i), P(i + 1), P(i + 2), t);
+        if (length2(T) < 1e-24) T = P(i + 1) - P(i);
+        T = normalized(T);
+        Vec3 d1 = have ? prevD1 - T * dot(prevD1, T) : cross(T, Vec3{0, 1, 0});   // parallel transport
+        if (length2(d1) < 1e-18) d1 = cross(T, Vec3{1, 0, 0});
+        d1 = normalized(d1);
+        if (have) arc += length(pos - prevPos);
+        prevPos = pos;
+        prevD1 = d1;
+        have = true;
+        RingSpec g;
+        g.pos = pos;
+        g.d1 = d1;
+        g.d2 = cross(T, d1);
+        g.base = colour;
+        g.r = radius * o.radiusScale;
+        g.arc = arc;
+        rings.push_back(g);
+        tangents.push_back(T);
+    }
+    std::vector<RingSpec> all, head;
+    capRings(head, rings.front(), -tangents.front(), true);
+    all.insert(all.end(), head.rbegin(), head.rend());
+    all.insert(all.end(), rings.begin(), rings.end());
+    capRings(all, rings.back(), tangents.back(), false);
+    for (const RingSpec& g : all) emitRing(m, g, o, sides);
+    connectRings(m, 0, (int)all.size(), sides, false);
     return m;
 }
 

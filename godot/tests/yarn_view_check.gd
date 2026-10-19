@@ -86,12 +86,12 @@ func _ready() -> void:
 	var targets: PackedInt32Array = st["targets"]
 	var pick_id: int = targets[2]
 	var loops: Array = yv.session.get_loops()
-	var c3: Vector3 = loops[pick_id]["centre"]
+	var probe: Vector3 = loops[pick_id]["probe"]   # a point on the yarn of that loop
 	await get_tree().process_frame
 	yv.orbit.apply()
-	var scr: Vector2 = yv.orbit.cam.unproject_position(c3)
+	var scr: Vector2 = yv.orbit.cam.unproject_position(yv.work_root.to_global(probe))
 	yv._on_click(scr)
-	check("clicking a loop in the view picks it as the opening of the next stitch", yv.picked == pick_id)
+	check("clicking on the yarn of a loop picks its stitch as the opening of the next stitch", yv.picked == int(loops[pick_id]["top"]))
 	var before_cursor := int(yv.session.get_state()["cursor"])
 	await yv.do_action("sc")
 	st = yv.session.get_state()
@@ -184,9 +184,9 @@ func _ready() -> void:
 	var l_extra: Array = yv.session.get_loops()
 	var ex_id := int(yv.session.get_state()["targets"][1])
 	yv._click_shift = true
-	yv._on_click(yv.orbit.cam.unproject_position(l_extra[ex_id]["centre"]))
+	yv._on_click(yv.orbit.cam.unproject_position(yv.work_root.to_global(l_extra[ex_id]["probe"])))
 	yv._click_shift = false
-	check("Shift + click marks the loop as an extra one for the next last pull-through (and does not pick it as the opening)", (yv.session.get_state()["extra"] as PackedInt32Array).has(ex_id) and yv.picked == -1)
+	check("Shift + click marks the loop as an extra one for the next last pull-through (and does not pick it as the opening)", (yv.session.get_state()["extra"] as PackedInt32Array).has(int(l_extra[ex_id]["top"])) and yv.picked == -1)
 	await yv.do_action("sc")
 	check("making the stitch clears the mark", (yv.session.get_state()["extra"] as PackedInt32Array).size() == 0)
 
@@ -263,5 +263,19 @@ func _ready() -> void:
 	# the structure of what was made: every pass through an eye is a clean threading (the topology is right)
 	yv.reset_piece()
 	check("a new piece starts again from the slip knot", yv.history.size() == 0 and int(yv.session.get_state()["row"]) == 0)
+	# the hook makes the stitch: it draws the new loop through the loop on the hook, then rests at the new loop
+	yv.animate = true
+	for i in 3:
+		await yv.do_action("chain")
+	var live: Array = yv.session.get_state()["live"]
+	var fr0: Dictionary = yv.session.anim_frame(int(live[live.size() - 1]), 0.0, 8, 2)
+	var fr1: Dictionary = yv.session.anim_frame(int(live[live.size() - 1]), 1.0, 8, 2)
+	var tip_travel: float = (fr1["tip"] as Vector3).distance_to(fr0["tip"])
+	check("the hook goes through the eye (%.1f mm between the start and the end of the pull)" % (tip_travel * 1000), bool(fr0["through"]) and tip_travel > 0.006)
+	check("...the last moment of the pull is the finished yarn (same vertices as the whole mesh)", (fr1["positions"] as PackedVector3Array).size() == (yv.session.get_mesh(-1, 8, 2)["positions"] as PackedVector3Array).size())
+	check("...the first moment has less yarn out than the last (the loop is not out yet)", _extent(fr0["positions"]) < _extent(fr1["positions"]) + 1.0e-9)
+	check("the animated chains made three more stitches", int(yv.session.get_state()["made"]) == 3)
+	check("the hook rests at the new loop", yv.hook_node.global_position.distance_to(yv.work_root.to_global(yv._live_centre())) < 0.0015)
+	yv.animate = false
 	print("RESULT: %d failed" % fails)
 	get_tree().quit(1 if fails > 0 else 0)

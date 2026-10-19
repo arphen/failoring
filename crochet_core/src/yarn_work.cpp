@@ -82,6 +82,7 @@ int YarnWork::addLoop(int strand, int p0, int p1, bool live) {
     l.row = row;
     loops.push_back(l);
     const int id = (int)loops.size() - 1;
+    loops[id].top = id;
     if (live) hook.push_back(id);
     return id;
 }
@@ -104,6 +105,57 @@ EyeFrame YarnWork::eye(int loop) const {
     e.normal = length2(area) > 1e-30 ? normalized(area) : Vec3{0, 0, 1};
     e.radius = std::sqrt(0.5 * length(area) / kPi);
     return e;
+}
+
+YarnWork::PullFrame YarnWork::pullFrame(int loopId, Real s) const {
+    PullFrame f;
+    const YarnLoop& L = loops[loopId];
+    const Strand& S = strands[L.strand];
+    s = std::min(1.0, std::max(0.0, s));
+    const Real e = s * s * (3.0 - 2.0 * s);
+    auto cur = [&](int i) { const int g = S.first + i; return g < (int)rod.x.size() ? rod.x[g] : S.pts[i]; };
+    f.first = S.first + L.p0;
+    for (int i = L.p0; i <= L.p1; ++i) f.pts.push_back(cur(i));
+    Vec3 rc{};
+    for (int i = L.r0; i <= L.r1; ++i) rc += cur(i);
+    rc = rc / (Real)(L.r1 - L.r0 + 1);
+    f.tip = rc;
+    const EyeFrame own = eye(loopId);
+    f.axis = own.normal;
+    if (L.through.empty()) {   // a yarn over: the yarn closes round the hook into its ring
+        const Real k = 0.25 + 0.75 * e;
+        for (Vec3& q : f.pts) q = rc + (q - rc) * k;
+        return f;
+    }
+    f.through = true;
+    // the direction the loop goes through the eye, as the loop was laid
+    const EyeFrame ef = eye(L.through[0]);
+    const Vec3 target = L.through.size() > 1 ? eye(L.through[1]).centre : rc;
+    const Vec3 toward = normalized(target - ef.centre);
+    Vec3 n = ef.normal;
+    if (dot(toward, n) < 0) n = -n;
+    Vec3 a = normalized(toward * 0.5 + n * 0.5);
+    if (dot(toward, n) > 0.75) a = toward;
+    const Vec3 E = ef.centre;
+    auto xi = [&](const Vec3& q) { return dot(q - E, a); };
+    const Real behind = 0.0075;                       // how far behind the eye the hook's throat starts
+    const Real xiR = xi(rc);
+    const Real xiH = -behind + (xiR + behind) * e;   // the throat's position along the way through
+    const Vec3 latRC = (rc - E) - a * xiR;
+    const Real k = 0.10 + 0.90 * e * e;               // how much of the loop beyond the throat is still folded onto the hook
+    const Real w = 0.30 + 0.70 * e;                   // and how closely its two sides lie together
+    for (int i = L.p0; i <= L.p1; ++i) {
+        Vec3& q = f.pts[i - L.p0];
+        const Real x = xi(q);
+        if (x <= xiH) continue;
+        const Vec3 lat = (q - E) - a * x;
+        const bool ring = i >= L.r0 && i <= L.r1;
+        const Vec3 lat2 = ring ? latRC * e + (lat - latRC) * w : lat;
+        q = E + a * (xiH + (x - xiH) * k) + lat2;
+    }
+    f.tip = E + a * xiH + latRC * e;
+    f.axis = a;
+    return f;
 }
 
 YarnWork::HookPose YarnWork::hookPose() const {
@@ -373,8 +425,9 @@ int YarnWork::chain() {
     if (row == 0) {
         // the foundation chain: the next ring one stitch on along the row, alternating between the two layers
         ++chainCount_;
-        c = origin_ + progress * (wp.stitchWidth * (chainCount_ + 1)) + z * ((chainCount_ % 2 == 0 ? 1.0 : -1.0) * wp.layerGap);
-        id = loopAt(c, z, {hook.back()});
+        c = origin_ + progress * (wp.chainPitch * (chainCount_ + 1)) + z * ((chainCount_ % 2 == 0 ? 1.0 : -1.0) * wp.chainLayer);
+        const Vec3 along = progress;
+        id = loopAt(c, z, {hook.back()}, &along, wp.chainA, wp.chainB);
     } else {
         // a turning chain: rings standing above the stitch on the hook, at the end of the row
         const EyeFrame e = eye(hook.back());
@@ -401,7 +454,7 @@ Real YarnWork::heightOf(const std::string& kind) const {
 // and is a bar (a flat elongated ring leaning back toward the worker, which from the front is a pair of strands side by side along the row). The loop
 // pulled through that and the loops on the hook is the stitch's top: another bar, half a stitch along. hdc and dc have yarn overs (rings on the hook
 // that lie behind the post) and dc pulls through twice. Position comes from the opening's place along the row; the lean from the worker's side.
-int YarnWork::tallStitch(const std::string& kind, int opening, Loops which) {
+int YarnWork::tallStitchBody(const std::string& kind, int opening, Loops which) {
     const EyeFrame b = eye(opening);
     const Vec3 z = zAxis();
     const Vec3 along = progress;
@@ -436,6 +489,13 @@ int YarnWork::tallStitch(const std::string& kind, int opening, Loops which) {
     std::vector<int> eyes{b1, hook[hook.size() - 2]};
     eyes.insert(eyes.end(), extra_.begin(), extra_.end());
     return loopAt(base + upDir * h + along * (0.5 * wp.stitchWidth) - z * (0.3 * wp.layerGap), lean, eyes, &along, wp.barA, wp.barB);
+}
+
+int YarnWork::tallStitch(const std::string& kind, int opening, Loops which) {
+    const size_t firstNew = loops.size();
+    const int top = tallStitchBody(kind, opening, which);
+    for (size_t i = firstNew; i < loops.size(); ++i) loops[i].top = top;   // its post, yarn overs and middle loop belong to the stitch's top
+    return top;
 }
 
 int YarnWork::sc(int opening, Loops which) {

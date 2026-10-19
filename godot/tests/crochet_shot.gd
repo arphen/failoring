@@ -67,6 +67,12 @@ func _ready() -> void:
 		if OS.has_environment("FL_SHOT_YARN_PITCH"):
 			yv.orbit.pitch = float(OS.get_environment("FL_SHOT_YARN_PITCH"))
 		yv.orbit.apply()
+		if OS.has_environment("FL_SHOT_PULL"):   # the hook drawing the last loop through its eye, a moment s (0..1) of it: "s" or "s:loopsback"
+			var parts := OS.get_environment("FL_SHOT_PULL").split(":")
+			var live: Array = yv.session.get_state()["live"]
+			var d: Dictionary = yv.session.anim_frame(int(live[live.size() - 1]), float(parts[0]), 10, 3)
+			yv._show_mesh(d)
+			yv._place_hook(d["tip"], d["axis"], 1.0)
 		for i in 8:
 			await get_tree().process_frame
 		var yout := OS.get_environment("FL_SHOT_OUT") if OS.has_environment("FL_SHOT_OUT") else "/tmp/crochet_shot.png"

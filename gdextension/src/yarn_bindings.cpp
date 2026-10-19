@@ -46,6 +46,7 @@ Dictionary YarnSession::action(const String& kind_in, int opening) {
     if (kind.ends_with("_front")) { which = fl::Loops::Front; kind = kind.substr(0, kind.length() - 6); }
     else if (kind.ends_with("_back")) { which = fl::Loops::Back; kind = kind.substr(0, kind.length() - 5); }
     int loop = -1;
+    const int loops0 = (int)work_.loops.size();
     if (kind == "chain") {
         loop = work_.stitchChain();
     } else if (kind == "sc" || kind == "hdc" || kind == "dc" || kind == "slst") {
@@ -69,6 +70,10 @@ Dictionary YarnSession::action(const String& kind_in, int opening) {
     }
     if (loop >= 0) r["ok"] = true;
     r["loop"] = loop;
+    Array made;
+    if (kind != "turn" && kind != "skip")
+        for (int i = loops0; i < (int)work_.loops.size(); ++i) made.push_back(i);
+    r["loops"] = made;
     r["particles"] = work_.particleCount();
     r["row"] = work_.row;
     r["cursor"] = work_.cursor();
@@ -112,18 +117,7 @@ void YarnSession::tick(int n) {
     for (int i = 0; i < n; ++i) work_.rod.step(1.0 / 120.0);
 }
 
-Dictionary YarnSession::get_mesh(int up_to, int sides, int subdiv) {
-    fl::YarnMeshOptions o;
-    o.sides = sides > 2 ? sides : 8;
-    o.subdiv = subdiv > 0 ? subdiv : 2;
-    o.maxParticles = up_to;
-    o.radiusScale = thickness_;
-    o.segmentColour = work_.segmentColours();
-    fl::YarnMesh m = fl::buildYarnMesh(work_.rod, o);
-    if (expand_ != 1.0) {
-        const fl::Vec3 pv = pivot();
-        for (fl::Vec3& p : m.pos) p = pv + (p - pv) * expand_;
-    }
+Dictionary YarnSession::mesh_to_dict(const fl::YarnMesh& m) {
     PackedVector3Array pos, nrm;
     PackedColorArray col;
     PackedInt32Array idx;
@@ -149,6 +143,146 @@ Dictionary YarnSession::get_mesh(int up_to, int sides, int subdiv) {
     return d;
 }
 
+Dictionary YarnSession::get_mesh(int up_to, int sides, int subdiv) {
+    fl::YarnMeshOptions o;
+    o.sides = sides > 2 ? sides : 8;
+    o.subdiv = subdiv > 0 ? subdiv : 2;
+    o.maxParticles = up_to;
+    o.radiusScale = thickness_;
+    o.segmentColour = work_.segmentColours();
+    fl::YarnMesh m = fl::buildYarnMesh(work_.rod, o);
+    if (expand_ != 1.0) {
+        const fl::Vec3 pv = pivot();
+        for (fl::Vec3& p : m.pos) p = pv + (p - pv) * expand_;
+    }
+    return mesh_to_dict(m);
+}
+
+Dictionary YarnSession::anim_frame(int loop, double s, int sides, int subdiv) {
+    Dictionary out;
+    if (loop < 0 || loop >= (int)work_.loops.size()) return out;
+    const fl::YarnWork::PullFrame f = work_.pullFrame(loop, s);
+    const fl::YarnLoop& L = work_.loops[loop];
+    std::vector<fl::Vec3> saved;
+    for (size_t i = 0; i < f.pts.size(); ++i) {
+        saved.push_back(work_.rod.x[f.first + i]);
+        work_.rod.x[f.first + i] = f.pts[i];
+    }
+    fl::YarnMeshOptions o;
+    o.sides = sides > 2 ? sides : 8;
+    o.subdiv = subdiv > 0 ? subdiv : 2;
+    o.maxParticles = std::min(work_.rod.particleCount(), work_.strands[L.strand].first + L.p1 + 2);
+    o.radiusScale = thickness_;
+    o.segmentColour = work_.segmentColours();
+    fl::YarnMesh m = fl::buildYarnMesh(work_.rod, o);
+    for (size_t i = 0; i < f.pts.size(); ++i) work_.rod.x[f.first + i] = saved[i];
+    if (expand_ != 1.0) {
+        const fl::Vec3 pv = pivot();
+        for (fl::Vec3& p : m.pos) p = pv + (p - pv) * expand_;
+    }
+    out = mesh_to_dict(m);
+    out["tip"] = v3(view(f.tip));
+    out["axis"] = v3(f.axis);
+    out["through"] = f.through;
+    return out;
+}
+
+Dictionary YarnSession::tube(const PackedVector3Array& points, const Color& colour, double radius, int sides, int subdiv) const {
+    std::vector<fl::Vec3> pts;
+    for (int64_t i = 0; i < points.size(); ++i) pts.push_back(fl::Vec3{points[i].x, points[i].y, points[i].z});
+    fl::YarnMeshOptions o;
+    o.sides = sides > 2 ? sides : 8;
+    o.subdiv = subdiv > 0 ? subdiv : 2;
+    return mesh_to_dict(fl::buildTubeMesh(pts, radius, fl::Vec3{colour.r, colour.g, colour.b}, o));
+}
+
+Dictionary YarnSession::get_loop_mesh(int loop) {
+    if (loop < 0 || loop >= (int)work_.loops.size()) return Dictionary();
+    const fl::YarnLoop& l = work_.loops[loop];
+    std::vector<fl::Vec3> pts;
+    for (int i = l.p0; i <= l.p1; ++i) pts.push_back(view(work_.point(l.strand, i)));
+    fl::YarnMeshOptions o;
+    o.sides = 8;
+    o.subdiv = 2;
+    o.plyContrast = 0.0;
+    return mesh_to_dict(fl::buildTubeMesh(pts, work_.rodParams.radius * 1.35 * thickness_, fl::Vec3{1.0, 0.9, 0.3}, o));
+}
+
+Dictionary YarnSession::pick(const Vector3& origin, const Vector3& dir) {
+    Dictionary r;
+    r["ok"] = false;
+    const fl::Vec3 o{origin.x, origin.y, origin.z};
+    fl::Vec3 d{dir.x, dir.y, dir.z};
+    const double dl = fl::length(d);
+    if (dl < 1e-12) return r;
+    d = d / dl;
+    // owner loop of every node
+    std::vector<std::vector<int>> owner(work_.strands.size());
+    for (size_t s = 0; s < work_.strands.size(); ++s) owner[s].assign(work_.strands[s].pts.size(), -1);
+    for (size_t li = 0; li < work_.loops.size(); ++li)
+        for (int i = work_.loops[li].p0; i <= work_.loops[li].p1; ++i) owner[work_.loops[li].strand][i] = (int)li;
+    // 1. the yarn nearest to the ray
+    const double reach = 3.5 * work_.rodParams.radius * expand_ * thickness_ + 1.0e-4;
+    double best = reach;
+    int bestLoop = -1, bestStrand = -1;
+    fl::Vec3 bestPoint{};
+    for (size_t s = 0; s < work_.strands.size(); ++s) {
+        const auto& P = work_.strands[s].pts;
+        for (size_t i = 0; i + 1 < P.size(); ++i) {
+            if (owner[s][i] < 0 && owner[s][i + 1] < 0) continue;   // travel and tails belong to no loop
+            const fl::SegSegResult sr = fl::closestSegmentSegment(o, o + d * 5.0, view(P[i]), view(P[i + 1]));
+            const double dist = std::sqrt(sr.dist2);
+            if (dist < best) {
+                best = dist;
+                bestLoop = owner[s][i] >= 0 ? owner[s][i] : owner[s][i + 1];
+                bestStrand = (int)s;
+                bestPoint = sr.pb;
+            }
+        }
+    }
+    // 2. failing that, a ring the ray goes through (the hole of a V)
+    if (bestLoop < 0) {
+        double bestT = 1e300;
+        for (size_t li = 0; li < work_.loops.size(); ++li) {
+            const fl::YarnLoop& l = work_.loops[li];
+            if (l.r1 - l.r0 + 1 < 3) continue;
+            std::vector<fl::Vec3> ring;
+            fl::Vec3 c{};
+            for (int i = l.r0; i <= l.r1; ++i) {
+                ring.push_back(view(work_.point(l.strand, i)));
+                c += ring.back();
+            }
+            c = c / (double)ring.size();
+            for (size_t i = 0; i < ring.size(); ++i) {
+                const fl::Vec3 &t0 = ring[i], &t1 = ring[(i + 1) % ring.size()];
+                const fl::Vec3 e1 = t0 - c, e2 = t1 - c, pv = fl::cross(d, e2);
+                const double det = fl::dot(e1, pv);
+                if (std::fabs(det) < 1e-30) continue;
+                const fl::Vec3 tv = o - c;
+                const double u = fl::dot(tv, pv) / det;
+                if (u < 0 || u > 1) continue;
+                const fl::Vec3 qv = fl::cross(tv, e1);
+                const double v = fl::dot(d, qv) / det;
+                if (v < 0 || u + v > 1) continue;
+                const double t = fl::dot(e2, qv) / det;
+                if (t > 0 && t < bestT) {
+                    bestT = t;
+                    bestLoop = (int)li;
+                    bestStrand = l.strand;
+                    bestPoint = o + d * t;
+                }
+            }
+        }
+    }
+    if (bestLoop < 0) return r;
+    r["ok"] = true;
+    r["loop"] = bestLoop;
+    r["top"] = work_.loops[bestLoop].top;
+    r["strand"] = bestStrand;
+    r["point"] = v3(bestPoint);
+    return r;
+}
+
 int YarnSession::get_particle_count() const { return work_.particleCount(); }
 
 TypedArray<Dictionary> YarnSession::get_loops() const {
@@ -159,6 +293,8 @@ TypedArray<Dictionary> YarnSession::get_loops() const {
         d["id"] = (int)i;
         d["row"] = work_.loops[i].row;
         d["live"] = work_.loops[i].live;
+        d["top"] = work_.loops[i].top;
+        d["probe"] = v3(view(work_.point(work_.loops[i].strand, work_.loops[i].r0 + (work_.loops[i].r1 - work_.loops[i].r0) / 2)));   // a point on its yarn
         d["centre"] = v3(view(e.centre));
         d["normal"] = v3(e.normal);
         d["radius"] = e.radius;
@@ -188,6 +324,21 @@ Dictionary YarnSession::get_state() const {
     PackedInt32Array extra;
     for (int e : work_.extraLoops()) extra.push_back(e);
     d["extra"] = extra;
+    Array ends;
+    for (size_t si = 0; si < work_.strands.size(); ++si) {
+        const fl::Strand& st = work_.strands[si];
+        if (st.pts.size() < 2) continue;
+        const fl::Vec3 e = st.pts.back();
+        const fl::Vec3 back = st.pts[st.pts.size() - 2];
+        Dictionary en;
+        en["strand"] = (int)si;
+        en["end"] = v3(view(e));
+        en["dir"] = v3(fl::normalized(view(e) - view(back)));
+        en["colour"] = Color((float)st.colour.x, (float)st.colour.y, (float)st.colour.z);
+        en["active"] = (int)si == work_.active;
+        ends.push_back(en);
+    }
+    d["ends"] = ends;
     d["strands"] = (int)work_.strands.size();
     d["pending_colour"] = work_.colourPending();
     const fl::Vec3 ac = work_.activeColour();
@@ -251,6 +402,7 @@ void YarnSession::release() {
 void YarnSession::_bind_methods() {
     ClassDB::bind_method(D_METHOD("reset"), &YarnSession::reset);
     ClassDB::bind_method(D_METHOD("action", "kind", "opening"), &YarnSession::action);
+    ClassDB::bind_method(D_METHOD("anim_frame", "loop", "s", "sides", "subdiv"), &YarnSession::anim_frame);
     ClassDB::bind_method(D_METHOD("tick", "n"), &YarnSession::tick);
     ClassDB::bind_method(D_METHOD("get_mesh", "up_to", "sides", "subdiv"), &YarnSession::get_mesh);
     ClassDB::bind_method(D_METHOD("get_particle_count"), &YarnSession::get_particle_count);
@@ -264,6 +416,9 @@ void YarnSession::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_pattern_rows"), &YarnSession::get_pattern_rows);
     ClassDB::bind_method(D_METHOD("set_view", "expand", "thickness"), &YarnSession::set_view);
     ClassDB::bind_method(D_METHOD("grab", "origin", "dir"), &YarnSession::grab);
+    ClassDB::bind_method(D_METHOD("pick", "origin", "dir"), &YarnSession::pick);
+    ClassDB::bind_method(D_METHOD("get_loop_mesh", "loop"), &YarnSession::get_loop_mesh);
+    ClassDB::bind_method(D_METHOD("tube", "points", "colour", "radius", "sides", "subdiv"), &YarnSession::tube);
     ClassDB::bind_method(D_METHOD("drag_to", "point"), &YarnSession::drag_to);
     ClassDB::bind_method(D_METHOD("release"), &YarnSession::release);
     ClassDB::bind_method(D_METHOD("is_grabbed"), &YarnSession::is_grabbed);
