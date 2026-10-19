@@ -228,3 +228,29 @@ State: the editor starts on the OPEN lattice (a 0.4 mm radius yarn, a 20 mm stit
 finger threads), and the DENSE lattice (the old tuned one, thick yarn, which looks like crochet but overlaps itself) is one click away. The open one looks like wire; making it look like
 the photographs without the strands overlapping needs a different way of laying the loops (compact, parallel strands that lie along each other instead of crossing), which is open research here.
 Also: clicks made while the hook is working are queued (12 at most) instead of dropped.
+
+## 14. The process simulator (real yarn, made by moving the hook)
+
+User ask (2026-10-19): the placed geometry is unrecognisable ("the yarn is all disconnected"); simulate the real thing, slip knot included: the hook pulls yarn
+through loops and the geometry is whatever the yarn does.
+
+`crochet_core` `YarnSim` (yarn_sim.hpp): one strand (rod, true radius 1.1 mm, contact at full radius), a rigid hook built from capsules (head as wide as
+the shaft, a barb whose end faces into the throat, a neck, a taper, the shaft; the yarn squashes to 0.6 of its radius against it, friction 0.25), the left
+hand as a spool at a point (the last segment runs freely through it, the yarn next to it is pulled with a set tension, particles are added and removed
+there), grips (pinches) that pin what a hand holds. Procedures are scripts of hook poses. `makeSlipKnot`: ring laid with the working yarn behind it,
+pinch at the crossing, hook in through the ring, across behind the yarn (it lands in the throat), back out (a bight through the ring), the handle swung
+round so the hook goes through the bight (a loop on the hook), pushed on so the loop rides onto the shaft, pinch released, tail down and working yarn up.
+Test (`test_crochet_yarn_sim`): the hook carries a yarn; in the knot the yarn never comes closer to itself than 0.98 of its width, at most 0.21 mm into the hook,
+and ends with exactly one loop round the shaft (a signed count of crossings of a half plane on the hook's axis: 0 until the swing, 1 after).
+
+What made it work (each was a failure first):
+- limp yarn: EI 1e-8 N m^2 (measured yarns 1e-9..1e-7). At 3e-6 the yarn cannot bend round the hook within a step and the hook cuts it (one segment stretched 100%+).
+- the hand as a local spool: a long simulated reserve with pseudo-mass and damping cannot be dragged fast enough, so the yarn was cut instead of paid out.
+- no slots narrower than the yarn in the hook (a rigid yarn wedged in one stretches), and the barb's end must face into the throat (a round head's back pushes the yarn out).
+- both legs of a caught yarn must leave through the throat's mouth; a yarn that also runs round the back of the hook is a hitch and does not slide.
+- a bight in the throat is beside the hook, not round it: turning the hook so its axis goes through the bight is what puts the loop on the hook.
+- the hook's capsules move smoothly over the substeps and carry the yarn with friction (RodSystem statics).
+
+Editor: "Slip knot, simulated" records the procedure (about 1 s for 570 frames) and plays it back (pause, scrub, speed, captions); the design piece is hidden meanwhile.
+Next: the chain stitch as a procedure (yarn over by the hook, pull through the loop on the hook with the left hand holding the work), then sc into a chain;
+the run from the hand to the ball drawn; then the editor's stitch buttons driving the simulator instead of the lattice.
