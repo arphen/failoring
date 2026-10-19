@@ -56,7 +56,7 @@ func _ready() -> void:
 	st = yv.session.get_state()
 	check("turning after the foundation chain: row 1, the cursor at 0, four chains to work into (not the one on the hook)", int(st["row"]) == 1 and int(st["cursor"]) == 0 and st["targets"].size() == 4)
 	check("...the default opening is the first of them, and single crochet is now enabled", int(st["next"]) == int(st["targets"][0]) and not yv.b_sc.disabled)
-	check("the work was turned over (the worker sees the other side of it), the camera stayed", absf(yv.flip - PI) < 1.0e-6 and absf(yv.orbit.yaw) < 1.0e-6)
+	check("the foundation chain is not turned over: the chain already lies to the left of the hook, row 1 is worked back along it", absf(yv.flip) < 1.0e-6 and absf(yv.orbit.yaw) < 1.0e-6)
 
 	var first_target := int(st["next"])
 	await yv.do_action("sc")
@@ -264,6 +264,39 @@ func _ready() -> void:
 	# the structure of what was made: every pass through an eye is a clean threading (the topology is right)
 	yv.reset_piece()
 	check("a new piece starts again from the slip knot", yv.history.size() == 0 and int(yv.session.get_state()["row"]) == 0)
+	# the flow of a swatch the way it is crocheted (ch 6, sc 5 into chains 2 to 6, turn, sc 5): nothing to turn after the foundation chain, one loop on the hook
+	# after every stitch, and the turn swings the fabric from the right of the hook to its left
+	yv.reset_piece()
+	for i in 6:
+		await yv.do_action("chain")
+	check("after the foundation chain single crochet is enabled: it starts the row by itself", not yv.b_sc.disabled and int(yv.session.get_state()["row"]) == 0)
+	var one_loop := true
+	for i in 5:
+		await yv.do_action("sc")
+		one_loop = one_loop and yv.session.get_state()["live"].size() == 1
+	st = yv.session.get_state()
+	check("ch 6 then sc: five stitches in row 1 (the chain next to the hook is skipped), one loop on the hook after each", int(st["row"]) == 1 and int(st["made"]) == 5 and one_loop and int(st["next"]) == -1)
+	check("...the pattern reads ch 6 / sc 5 and the work was not rotated", String(st["text"]).strip_edges() == "ch 6\nsc 5" and absf(yv.flip) < 1.0e-6)
+	var fabric_x := -1.0e9
+	var hook_x: float = yv.work_root.to_global(yv._live_centre()).x
+	for l in yv.session.get_loops():
+		fabric_x = maxf(fabric_x, yv.work_root.to_global(l["centre"]).x)
+	check("the hook is at the left end of the finished row, the fabric to its right (%.0f mm)" % ((fabric_x - hook_x) * 1000), fabric_x - hook_x > 0.025)
+	await yv.do_action("turn")
+	st = yv.session.get_state()
+	var hook_x2: float = yv.work_root.to_global(yv._live_centre()).x
+	fabric_x = 1.0e9
+	for l in yv.session.get_loops():
+		fabric_x = minf(fabric_x, yv.work_root.to_global(l["centre"]).x)
+	check("the turn (a turning chain, then half a turn): the work now lies to the left of the hook (%.0f mm)" % ((fabric_x - hook_x2) * 1000), fabric_x - hook_x2 < -0.025 and absf(absf(yv.flip) - PI) < 1.0e-6)
+	check("...row 2 has five stitches to work into", int(st["row"]) == 2 and st["targets"].size() == 5 and String(st["text"]).strip_edges().ends_with("ch 1"))
+	for i in 5:
+		await yv.do_action("sc")
+	st = yv.session.get_state()
+	check("...and five more stitches finish it, one loop on the hook", int(st["made"]) == 5 and st["live"].size() == 1 and int(st["next"]) == -1)
+	await yv.do_action("turn")
+	check("the second turn goes the same way: after two turns the work faces the worker again (rotation %.0f deg)" % rad_to_deg(yv.flip), absf(yv.flip) < 1.0e-6 or absf(absf(yv.flip) - TAU) < 1.0e-6)
+
 	# the hook makes the stitch: it draws the new loop through the loop on the hook, then rests at the new loop
 	yv.animate = true
 	for i in 3:

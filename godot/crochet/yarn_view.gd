@@ -43,7 +43,7 @@ var animate := true               # tests switch the animations off
 var busy := false
 var history: Array = []           # [kind, opening] of every action, for undo (replayed)
 var picked := -1                  # a loop the user clicked: the opening of the next stitch (-1: the next in order)
-var flip := 0.0                   # 0: the right side of the work faces the worker; PI after a turn
+var flip := 0.0                   # 0: the right side of the work faces the worker; -PI after a turn (the right edge comes toward you, every time); the foundation chain is not turned
 var soft_steps := 0               # rod steps still to run so that new yarn settles
 
 var sub_view: SubViewport
@@ -466,12 +466,20 @@ func do_action(kind: String, opening: int = -2, turn_chains: int = -1) -> bool:
 		opening = picked
 	busy = true
 	var st: Dictionary = session.get_state()
+	if int(st["row"]) == 0 and (_is_stitch(kind) or kind == "skip") and int(st["made"]) >= 2:
+		# the foundation chain is done: the first stitch goes into the chain, nothing to press, nothing to rotate (the chain already lies to the left of the hook)
+		var r0: Dictionary = session.action("turn", 0)
+		if bool(r0.get("ok", false)):
+			history.append(["turn", 0])
+			_rebuild(-1)
+			st = session.get_state()
+	var rotate := kind == "turn" and int(st["row"]) > 0   # only a finished row is turned over
 	if (_is_stitch(kind) or kind == "skip") and opening < 0 and int(st.get("next", -1)) < 0:
 		status_label.text = "Nothing to work into: turn the work over first."
 		busy = false
 		return false
 	var open_id := opening if opening >= 0 else int(st.get("next", -1))
-	if animate and kind != "turn" and kind != "skip":
+	if animate and kind != "turn" and kind != "skip":   # (a turn's chains are drawn through where the hook is)
 		var at := _opening_centre(open_id) if ((_is_stitch(kind) or kind == "skip") and open_id >= 0) else _live_centre()
 		await _move_hook(at, 0.30)
 	var before := session.get_particle_count()
@@ -488,8 +496,13 @@ func do_action(kind: String, opening: int = -2, turn_chains: int = -1) -> bool:
 		last_kind = _base_kind(kind)
 	picked = -1
 	if kind == "turn":
-		_rebuild(-1)
-		await _turn_animation()
+		var turn_made: Array = r.get("loops", [])
+		if animate and turn_made.size() > 0:
+			await _pull_animation(before, turn_made)   # the turning chain first ...
+		else:
+			_rebuild(-1)
+		if rotate:
+			await _turn_animation()                      # ... then the work is turned over
 	elif kind != "skip":
 		await _grow(before, int(r["particles"]))
 	soft_steps = 16 if animate else 0
@@ -527,13 +540,14 @@ func _replay(actions: Array) -> void:
 			session.set_colour(a[1], String(a[2]))
 			history.append(a)
 			continue
+		var row_before := int(session.get_state()["row"])
 		var r: Dictionary = session.action(String(a[0]), int(a[1]))
 		if bool(r.get("ok", false)):
 			history.append(a)
 			if _is_stitch(String(a[0])):
 				last_kind = _base_kind(String(a[0]))
-			if String(a[0]) == "turn":
-				flip += PI
+			if String(a[0]) == "turn" and row_before > 0:
+				flip -= PI
 	flip = fmod(flip, TAU)
 	_set_flip(flip, _live_centre(), work_root.to_global(_live_centre()))
 	_rebuild(-1)
@@ -570,23 +584,24 @@ func _grow(from_particles: int, to_particles: int) -> void:
 	await tw.finished
 	_rebuild(-1)
 
-# Turning the work over: the piece is flipped about its own vertical axis, lifted a little on the way, as a left hand would turn it; the
-# worker sees the other side. The camera and the hook stay where they are.
+# Turning the work over, as the left hand does it: the hook and the loop on it stay where they are and the work swings round them, half a turn about its
+# own vertical axis through the loop, the right edge coming toward the worker (the same way every row). The run to the ball keeps its ball.
 func _turn_animation() -> void:
 	var f0 := flip
-	flip = fmod(flip + PI, TAU)
+	flip = fmod(flip - PI, TAU)
 	var pivot_local := _live_centre()
 	var pivot_world := work_root.to_global(pivot_local)
 	if not animate:
-		_set_flip(f0 + PI, pivot_local, pivot_world)
+		_set_flip(f0 - PI, pivot_local, pivot_world)
 		return
 	var tw := create_tween()
 	tw.tween_method(func(t: float) -> void:
-		var lift := sin(t * PI) * 0.035
-		_set_flip(f0 + PI * t, pivot_local, pivot_world + Vector3(0, lift, 0))
-		_place_hook(_live_centre()), 0.0, 1.0, 1.2).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+		_set_flip(f0 - PI * t, pivot_local, pivot_world)
+		_place_hook(_live_centre())
+		_update_balls(), 0.0, 1.0, 1.1).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 	await tw.finished
-	_set_flip(f0 + PI, pivot_local, pivot_world)
+	_set_flip(f0 - PI, pivot_local, pivot_world)
+	_update_balls()
 	_frame_work(false)
 
 # The piece leans back (the face toward the worker) and is turned by `f` about its own vertical axis; `pivot_local` stays at `pivot_world`.
@@ -630,7 +645,7 @@ func _refresh() -> void:
 	var next_id := int(st.get("next", -1))
 	var targets: PackedInt32Array = st["targets"]
 	var cursor := int(st["cursor"])
-	b_sc.disabled = next_id < 0 and picked < 0
+	b_sc.disabled = next_id < 0 and picked < 0 and not (int(st["row"]) == 0 and int(st["made"]) >= 2)   # after the foundation chain it starts the row
 	var sk := _sc_kind() == "skip"
 	b_sc.text = "Skip stitch" if sk else ("Single crochet" if _sc_kind() == "sc" else ("sc, front loop only" if _sc_kind() == "sc_front" else "sc, back loop only"))
 	b_hdc.disabled = b_sc.disabled or sk
@@ -641,7 +656,7 @@ func _refresh() -> void:
 	var row := int(st["row"])
 	var made := int(st["made"])
 	if row == 0:
-		status_label.text = "Foundation chain: %d chains so far. Chain as many as you like, then Turn and work single crochet back along them." % made
+		status_label.text = "Foundation chain: %d chains so far. Chain as many as you like (the loop on the hook is not counted, the first chain from it is skipped), then work single crochet back along them: no turning needed." % made
 	elif next_id < 0:
 		status_label.text = "Row %d is done (%d stitches). Turn the work over for the next row." % [row, cursor]
 	else:

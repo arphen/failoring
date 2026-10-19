@@ -71,7 +71,7 @@ Dictionary YarnSession::action(const String& kind_in, int opening) {
     if (loop >= 0) r["ok"] = true;
     r["loop"] = loop;
     Array made;
-    if (kind != "turn" && kind != "skip")
+    if (kind != "skip")
         for (int i = loops0; i < (int)work_.loops.size(); ++i) made.push_back(i);
     r["loops"] = made;
     r["particles"] = work_.particleCount();

@@ -67,6 +67,13 @@ func _ready() -> void:
 		if OS.has_environment("FL_SHOT_YARN_PITCH"):
 			yv.orbit.pitch = float(OS.get_environment("FL_SHOT_YARN_PITCH"))
 		yv.orbit.apply()
+		if OS.has_environment("FL_SHOT_TURN"):   # a moment t (0..1) of the last turn, as the editor animates it
+			var pvt: Vector3 = yv._live_centre()
+			var wp: Vector3 = yv.work_root.to_global(pvt)
+			var tt := float(OS.get_environment("FL_SHOT_TURN"))
+			yv._set_flip(yv.flip + PI - PI * tt, pvt, wp)
+			yv._update_balls()
+			yv._place_hook(yv._live_centre())
 		if OS.has_environment("FL_SHOT_PULL"):   # the hook drawing the last loop through its eye, a moment s (0..1) of it: "s" or "s:loopsback"
 			var parts := OS.get_environment("FL_SHOT_PULL").split(":")
 			var live: Array = yv.session.get_state()["live"]
