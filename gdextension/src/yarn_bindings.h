@@ -38,6 +38,12 @@ public:
     // How the piece is looked at: `expand` scales the piece about its middle (the loops open up, the yarn keeps its thickness, so you see how they
     // hook into each other); `thickness` scales the yarn's drawn radius (a thin-yarn view). Neither changes the work.
     void set_view(double expand, double thickness);
+    // Pulling on the yarn, in the coordinates the piece is shown in: grab the strand nearest to a ray ({ok, point, particle}), drag it to a point, let go.
+    // Only the yarn near the grip is simulated while it is held; letting go, the shape memory brings the work back.
+    Dictionary grab(const Vector3& origin, const Vector3& dir);
+    void drag_to(const Vector3& point);
+    void release();
+    bool is_grabbed() const { return grip_ >= 0; }
 
 protected:
     static void _bind_methods();
@@ -46,6 +52,8 @@ private:
     fl::YarnWork work_;
     bool started_ = false;
     double expand_ = 1.0, thickness_ = 1.0;
+    int grip_ = -1;
+    fl::Vec3 unview(const fl::Vec3& p) const;
     fl::Vec3 pivot() const;
     fl::Vec3 view(const fl::Vec3& p) const;   // a point of the work as it is shown
 };

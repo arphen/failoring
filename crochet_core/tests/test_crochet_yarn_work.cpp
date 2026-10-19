@@ -121,6 +121,58 @@ void testDeterminism() {
     CHECKP(same, "the same actions make the same yarn, bit for bit (%zu particles)", a.rod.x.size());
 }
 
+// Pulling on the yarn: a strand follows the pull softly (its neighbours with it, less and less), and when it is let go the work springs back.
+// A yarn weighs micrograms per node, so without the pseudo-mass (RodSystem::setMassScale) every spring is a hard constraint at this step size and a
+// pulled strand drags nothing along (mutant: scale 1 -> the neighbours stay put).
+void pullTest(bool soft) {
+    YarnWork w;
+    w.slipKnot(Vec3{0, 0, 0});
+    for (int i = 0; i < 6; ++i) w.stitchChain();
+    RodSystem& rs = w.rod;
+    rs.params.radiusScale = 0.55;
+    rs.params.shapeStiffness = 40.0;
+    rs.params.substeps = 2;
+    rs.params.iterations = 1;
+    if (!soft) {
+        rs.setMassScale(1.0);
+        rs.setRotationalInertiaScale(1.0);
+    }
+    for (int k = 0; k < 100; ++k) rs.step(1.0 / 60.0);   // the work as it settles under contact: this is what "back" means
+    const std::vector<Vec3> rest = rs.x;
+    const int g = 8;   // in the tail: a free strand
+    rs.freezeOutside(rs.x[g], 0.02);
+    rs.pin(g);
+    const Vec3 start = rs.x[g];
+    for (int k = 1; k <= 30; ++k) {
+        rs.movePin(g, start + Vec3{0, 0, 0.004} * (k / 30.0));
+        rs.step(1.0 / 60.0);
+    }
+    const Real pulled = length(rs.x[g] - start);
+    const Real n1 = length(rs.x[g + 1] - rest[g + 1]), n3 = length(rs.x[g + 3] - rest[g + 3]), n6 = length(rs.x[g + 6] - rest[g + 6]);
+    const Real far = length(rs.x[0] - rest[0]);
+    std::printf("  %s: the gripped particle moved %.2f mm; its neighbours 1, 3, 6 along %.2f %.2f %.2f mm; the first of the yarn %.4f mm\n", soft ? "soft" : "hard", pulled * 1e3,
+                n1 * 1e3, n3 * 1e3, n6 * 1e3, far * 1e3);
+    if (soft) {
+        CHECKP(pulled > 3.9e-3, "the gripped particle goes where it is pulled (%.2f of 4 mm)", pulled * 1e3);
+        CHECKP(n1 > 2.5e-3 && n3 > 1.5e-3 && n6 > 0.3e-3 && n1 > n3 && n3 > n6, "its neighbours follow it, less and less (%.2f, %.2f, %.2f mm)", n1 * 1e3, n3 * 1e3, n6 * 1e3);
+        CHECKP(far < 1e-9, "particles outside the region do not move at all (%.2g mm)", far * 1e3);
+        rs.thaw();
+        rs.unpin(g);
+        for (int k = 0; k < 200; ++k) rs.step(1.0 / 60.0);
+        Real worst = 0;
+        for (int i = 0; i < rs.particleCount(); ++i) worst = std::max(worst, length(rs.x[i] - rest[i]));
+        CHECKP(worst < 0.3e-3, "let go, the work springs back to within 0.3 mm of where it was (%.3f mm)", worst * 1e3);
+    } else {
+        CHECKP(n3 < 0.5e-3, "without the pseudo-mass the neighbours stay put (%.2f mm): the springs are hard constraints at this step", n3 * 1e3);
+    }
+}
+
+void testSoftPull() {
+    std::printf("[soft pull]\n");
+    pullTest(true);
+    pullTest(false);
+}
+
 }  // namespace
 
 int main() {
@@ -128,5 +180,6 @@ int main() {
     testThreading();
     testOneLoop();
     testDeterminism();
+    testSoftPull();
     FINISH();
 }

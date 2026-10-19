@@ -54,6 +54,8 @@ var b_turn: Button
 var b_undo: Button
 var _shown_particles := 0         # how much of the yarn is drawn (it grows as it is made)
 var _marker_t := 0.0
+var _grab_normal := Vector3.ZERO     # the plane (in the piece's coordinates) a held strand is dragged in
+var _grab_point := Vector3.ZERO
 
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -549,7 +551,51 @@ func _frame_work(snap: bool) -> void:
 # ------------------------------------------------------------------------------------------------ input and frames
 
 func _on_view_input(event: InputEvent) -> void:
+	# Ctrl (or Cmd) + left drag takes hold of the yarn under the pointer and pulls it; letting go, the work springs back
+	if event is InputEventMouseButton and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+		var mb := event as InputEventMouseButton
+		if mb.pressed and (mb.ctrl_pressed or mb.meta_pressed) and not busy:
+			_grab_at(mb.position)
+			return
+		if not mb.pressed and session.is_grabbed():
+			_let_go()
+			return
+	if event is InputEventMouseMotion and session.is_grabbed():
+		_drag_to((event as InputEventMouseMotion).position)
+		return
 	orbit.handle(event, view_container.size, _on_click)
+
+# A ray from the pointer, in the piece's coordinates.
+func _local_ray(pos: Vector2) -> Array:
+	var o := orbit.cam.project_ray_origin(pos)
+	var d := orbit.cam.project_ray_normal(pos)
+	var inv := work_root.global_transform.basis.inverse()
+	return [work_root.to_local(o), (inv * d).normalized()]
+
+func _grab_at(pos: Vector2) -> void:
+	var ray := _local_ray(pos)
+	var r: Dictionary = session.grab(ray[0], ray[1])
+	if not bool(r.get("ok", false)):
+		return
+	_grab_point = r["point"]
+	_grab_normal = ((work_root.global_transform.basis.inverse() * (-orbit.cam.global_transform.basis.z)).normalized())
+	status_label.text = "Holding the yarn: drag it about, let go and it springs back."
+	soft_steps = 100000
+
+func _drag_to(pos: Vector2) -> void:
+	var ray := _local_ray(pos)
+	var o: Vector3 = ray[0]
+	var d: Vector3 = ray[1]
+	var denom := d.dot(_grab_normal)
+	if absf(denom) < 1.0e-6:
+		return
+	var t := (_grab_point - o).dot(_grab_normal) / denom
+	session.drag_to(o + d * t)
+
+func _let_go() -> void:
+	session.release()
+	soft_steps = 80
+	_refresh()
 
 # A click that did not drag picks the loop nearest to it (within a few pixels) as the opening of the next stitch.
 func _on_click(pos: Vector2) -> void:
@@ -579,5 +625,5 @@ func _process(delta: float) -> void:
 	if soft_steps > 0 and not busy:
 		session.tick(2)
 		soft_steps -= 2
-		if soft_steps % 6 == 0:
+		if session.is_grabbed() or soft_steps % 6 == 0:
 			_rebuild(-1)

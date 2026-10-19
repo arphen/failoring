@@ -30,6 +30,9 @@ YarnWork::YarnWork() {
     rod.params.substeps = 4;
     rod.params.iterations = 2;
     rod.params.EA = 30.0;
+    rod.params.damping = 60.0;
+    rod.setMassScale(1.0e4);             // heavy pseudo-mass: the springs of a piece worked by hand are soft (see RodSystem::setMassScale)
+    rod.setRotationalInertiaScale(1.0e4);
     rod.params.EI = 4.0e-6;
     rod.params.GJ = 4.0e-6;
 }
@@ -200,7 +203,6 @@ int YarnWork::finger(const std::vector<int>& eyesLoops, bool consume, const Vec3
 int YarnWork::loopAt(const Vec3& ringC, const Vec3& ringN0, const std::vector<int>& eyesLoops, bool consume, const Vec3* major, Real semiA, Real semiB,
                      const std::vector<int>* modes, const Vec3* front) {
     const Real r = rod.params.radius;
-    const Real off = wp.hookRadius + r + 0.0004;
     const Vec3 ringN = normalized(ringN0);
     struct Pass { Vec3 c, a, u; };
     std::vector<Pass> passes;

@@ -23,12 +23,15 @@ fl::Vec3 YarnSession::pivot() const {
 
 fl::Vec3 YarnSession::view(const fl::Vec3& p) const { return expand_ == 1.0 ? p : pivot() + (p - pivot()) * expand_; }
 
+fl::Vec3 YarnSession::unview(const fl::Vec3& p) const { return expand_ == 1.0 ? p : pivot() + (p - pivot()) / expand_; }
+
 void YarnSession::set_view(double expand, double thickness) {
     expand_ = expand < 0.2 ? 0.2 : expand;
     thickness_ = thickness < 0.1 ? 0.1 : thickness;
 }
 
 void YarnSession::reset() {
+    grip_ = -1;
     work_ = fl::YarnWork();
     // the settings of a piece being worked by hand: the tuned tight lattice (WorkParams' defaults), a soft shape memory, strands that give a little
     work_.rod.params.radiusScale = 0.55;
@@ -40,6 +43,7 @@ void YarnSession::reset() {
 }
 
 Dictionary YarnSession::action(const String& kind, int opening) {
+    release();
     Dictionary r;
     r["ok"] = false;
     int loop = -1;
@@ -159,6 +163,51 @@ void YarnSession::set_param(const String& name, double value) {
     else if (name == "damping") work_.rod.params.damping = value;
 }
 
+Dictionary YarnSession::grab(const Vector3& origin, const Vector3& dir) {
+    Dictionary r;
+    r["ok"] = false;
+    if (grip_ >= 0) release();
+    const fl::Vec3 o{origin.x, origin.y, origin.z};
+    fl::Vec3 d{dir.x, dir.y, dir.z};
+    const double dl = fl::length(d);
+    if (dl < 1e-12) return r;
+    d = d / dl;
+    int best = -1;
+    double bestD = 3.0e-3 * expand_;   // within 3 mm of the ray
+    for (size_t i = 0; i < work_.rod.x.size(); ++i) {
+        const fl::Vec3 p = view(work_.rod.x[i]);
+        const double t = fl::dot(p - o, d);
+        if (t < 0) continue;
+        const double dist = fl::length(p - (o + d * t));
+        if (dist < bestD) { bestD = dist; best = (int)i; }
+    }
+    if (best < 0) return r;
+    grip_ = best;
+    work_.rod.freezeOutside(work_.rod.x[best], 0.022);
+    work_.rod.pin(best);
+    r["ok"] = true;
+    r["particle"] = best;
+    r["point"] = v3(view(work_.rod.x[best]));
+    return r;
+}
+
+void YarnSession::drag_to(const Vector3& point) {
+    if (grip_ < 0) return;
+    fl::Vec3 target = unview(fl::Vec3{point.x, point.y, point.z});
+    const fl::Vec3 home = work_.rod.anchor[grip_];
+    const fl::Vec3 off = target - home;
+    const double dl = fl::length(off);
+    if (dl > 0.04) target = home + off * (0.04 / dl);   // no further than 4 cm from where it belongs
+    work_.rod.movePin(grip_, target);
+}
+
+void YarnSession::release() {
+    if (grip_ < 0) return;
+    work_.rod.thaw();
+    work_.rod.unpin(grip_);
+    grip_ = -1;
+}
+
 void YarnSession::_bind_methods() {
     ClassDB::bind_method(D_METHOD("reset"), &YarnSession::reset);
     ClassDB::bind_method(D_METHOD("action", "kind", "opening"), &YarnSession::action);
@@ -170,4 +219,8 @@ void YarnSession::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_pattern_text"), &YarnSession::get_pattern_text);
     ClassDB::bind_method(D_METHOD("set_param", "name", "value"), &YarnSession::set_param);
     ClassDB::bind_method(D_METHOD("set_view", "expand", "thickness"), &YarnSession::set_view);
+    ClassDB::bind_method(D_METHOD("grab", "origin", "dir"), &YarnSession::grab);
+    ClassDB::bind_method(D_METHOD("drag_to", "point"), &YarnSession::drag_to);
+    ClassDB::bind_method(D_METHOD("release"), &YarnSession::release);
+    ClassDB::bind_method(D_METHOD("is_grabbed"), &YarnSession::is_grabbed);
 }

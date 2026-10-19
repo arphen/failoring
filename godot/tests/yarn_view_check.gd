@@ -115,6 +115,36 @@ func _ready() -> void:
 	yv.loop_front.button_pressed = true
 	yv.loop_back.button_pressed = true
 
+	# soft yarn: take hold of a strand, pull it, let go
+	yv.reset_piece()
+	for i in 5:
+		await yv.do_action("chain")
+	var mesh0: Dictionary = yv.session.get_mesh(-1, 8, 2)
+	var pos0: PackedVector3Array = mesh0["positions"]
+	var loops0: Array = yv.session.get_loops()
+	var c2: Vector3 = loops0[3]["centre"]
+	var got: Dictionary = yv.session.grab(c2 + Vector3(0, 0, 0.05), Vector3(0, 0, -1))
+	check("a ray at a loop takes hold of a strand there", bool(got.get("ok", false)) and yv.session.is_grabbed())
+	var held: Vector3 = got["point"]
+	for k in 20:
+		yv.session.drag_to(held + Vector3(0, 0.006, 0) * (k + 1) / 20.0)
+		yv.session.tick(2)
+	var moved: float = (yv.session.get_mesh(-1, 8, 2)["positions"] as PackedVector3Array).size()
+	var pos1: PackedVector3Array = yv.session.get_mesh(-1, 8, 2)["positions"]
+	var worst := 0.0
+	for i in mini(pos0.size(), pos1.size()):
+		worst = maxf(worst, pos0[i].distance_to(pos1[i]))
+	check("pulled 6 mm, the yarn followed it (the piece moved by %.1f mm somewhere)" % [worst * 1000], worst > 0.005)
+	yv.session.release()
+	yv.session.tick(200)
+	var pos2: PackedVector3Array = yv.session.get_mesh(-1, 8, 2)["positions"]
+	var back := 0.0
+	for i in mini(pos0.size(), pos2.size()):
+		back = maxf(back, pos0[i].distance_to(pos2[i]))
+	check("let go, it springs back to where it was (within %.2f mm)" % [back * 1000], back < 0.0012 and not yv.session.is_grabbed())
+	var miss: Dictionary = yv.session.grab(Vector3(0.5, 0.5, 0.5), Vector3(0, 0, -1))
+	check("a ray that misses the yarn takes hold of nothing", not bool(miss.get("ok", false)) and not yv.session.is_grabbed())
+
 	# expand and thin yarn: a way of looking, not a change of the work
 	yv.reset_piece()
 	for i in 4:

@@ -188,7 +188,9 @@ int RodSystem::addChain(const std::vector<Vec3>& pts, bool closed, bool restFrom
         Real m = 0;
         if (closed || i > 0) m += 0.5 * len[(i + nSeg - 1) % nSeg];
         if (closed || i < n - 1) m += 0.5 * len[i % nSeg];
-        const Real wi = m > 0 ? 1.0 / (params.linearDensity * m) : 0.0;
+        const Real wb = m > 0 ? 1.0 / (params.linearDensity * m) : 0.0;
+        const Real wi = wb / massScale_;
+        wBase.push_back(wb);
         x.push_back(pts[i]);
         xPrev.push_back(pts[i]);
         v.push_back(Vec3{});
@@ -212,7 +214,7 @@ int RodSystem::addChain(const std::vector<Vec3>& pts, bool closed, bool restFrom
         const Real m = params.linearDensity * len[k];
         const Real r = params.radius;
         mass.push_back(m);
-        wq.push_back(m > 0 ? 12.0 / (m * (3.0 * r * r + len[k] * len[k])) : 0.0);
+        wq.push_back(m > 0 ? 12.0 / (m * (3.0 * r * r + len[k] * len[k])) / rotInertiaScale_ : 0.0);
         restLen.push_back(len[k]);
         radius.push_back(r);
     }
@@ -243,13 +245,15 @@ void RodSystem::extendChain(const std::vector<Vec3>& pts) {
         const Vec3 tPrev = rotate(q[lastSeg], kE3);
         const Quat qn = normalized(quatFromTo(tPrev, t) * q[lastSeg]);
         // the old end particle now has a segment on each side: its mass grows by half the new segment
-        const Real mOld = wFree[last] > 0 ? 1.0 / wFree[last] : 0.0;
+        const Real mOld = wBase[last] > 0 ? 1.0 / wBase[last] : 0.0;
         const Real mNew = mOld + 0.5 * params.linearDensity * len;
-        wFree[last] = 1.0 / mNew;
+        wBase[last] = 1.0 / mNew;
+        wFree[last] = wBase[last] / massScale_;
         if (w[last] > 0) w[last] = wFree[last];
-        const Real wi = 1.0 / (0.5 * params.linearDensity * len);
+        const Real wb = 1.0 / (0.5 * params.linearDensity * len);
+        const Real wi = wb / massScale_;
         x.push_back(p); xPrev.push_back(p); v.push_back(Vec3{});
-        w.push_back(wi); wFree.push_back(wi);
+        w.push_back(wi); wFree.push_back(wi); wBase.push_back(wb);
         extForce.push_back(Vec3{}); pinTarget.push_back(p); particleChain.push_back(ci); anchor.push_back(p);
         const int sIdx = (int)segA.size();
         segA.push_back(last);
@@ -259,7 +263,7 @@ void RodSystem::extendChain(const std::vector<Vec3>& pts) {
         q.push_back(qn); qPrev.push_back(qn); omega.push_back(Vec3{});
         const Real m = params.linearDensity * len, r = params.radius;
         mass.push_back(m);
-        wq.push_back(12.0 / (m * (3.0 * r * r + len * len)));
+        wq.push_back(12.0 / (m * (3.0 * r * r + len * len)) / rotInertiaScale_);
         restLen.push_back(len);
         radius.push_back(r);
         jointA.push_back(lastSeg);
@@ -293,6 +297,54 @@ void RodSystem::scaleRestLengths(Real factor) {
 void RodSystem::setRestTwist(int chain, Real radPerSegment) {
     const RodChain& ch = chains[chain];
     for (int j = 0; j < ch.joints; ++j) restDarboux[ch.firstJoint + j].z = radPerSegment;
+}
+
+void RodSystem::freezeOutside(const Vec3& centre, Real radius) {
+    if (frozen()) thaw();
+    savedW_ = w;
+    savedWq_ = wq;
+    segActive_.assign(segA.size(), 0);
+    const Real r2 = radius * radius;
+    std::vector<char> free(x.size(), 0);
+    for (size_t i = 0; i < x.size(); ++i) {
+        if (length2(x[i] - centre) <= r2) free[i] = 1;
+        else w[i] = 0;
+    }
+    for (size_t s = 0; s < segA.size(); ++s) {
+        if (free[segA[s]] || free[segB[s]]) segActive_[s] = 1;
+        else wq[s] = 0;
+    }
+}
+
+void RodSystem::thaw() {
+    if (!frozen()) return;
+    // a particle pinned while frozen stays pinned: its saved inverse mass was 0 already
+    w = savedW_;
+    wq = savedWq_;
+    savedW_.clear();
+    savedWq_.clear();
+    segActive_.clear();
+}
+
+void RodSystem::setMassScale(Real sc) {
+    massScale_ = sc;
+    const bool wasFrozen = frozen();
+    for (size_t i = 0; i < x.size(); ++i) {
+        wFree[i] = wBase[i] / sc;
+        if (wasFrozen) { if (savedW_[i] > 0) savedW_[i] = wFree[i]; }
+        else if (w[i] > 0) w[i] = wFree[i];
+    }
+}
+
+void RodSystem::setRotationalInertiaScale(Real sc) {
+    rotInertiaScale_ = sc;
+    for (size_t s = 0; s < segA.size(); ++s) {
+        if (wq[s] <= 0 && !(frozen() && savedWq_[s] > 0)) continue;
+        const Real r = radius[s], l = restLen[s];
+        const Real v = mass[s] > 0 ? 12.0 / (mass[s] * (3.0 * r * r + l * l)) / sc : 0.0;
+        if (frozen()) savedWq_[s] = v;   // a frozen segment gets it when it thaws
+        else wq[s] = v;
+    }
 }
 
 void RodSystem::pin(int i) {
@@ -599,6 +651,7 @@ void RodSystem::buildPairs() {
     for (uint64_t c : cand) {
         const int a = (int)(c / (uint64_t)S), b = (int)(c % (uint64_t)S);
         if (skipPair(a, b)) continue;
+        if (!segActive_.empty() && !segActive_[a] && !segActive_[b]) continue;   // both frozen: nothing moves
         const Real R = (radius[a] + radius[b]) * params.radiusScale + params.contactSkin * rmax;
         const SegSegResult r = closestSegmentSegment(x[segA[a]], x[segB[a]], x[segA[b]], x[segB[b]]);
         if (r.dist2 < R * R) pairs_.push_back({a, b});

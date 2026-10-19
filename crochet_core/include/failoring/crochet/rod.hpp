@@ -76,6 +76,7 @@ public:
     std::vector<Vec3> x, xPrev, v;
     std::vector<Real> w;               // inverse mass; 0 = pinned
     std::vector<Real> wFree;           // the inverse mass a pinned particle gets back when it is released
+    std::vector<Real> wBase;           // the inverse mass of the real yarn (wFree is this over the mass scale)
     std::vector<Vec3> extForce;        // N, applied every step until cleared
     std::vector<Vec3> pinTarget;       // where a pinned particle is heading (it moves linearly over each step)
     std::vector<int> particleChain;
@@ -106,6 +107,21 @@ public:
     void scaleRestLengths(Real factor);  // slack: every rest length times factor (1 = as made)
     void setRestTwist(int chain, Real radPerSegment);  // the rest twist of every joint of a chain
 
+    // Only the particles within `radius` of `centre` are simulated; the others stand still (their inverse masses are zeroed and the segments
+    // between them are not tested for contact), which keeps a local poke cheap on a big piece. `thaw` puts everything back.
+    void freezeOutside(const Vec3& centre, Real radius);
+    void thaw();
+    bool frozen() const { return !savedW_.empty(); }
+
+    // The segments' rotational inertia times `s`. At the step sizes of an interactive view the bend and twist constraints are hard whatever
+    // EI and GJ are, because a segment's own inertia is tiny; a large inertia makes them as soft as the stiffnesses say. The rest shape is not
+    // affected (the work is quasi-static). Segments whose orientation is fixed stay fixed.
+    void setRotationalInertiaScale(Real s);
+    // The particles' masses times `s` (pseudo-mass). A yarn weighs micrograms per node, so at an interactive step size every spring is stiff
+    // compared to the step and acts as a hard constraint; with a heavy pseudo-mass the shape-memory and bend springs are as soft as their stiffness
+    // says (a response of a few Hz). Only the dynamics change, not the rest shape; only sensible with gravity off.
+    void setMassScale(Real s);
+
     void pin(int particle);
     void unpin(int particle);
     void movePin(int particle, const Vec3& target) { pinTarget[particle] = target; }
@@ -132,6 +148,9 @@ public:
 private:
     struct Pair { int a, b; };
     std::vector<Pair> pairs_;
+    Real rotInertiaScale_ = 1.0, massScale_ = 1.0;
+    std::vector<Real> savedW_, savedWq_;   // the inverse masses a freeze set aside
+    std::vector<char> segActive_;          // per segment: not frozen (a pair of two frozen segments is not tested)
     std::vector<Real> lambdaS_;        // per segment, 3 comps
     std::vector<Real> lambdaB_;        // per joint, 3 comps
     std::vector<Real> lambdaA_;        // per particle, 3 comps (the anchor springs)
