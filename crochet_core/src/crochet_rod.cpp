@@ -216,6 +216,7 @@ int RodSystem::addChain(const std::vector<Vec3>& pts, bool closed, bool restFrom
         mass.push_back(m);
         wq.push_back(m > 0 ? 12.0 / (m * (3.0 * r * r + len[k] * len[k])) / rotInertiaScale_ : 0.0);
         restLen.push_back(len[k]);
+        slack.push_back(1.0);
         radius.push_back(r);
     }
     for (int j = 0; j < ch.joints; ++j) {
@@ -265,6 +266,7 @@ void RodSystem::extendChain(const std::vector<Vec3>& pts) {
         mass.push_back(m);
         wq.push_back(12.0 / (m * (3.0 * r * r + len * len)) / rotInertiaScale_);
         restLen.push_back(len);
+        slack.push_back(1.0);
         radius.push_back(r);
         jointA.push_back(lastSeg);
         jointB.push_back(sIdx);
@@ -276,6 +278,34 @@ void RodSystem::extendChain(const std::vector<Vec3>& pts) {
         ++ch.particles;
         ++ch.segments;
         ++ch.joints;
+    }
+    lambdaS_.assign(3 * segA.size(), 0.0);
+    lambdaB_.assign(3 * jointA.size(), 0.0);
+    lambdaA_.assign(3 * x.size(), 0.0);
+}
+
+void RodSystem::popEnd() {
+    if (chains.empty() || chains.back().closed) return;
+    RodChain& ch = chains.back();
+    if (ch.segments < 2) return;
+    const int last = (int)x.size() - 1;
+    if (ch.firstParticle + ch.particles - 1 != last) return;
+    const Real len = restLen.back();
+    x.pop_back(); xPrev.pop_back(); v.pop_back(); w.pop_back(); wFree.pop_back(); wBase.pop_back();
+    extForce.pop_back(); pinTarget.pop_back(); particleChain.pop_back(); anchor.pop_back();
+    segA.pop_back(); segB.pop_back(); segChain.pop_back(); segIndex.pop_back();
+    q.pop_back(); qPrev.pop_back(); omega.pop_back(); mass.pop_back(); wq.pop_back(); restLen.pop_back(); radius.pop_back(); slack.pop_back();
+    jointA.pop_back(); jointB.pop_back(); restDarboux.pop_back();
+    --ch.particles;
+    --ch.segments;
+    --ch.joints;
+    // the new end particle has lost half a segment of mass
+    const int e = last - 1;
+    const Real m = (wBase[e] > 0 ? 1.0 / wBase[e] : 0.0) - 0.5 * params.linearDensity * len;
+    if (m > 1e-12) {
+        wBase[e] = 1.0 / m;
+        wFree[e] = wBase[e] / massScale_;
+        if (w[e] > 0) w[e] = wFree[e];
     }
     lambdaS_.assign(3 * segA.size(), 0.0);
     lambdaB_.assign(3 * jointA.size(), 0.0);
@@ -399,7 +429,7 @@ void RodSystem::solveStretchShear(int s, Real h2inv) {
     const Vec3 d3 = rotate(q[s], kE3);
     const Vec3 C = (x[b] - x[a]) / l - d3;
     const Real wa = w[a], wb = w[b], wqs = wq[s];
-    const Real aStretch = h2inv / (params.EA * l), aShear = h2inv / (params.GAs * l);
+    const Real aStretch = slack[s] * h2inv / (params.EA * l), aShear = slack[s] * h2inv / (params.GAs * l);
     const Real aa = (wa + wb) / (l * l);
     if (aa + wqs <= 0) return;
     Vec3 lam{lambdaS_[3 * s], lambdaS_[3 * s + 1], lambdaS_[3 * s + 2]};
@@ -472,7 +502,7 @@ void RodSystem::solveChainDirect(int ci, Real h2inv) {
         const int s = s0 + k, a = segA[s], b = segB[s];
         const Real l = restLen[s], wa = w[a], wb = w[b], wqs = wq[s];
         const Vec3 d = d3v[k];
-        const Real aStretch = h2inv / (params.EA * l), aShear = h2inv / (params.GAs * l);
+        const Real aStretch = slack[s] * h2inv / (params.EA * l), aShear = slack[s] * h2inv / (params.GAs * l);
         const Real aa = (wa + wb) / (l * l);
         const M3 dd = outer3(d, d);
         A0[2 * k] = dd * (aa + aStretch) + (ident3() - dd) * (aa + wqs + aShear);
@@ -765,12 +795,26 @@ void RodSystem::solveContacts(Real /*h*/) {
     lastContacts = touching;
 }
 
-void RodSystem::solveStatics() {
-    for (const StaticCapsule& cap : statics) {
+namespace {
+StaticCapsule lerpCapsule(const StaticCapsule& a, const StaticCapsule& b, Real t) {
+    StaticCapsule c = b;
+    c.a = a.a + (b.a - a.a) * t;
+    c.b = a.b + (b.b - a.b) * t;
+    return c;
+}
+}  // namespace
+
+// The fixed (or kinematically moved) capsules: the yarn is pushed out of them, and with staticFriction it does not slide along them while it is
+// pressed against them by less than mu times the push (Coulomb). `before` is where they were at the start of this substep: what they carry along.
+void RodSystem::solveStatics(const std::vector<StaticCapsule>& cur, const std::vector<StaticCapsule>& before) {
+    const Real mu = params.staticFriction;
+    for (size_t ci = 0; ci < cur.size(); ++ci) {
+        const StaticCapsule& cap = cur[ci];
+        const StaticCapsule& cap0 = before[ci];
         for (int s = 0; s < segmentCount(); ++s) {
             const int ia = segA[s], ib = segB[s];
             const SegSegResult r = closestSegmentSegment(x[ia], x[ib], cap.a, cap.b);
-            const Real R = radius[s] * params.radiusScale + cap.r;
+            const Real R = radius[s] * params.radiusScale * cap.squash + cap.r;
             if (r.dist2 >= R * R) continue;
             const Real dist = std::sqrt(r.dist2);
             Vec3 n = dist > 1e-12 ? (r.pa - r.pb) / dist : normalized(cross(x[ib] - x[ia], Vec3{0, 1, 0}) + Vec3{1e-9, 0, 0});
@@ -780,6 +824,17 @@ void RodSystem::solveStatics() {
             const Real lam = pen / w1;
             x[ia] += n * ((1 - r.s) * w[ia] * lam);
             x[ib] += n * (r.s * w[ib] * lam);
+            if (mu <= 0) continue;
+            // friction: the yarn's motion along the surface relative to the capsule's, this substep
+            const Vec3 dp = (x[ia] - xPrev[ia]) * (1 - r.s) + (x[ib] - xPrev[ib]) * r.s;
+            const Vec3 dc = (cap.a - cap0.a) * (1 - r.t) + (cap.b - cap0.b) * r.t;
+            Vec3 rel = dp - dc;
+            rel -= n * dot(rel, n);
+            const Real tl = length(rel);
+            if (tl < 1e-15) continue;
+            const Vec3 corr = tl <= mu * pen ? rel * -1.0 : rel * (-mu * pen / tl);
+            x[ia] += corr * ((1 - r.s) * w[ia] / w1);
+            x[ib] += corr * (r.s * w[ib] / w1);
         }
     }
 }
@@ -831,9 +886,16 @@ void RodSystem::step(Real dt) {
     std::vector<Vec3> pinStart(x);
     lastContacts = 0;
 
+    // the statics move from where they were at the end of the last step to where they are now, a little every substep
+    if (staticsPrev_.size() != statics.size()) staticsPrev_ = statics;
+    std::vector<StaticCapsule> staticsNow(statics.size()), staticsBefore(statics.size());
     for (int sstep = 0; sstep < sub; ++sstep) {
         // 1. predict
         const Real frac = (Real)(sstep + 1) / sub;
+        for (size_t c = 0; c < statics.size(); ++c) {
+            staticsNow[c] = lerpCapsule(staticsPrev_[c], statics[c], frac);
+            staticsBefore[c] = lerpCapsule(staticsPrev_[c], statics[c], (Real)sstep / sub);
+        }
         for (int i = 0; i < n; ++i) {
             xPrev[i] = x[i];
             if (w[i] > 0) {
@@ -873,12 +935,13 @@ void RodSystem::step(Real dt) {
             if (params.shapeStiffness > 0) solveAnchors(h2inv);
             if (params.contact) solveContacts(h);
             if (params.floorOn) solveFloor(h);
-            if (!statics.empty()) solveStatics();
+            if (!statics.empty()) solveStatics(staticsNow, staticsBefore);
         }
         // 3. velocities
         for (int i = 0; i < n; ++i) v[i] = w[i] > 0 ? (x[i] - xPrev[i]) / h : Vec3{};
         for (int s = 0; s < S; ++s) omega[s] = wq[s] > 0 ? rotationVector(q[s] * conj(qPrev[s])) / h : Vec3{};
     }
+    staticsPrev_ = statics;
 }
 
 int RodSystem::relax(Real dt, Real tol, int maxSteps) {

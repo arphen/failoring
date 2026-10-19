@@ -40,6 +40,7 @@ struct RodParams {
     Real GJ = 2.0e-6;             // N m^2, twist stiffness
     // contact
     Real friction = 0.4;          // Coulomb mu between strands (static and kinetic alike)
+    Real staticFriction = 0.0;    // Coulomb mu between a strand and the statics (a hook, a finger)
     Real contactSkin = 0.5;       // pairs closer than 2 radius + skin * radius enter the contact list
     bool contact = true;          // off: strands pass through each other (a debugging tool and the mutant of the linking test)
     int contactSkipSegments = 2;  // segments of one chain this close (in index) do not touch
@@ -63,10 +64,12 @@ struct RodParams {
     Real floorY = 0.0;            // a plane with the normal +y, for particles
 };
 
-// A fixed capsule (a sphere when a == b) strands cannot enter: the hook, a peg, a table edge.
+// A fixed capsule (a sphere when a == b) strands cannot enter: the hook, a peg, a table edge. Moved between steps it moves smoothly over the
+// step's substeps (and with staticFriction carries the yarn along).
 struct StaticCapsule {
     Vec3 a, b;
     Real r = 0;
+    Real squash = 1.0;   // the yarn's radius against this capsule, as a fraction of its own (wool squashes in a hook's throat)
 };
 
 struct RodChain {
@@ -93,6 +96,8 @@ public:
     std::vector<Vec3> omega;           // world angular velocity
     std::vector<Real> wq;              // inverse rotational inertia; 0 = orientation fixed
     std::vector<Real> restLen;         // m; the stretch constraint's length: scale it for slack
+    std::vector<Real> slack;           // per segment: its stretch and shear compliance times this (1 = the yarn's; huge = no constraint, a yarn
+                                       // running freely through a hand)
     std::vector<Real> radius;          // m
     std::vector<Real> mass;
     // joints (joint j relates segments jointA[j] and jointB[j] = the next one)
@@ -107,6 +112,7 @@ public:
     // Appends points to the END of the LAST chain (open chains only): one particle and one segment per point, frames parallel transported
     // from the chain's last segment. This is how yarn mode grows the yarn as the work is made.
     void extendChain(const std::vector<Vec3>& pts);
+    void popEnd();   // removes the last particle (and its segment and joint) of the last chain
     Real restBendMemory = 1.0;   // how much of the bend a yarn is made with extendChain it keeps as its rest bend (0: springs back straight)
     // Resets the rest lengths of a chain to `scale` times the lengths of its present segments.
     void setRestLengthsFromShape(int chain, Real scale = 1.0);
@@ -171,7 +177,8 @@ private:
     void solveBendTwist(int j, Real h2inv);
     void solveContacts(Real h);
     void solveFloor(Real h);
-    void solveStatics();
+    void solveStatics(const std::vector<StaticCapsule>& cur, const std::vector<StaticCapsule>& before);
+    std::vector<StaticCapsule> staticsPrev_;   // where the statics were at the end of the last step
     void solveAnchors(Real h2inv);
     bool skipPair(int a, int b) const;
 };

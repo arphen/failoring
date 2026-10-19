@@ -58,7 +58,8 @@ add_library(crochet_core STATIC
   crochet_core/src/crochet_hinge_fit.cpp
   crochet_core/src/crochet_rod.cpp
   crochet_core/src/yarn_render.cpp
-  crochet_core/src/yarn_work.cpp)
+  crochet_core/src/yarn_work.cpp
+  crochet_core/src/yarn_sim.cpp)
 target_include_directories(crochet_core PUBLIC crochet_core/include)
 target_link_libraries(crochet_core PUBLIC cloth_core)
 target_compile_options(crochet_core PRIVATE -Wall -Wextra)
@@ -90,6 +91,11 @@ target_include_directories(test_crochet_rod PRIVATE cloth_core/tests)
 add_test(NAME test_crochet_rod COMMAND test_crochet_rod)
 
 # crochet_core test: yarn mode's builder (cursor, pattern text, threading of every finger, one loop, skip, determinism).
+add_executable(test_crochet_yarn_sim crochet_core/tests/test_crochet_yarn_sim.cpp)
+target_link_libraries(test_crochet_yarn_sim PRIVATE crochet_core)
+target_include_directories(test_crochet_yarn_sim PRIVATE cloth_core/tests)
+add_test(NAME test_crochet_yarn_sim COMMAND test_crochet_yarn_sim)
+
 add_executable(test_crochet_yarn_work crochet_core/tests/test_crochet_yarn_work.cpp)
 target_link_libraries(test_crochet_yarn_work PRIVATE crochet_core)
 target_include_directories(test_crochet_yarn_work PRIVATE cloth_core/tests)
@@ -198,6 +204,10 @@ target_link_libraries(yarn_tune PRIVATE crochet_core)
 # yarn mode: a bounded physical simulation of a chain stitch (a hook, a loop, a yarn over, a pull through)
 add_executable(yarn_presim crochet_core/cli/yarn_presim.cpp)
 target_link_libraries(yarn_presim PRIVATE crochet_core)
+
+# yarn mode: the process simulator (the hook makes the slip knot and the stitches; nothing is placed)
+add_executable(yarn_sim crochet_core/cli/yarn_sim.cpp)
+target_link_libraries(yarn_sim PRIVATE crochet_core)
 
 # yarn mode: does inflating the yarn under contact untangle the design? (an experiment)
 add_executable(yarn_relax crochet_core/cli/yarn_relax.cpp)
