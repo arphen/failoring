@@ -1,6 +1,7 @@
 # Yarn mode: a stitch-by-stitch crochet simulator (draft, for review)
 
-Status: draft written 2026-10-18 after the first hands-on session. Nothing here is built. It adds a second engine beside the cloth engine of
+Status: draft written 2026-10-18 after the first hands-on session; the user said go on 2026-10-19. **Y1 is built** (`docs/crochet/reports/Y1.md`);
+Y2 onward is not. The open questions of section 10 are still open: Y2 does not need them, Y5 does. It adds a second engine beside the cloth engine of
 `docs/CROCHET_PLAN.md`; it does not replace it. Rules of that plan still apply (never merge `crochet/main` into `main` without being told; ask at the
 gates marked **GATE** below).
 

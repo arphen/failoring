@@ -364,3 +364,14 @@ acceptance, with the measured numbers. Honest numbers; "not measured" where not 
   The relaxation itself is converged (plain and BLO, default against 1200 frames: at most 0.08 mm, corner angles identical).
 * FLO measures the same as plain (1.1 deg apart). Possible cause, unchecked: its -25 deg rest angle opposes the direction a bag wall turns.
 * Asked of the user: do the variants look and measure plausibly different, and which "chain around the bottom" (§11.3) did they mean.
+
+### 2026-10-19 — Yarn mode Y1: the rod core (docs/YARN_MODE_PLAN.md)
+
+* The user said go on yarn mode. CrochetPARADE (cloned already, `third_party/crochetparade/`) has no yarn model: a stitch is two nodes and a length, the
+  layout is distance geometry. Nothing of its code is used; what it gives (stitch height ratios, the top-node / attachment vocabulary, inflate-then-settle) is
+  written down in `docs/crochet/reports/Y1.md` for Y2-Y4.
+* `crochet/rod.hpp`, `crochet_rod.cpp`: a Cosserat rod solver (position and orientation based dynamics on XPBD, a direct banded solve per open chain, capsule
+  contact with friction, a floor), `test_crochet_rod` (new). Catenary length exact and sag equal to the analytic one, cantilever tip within 1.2 % of beam
+  theory, twist relaxes to rest and carries evenly, two linked rings stay linked when pulled (linking number 1, and 0 with contact off), no strand pair closer
+  than 2r, 6000 particles at 79 ms per 1/60 s step. Three mutants killed. The first, sweep-only version failed the physics (a chain stretched 2.5 %, a rod hung
+  limp); the direct solve fixed that. Next: Y2 (slip knot, chain, sc, the plied-tube renderer, slack and thickness sliders), with a look by the user at the gate.

@@ -55,7 +55,8 @@ add_library(crochet_core STATIC
   crochet_core/src/crochet_session.cpp
   crochet_core/src/crochet_run.cpp
   crochet_core/src/crochet_calibration.cpp
-  crochet_core/src/crochet_hinge_fit.cpp)
+  crochet_core/src/crochet_hinge_fit.cpp
+  crochet_core/src/crochet_rod.cpp)
 target_include_directories(crochet_core PUBLIC crochet_core/include)
 target_link_libraries(crochet_core PUBLIC cloth_core)
 target_compile_options(crochet_core PRIVATE -Wall -Wextra)
@@ -79,6 +80,12 @@ target_link_libraries(test_crochet_yarn PRIVATE crochet_core)
 target_include_directories(test_crochet_yarn PRIVATE cloth_core/tests)
 target_compile_definitions(test_crochet_yarn PRIVATE FL_YARNS_PATH="${FL_YARNS_PATH}")
 add_test(NAME test_crochet_yarn COMMAND test_crochet_yarn)
+
+# crochet_core test: the Cosserat rod solver of yarn mode (docs/YARN_MODE_PLAN.md, phase Y1).
+add_executable(test_crochet_rod crochet_core/tests/test_crochet_rod.cpp)
+target_link_libraries(test_crochet_rod PRIVATE crochet_core)
+target_include_directories(test_crochet_rod PRIVATE cloth_core/tests)
+add_test(NAME test_crochet_rod COMMAND test_crochet_rod)
 
 # crochet_core test: the stitch mechanics model (plan section 4).
 add_executable(test_crochet_model crochet_core/tests/test_crochet_model.cpp)
