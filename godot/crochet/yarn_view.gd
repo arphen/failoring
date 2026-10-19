@@ -42,9 +42,14 @@ var target_label: Label
 var overlay_panel: PanelContainer
 var overlay_text: RichTextLabel
 var follow_check: CheckBox
+var expand_slider: HSlider
+var thick_slider: HSlider
+var view_label: Label
 var overlay_check: CheckBox
 var b_chain: Button
 var b_sc: Button
+var loop_front: CheckBox
+var loop_back: CheckBox
 var b_turn: Button
 var b_undo: Button
 var _shown_particles := 0         # how much of the yarn is drawn (it grows as it is made)
@@ -68,7 +73,7 @@ func _build_ui() -> void:
 	var root := VBoxContainer.new()
 	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(root)
-	var bar := HBoxContainer.new()
+	var bar := HFlowContainer.new()   # wraps when the window is narrow
 	root.add_child(bar)
 	var title := Label.new()
 	title.text = "Yarn mode  "
@@ -77,8 +82,20 @@ func _build_ui() -> void:
 	b_chain = _button("Chain", "yarn over, pull through the loop on the hook", func() -> void: do_action("chain"))
 	bar.add_child(b_chain)
 	b_sc = _button("Single crochet", "into the next stitch of the row below, under both loops; click a loop first to work into that one instead",
-			func() -> void: do_action("sc"))
+			func() -> void: do_action(_sc_kind()))
 	bar.add_child(b_sc)
+	loop_front = CheckBox.new()
+	loop_front.text = "front loop"
+	loop_front.button_pressed = true
+	loop_front.tooltip_text = "Which loops of the stitch below the hook goes under. Both (the usual) is already ticked. Untick one to work into the other only; untick both to skip the stitch."
+	loop_front.toggled.connect(func(_on: bool) -> void: _refresh())
+	bar.add_child(loop_front)
+	loop_back = CheckBox.new()
+	loop_back.text = "back loop"
+	loop_back.button_pressed = true
+	loop_back.tooltip_text = loop_front.tooltip_text
+	loop_back.toggled.connect(func(_on: bool) -> void: _refresh())
+	bar.add_child(loop_back)
 	b_turn = _button("Turn", "turn the work over at the end of a row", func() -> void: do_action("turn"))
 	bar.add_child(b_turn)
 	b_undo = _button("Undo", "take the last stitch back", func() -> void: undo())
@@ -93,9 +110,33 @@ func _build_ui() -> void:
 	overlay_check.button_pressed = true
 	overlay_check.toggled.connect(func(on: bool) -> void: overlay_panel.visible = on)
 	bar.add_child(overlay_check)
-	var spacer := Control.new()
-	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	bar.add_child(spacer)
+	bar.add_child(VSeparator.new())
+	var el := Label.new()
+	el.text = "Expand"
+	el.tooltip_text = "Loosen the work: the loops open up and the yarn keeps its thickness, so you can see how they hook into each other"
+	bar.add_child(el)
+	expand_slider = HSlider.new()
+	expand_slider.min_value = 1.0
+	expand_slider.max_value = 3.0
+	expand_slider.step = 0.05
+	expand_slider.value = 1.0
+	expand_slider.custom_minimum_size = Vector2(110, 0)
+	expand_slider.tooltip_text = el.tooltip_text
+	expand_slider.value_changed.connect(func(_v: float) -> void: _apply_view())
+	bar.add_child(expand_slider)
+	var tl := Label.new()
+	tl.text = "Yarn"
+	tl.tooltip_text = "How thick the yarn is drawn (thin: see through the interlocking)"
+	bar.add_child(tl)
+	thick_slider = HSlider.new()
+	thick_slider.min_value = 0.3
+	thick_slider.max_value = 1.0
+	thick_slider.step = 0.05
+	thick_slider.value = 1.0
+	thick_slider.custom_minimum_size = Vector2(90, 0)
+	thick_slider.tooltip_text = tl.tooltip_text
+	thick_slider.value_changed.connect(func(_v: float) -> void: _apply_view())
+	bar.add_child(thick_slider)
 	var close := _button("Back", "", func() -> void:
 		visible = false
 		closed.emit())
@@ -165,6 +206,16 @@ func _build_ui() -> void:
 	target_label.offset_left = 12
 	target_label.offset_top = -34
 	target_label.offset_bottom = -8
+
+# What the single crochet button does, from the loop ticks: both -> under both loops, one -> that loop only, none -> skip the stitch.
+func _sc_kind() -> String:
+	if loop_front.button_pressed and loop_back.button_pressed:
+		return "sc"
+	if loop_front.button_pressed:
+		return "sc_front"
+	if loop_back.button_pressed:
+		return "sc_back"
+	return "skip"
 
 func _button(text: String, tip: String, cb: Callable) -> Button:
 	var b := Button.new()
@@ -259,13 +310,13 @@ func do_action(kind: String, opening: int = -2) -> bool:
 		opening = picked
 	busy = true
 	var st: Dictionary = session.get_state()
-	if kind == "sc" and opening < 0 and int(st.get("next", -1)) < 0:
+	if (kind.begins_with("sc") or kind == "skip") and opening < 0 and int(st.get("next", -1)) < 0:
 		status_label.text = "Nothing to work into: turn the work over first."
 		busy = false
 		return false
 	var open_id := opening if opening >= 0 else int(st.get("next", -1))
-	if animate and kind != "turn":
-		var at := _opening_centre(open_id) if (kind == "sc" and open_id >= 0) else _live_centre()
+	if animate and kind != "turn" and kind != "skip":
+		var at := _opening_centre(open_id) if ((kind.begins_with("sc") or kind == "skip") and open_id >= 0) else _live_centre()
 		await _move_hook(at, 0.30)
 	var before := session.get_particle_count()
 	var r: Dictionary = session.action(kind, opening)
@@ -278,9 +329,9 @@ func do_action(kind: String, opening: int = -2) -> bool:
 	if kind == "turn":
 		_rebuild(-1)
 		await _turn_animation()
-	else:
+	elif kind != "skip":
 		await _grow(before, int(r["particles"]))
-	soft_steps = 40 if animate else 0
+	soft_steps = 16 if animate else 0
 	_refresh()
 	if animate:
 		await _move_hook(_live_centre(), 0.25)
@@ -357,6 +408,15 @@ func _set_flip(f: float, pivot_local: Vector3, pivot_world: Vector3) -> void:
 
 # ------------------------------------------------------------------------------------------------ drawing
 
+# The expand and thickness sliders: how the piece is shown (the work itself is not changed).
+func _apply_view() -> void:
+	session.set_view(expand_slider.value, thick_slider.value)
+	_rebuild(-1)
+	_update_marker()
+	if not busy:
+		_place_hook(_live_centre())
+		_frame_work(false)
+
 func _rebuild(up_to: int) -> void:
 	var d: Dictionary = session.get_mesh(up_to, 10, 3)
 	var pos: PackedVector3Array = d["positions"]
@@ -380,6 +440,7 @@ func _refresh() -> void:
 	var targets: PackedInt32Array = st["targets"]
 	var cursor := int(st["cursor"])
 	b_sc.disabled = next_id < 0 and picked < 0
+	b_sc.text = "Skip stitch" if _sc_kind() == "skip" else ("Single crochet" if _sc_kind() == "sc" else ("sc, front loop only" if _sc_kind() == "sc_front" else "sc, back loop only"))
 	b_undo.disabled = history.size() == 0
 	var row := int(st["row"])
 	var made := int(st["made"])

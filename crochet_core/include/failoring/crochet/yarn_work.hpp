@@ -26,6 +26,10 @@ struct YarnLoop {
     std::vector<int> through;  // the loops whose eyes this loop's legs were pulled through
 };
 
+// Which loops of a stitch's top a new stitch goes under: both (through the eye, the usual), or only the front or only the back one (its legs
+// straddle that strand alone and the other loop is left free: a ridge).
+enum class Loops { Both, Front, Back };
+
 struct EyeFrame {
     Vec3 centre, normal;  // the normal follows the yarn's direction by the right hand rule
     Real radius = 0;      // of the circle of the ring's area
@@ -82,14 +86,16 @@ public:
     // yarn over, pull through the top `k` live loops (they are consumed). Returns the new live loop.
     int pullThrough(int k);
     // single crochet into `opening`: pullUp, then pullThrough(2). Returns the final live loop.
-    int sc(int opening);
+    int sc(int opening, Loops which = Loops::Both);
     // turns the work over: the next row goes back the other way, on the other side
     void turn();
     // --- the editor's view of the work (docs/YARN_MODE_PLAN.md section 11): one click per stitch, with the usual choices made ---
     // The opening the next stitch goes into when the user does not pick one: the next stitch of the row below, in the order they are worked.
     int nextOpening() const;
     // single crochet into `opening` (-1: the next opening); the cursor moves on. Returns the new live loop, or -1 when there is nothing to work into.
-    int stitchSc(int opening = -1);
+    int stitchSc(int opening = -1, Loops which = Loops::Both);
+    // skips the next stitch of the row below (no yarn: the hook just moves on)
+    bool stitchSkip();
     // a chain stitch (it is not worked into anything, so the cursor stays)
     int stitchChain();
     // turns the work over: `turningChain` chain stitches (1 for sc), then the next row goes back along the row just made. After the foundation
@@ -126,7 +132,9 @@ private:
     // A loop whose ring is put at `ringC`, its plane square to `ringN`; its legs go from the ring through the eyes of `eyesLoops` (in order)
     // and back. The legs pass each eye towards the ring, bending to face it when the line is too slanting.
     // The ring is a circle of ringRadius, or an ellipse with semi-axes semiA along `major` and semiB across it (a top loop seen edge on is a bar).
-    int loopAt(const Vec3& ringC, const Vec3& ringN, const std::vector<int>& eyesLoops, bool consume, const Vec3* major = nullptr, Real semiA = -1, Real semiB = -1);
+    // `modes` (parallel to `eyesLoops`, optional): 0 through the eye, +1 / -1 round the strand of the ring nearest the worker (`front`) / farthest from it.
+    int loopAt(const Vec3& ringC, const Vec3& ringN, const std::vector<int>& eyesLoops, bool consume, const Vec3* major = nullptr, Real semiA = -1, Real semiB = -1,
+               const std::vector<int>* modes = nullptr, const Vec3* front = nullptr);
     int addLoop(int p0, int p1, bool live);
     void appendPath(const std::vector<Vec3>& pts);
 };

@@ -89,6 +89,12 @@ target_link_libraries(test_crochet_rod PRIVATE crochet_core)
 target_include_directories(test_crochet_rod PRIVATE cloth_core/tests)
 add_test(NAME test_crochet_rod COMMAND test_crochet_rod)
 
+# crochet_core test: yarn mode's builder (cursor, pattern text, threading of every finger, one loop, skip, determinism).
+add_executable(test_crochet_yarn_work crochet_core/tests/test_crochet_yarn_work.cpp)
+target_link_libraries(test_crochet_yarn_work PRIVATE crochet_core)
+target_include_directories(test_crochet_yarn_work PRIVATE cloth_core/tests)
+add_test(NAME test_crochet_yarn_work COMMAND test_crochet_yarn_work)
+
 # crochet_core test: the stitch mechanics model (plan section 4).
 add_executable(test_crochet_model crochet_core/tests/test_crochet_model.cpp)
 target_link_libraries(test_crochet_model PRIVATE crochet_core)

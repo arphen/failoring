@@ -1,7 +1,7 @@
 # Yarn mode: a stitch-by-stitch crochet simulator (draft, for review)
 
 Status: draft written 2026-10-18 after the first hands-on session; the user said go on 2026-10-19. **Y1 is built** (`docs/crochet/reports/Y1.md`);
-Y2 onward is not. The open questions of section 10 are still open: Y2 does not need them, Y5 does. It adds a second engine beside the cloth engine of
+**Y2 and a first Y3 are built, waiting for the user's look** (`docs/crochet/reports/Y2.md`); Y4 onward is not. The open questions of section 10 are still open: Y2 does not need them, Y5 does. It adds a second engine beside the cloth engine of
 `docs/CROCHET_PLAN.md`; it does not replace it. Rules of that plan still apply (never merge `crochet/main` into `main` without being told; ask at the
 gates marked **GATE** below).
 
@@ -142,7 +142,7 @@ Phase Y3 builds to this; it is the point of the whole mode.
 * **Building the topology by physics did not work.** Fingers made roomy round a hook and then tightened by tension and by shrinking rest lengths gave
   blobs: the slack has nowhere tidy to go, and a long travel strand from the end of the yarn to the next opening wraps the work. The rod solver was not
   the problem once its bend Jacobian was made exact (a regression test now covers it).
-* **What worked:** put every loop's ring on an explicit lattice position (flat work: rings lie in the fabric plane, rows alternate which side of it
-  they sit on), run the two legs from the ring through the eye of the loop it is pulled through at the lattice's own angle, build it tight, and look at it
-  before any relaxation. A chain built that way, with no physics at all, is recognisably a crochet chain from the front. The sc row on the same
-  scheme is not yet right (see `docs/crochet/reports/Y2.md` when it exists).
+* **What worked:** put every loop on an explicit lattice position, run the legs through the eye of the loop pulled through, build it tight, and check it. A
+  chain built that way, with no physics, is a recognisable crochet chain. A real photograph of an sc swatch showed that a stitch is a vertical post of two strands
+  topped by a flat slanted bar (not a round ring facing the viewer); `yarn_tune` searches the lattice parameters for clean threading and no overlap (strands may
+  squeeze to half a diameter). The result, with plies, is in `docs/crochet/reports/Y2.md`: the Y2 gate, the user to look at it.

@@ -197,7 +197,8 @@ int YarnWork::finger(const std::vector<int>& eyesLoops, bool consume, const Vec3
 }
 
 // A loop with its ring put at `ringC` (plane square to `ringN`) and its legs through the eyes of `eyesLoops`, in order.
-int YarnWork::loopAt(const Vec3& ringC, const Vec3& ringN0, const std::vector<int>& eyesLoops, bool consume, const Vec3* major, Real semiA, Real semiB) {
+int YarnWork::loopAt(const Vec3& ringC, const Vec3& ringN0, const std::vector<int>& eyesLoops, bool consume, const Vec3* major, Real semiA, Real semiB,
+                     const std::vector<int>* modes, const Vec3* front) {
     const Real r = rod.params.radius;
     const Real off = wp.hookRadius + r + 0.0004;
     const Vec3 ringN = normalized(ringN0);
@@ -216,9 +217,27 @@ int YarnWork::loopAt(const Vec3& ringC, const Vec3& ringN0, const std::vector<in
         Vec3 u = cross(a, ringN);
         if (length2(u) < 1e-8) u = cross(a, upDir);
         u = normalized(u);
-        const Real sg = dot(cursor - e.centre, u) >= 0 ? 1.0 : -1.0;
-        passes.push_back({e.centre, a, u * sg});
-        cursor = e.centre + a * wp.approach;
+        Vec3 centre = e.centre;
+        Real gap = wp.legGap;
+        const int mode = (modes != nullptr && k < modes->size()) ? (*modes)[k] : 0;
+        if (mode != 0 && front != nullptr) {
+            // round one strand of the ring only: the ring's particle farthest toward (mode +1) or away from (mode -1) the worker is on that strand;
+            // the legs pass either side of it, across it (one between the two strands, one outside)
+            const YarnLoop& Lp = loops[eyesLoops[k]];
+            const Vec3 F = normalized(*front - e.normal * dot(*front, e.normal));
+            int best = Lp.r0;
+            Real bestV = -1e300;
+            for (int pi = Lp.r0; pi <= Lp.r1; ++pi) {
+                const Real v = mode * dot(F, rod.x[pi] - e.centre);
+                if (v > bestV) { bestV = v; best = pi; }
+            }
+            centre = rod.x[best];
+            u = F;
+            gap = std::max(wp.legGap, 1.6 * r);
+        }
+        const Real sg = dot(cursor - centre, u) >= 0 ? 1.0 : -1.0;
+        passes.push_back({centre, a, u * sg * (gap / std::max(wp.legGap, 1e-9))});
+        cursor = centre + a * wp.approach;
     }
     if (passes.empty()) return -1;
     std::vector<Vec3> way, travel;
@@ -392,7 +411,7 @@ int YarnWork::pullUp(int opening) {
     return id;
 }
 
-int YarnWork::sc(int opening) {
+int YarnWork::sc(int opening, Loops which) {
     // The opening is the eye of a loop in the row below. The loop pulled up through it is a post: it stands nearly a row up and is a bar (a flat
     // elongated ring leaning back toward the worker, which from the front is a pair of strands side by side along the row). The loop pulled
     // through that one and the loop on the hook is the stitch's top: another bar, half a stitch along. Position comes from the opening's place
@@ -402,7 +421,8 @@ int YarnWork::sc(int opening) {
     const Vec3 along = progress;
     const Vec3 lean = normalized(upDir * std::cos(wp.barTilt) + z * std::sin(wp.barTilt));
     const Vec3 base = b.centre - z * dot(b.centre, z);
-    const int b1 = loopAt(base + upDir * (wp.postRise * wp.stitchHeight) + z * (0.5 * wp.layerGap), lean, {opening}, false, &along, wp.barA, wp.barB);
+    const std::vector<int> modes{which == Loops::Both ? 0 : (which == Loops::Front ? 1 : -1)};
+    const int b1 = loopAt(base + upDir * (wp.postRise * wp.stitchHeight) + z * (0.5 * wp.layerGap), lean, {opening}, false, &along, wp.barA, wp.barB, &modes, &z);
     settle();
     const int top = loopAt(base + upDir * wp.stitchHeight + along * (0.5 * wp.stitchWidth) - z * (0.3 * wp.layerGap), lean,
                            {b1, hook.front() == b1 ? hook.back() : hook.front()}, true, &along, wp.barA, wp.barB);
@@ -426,15 +446,24 @@ int YarnWork::stitchChain() {
     return id;
 }
 
-int YarnWork::stitchSc(int opening) {
+int YarnWork::stitchSc(int opening, Loops which) {
     if (opening < 0) opening = nextOpening();
     if (opening < 0 || hook.empty()) return -1;
     if (opening == nextOpening()) ++cursor_;
-    const int id = sc(opening);
+    const int id = sc(opening, which);
     made_.push_back(id);
-    if (!log_.empty() && log_.back().first == "sc") ++log_.back().second;
-    else log_.push_back({"sc", 1});
+    const char* kind = which == Loops::Both ? "sc" : (which == Loops::Front ? "sc flo" : "sc blo");
+    if (!log_.empty() && log_.back().first == kind) ++log_.back().second;
+    else log_.push_back({kind, 1});
     return id;
+}
+
+bool YarnWork::stitchSkip() {
+    if (nextOpening() < 0) return false;
+    ++cursor_;
+    if (!log_.empty() && log_.back().first == "sk") ++log_.back().second;
+    else log_.push_back({"sk", 1});
+    return true;
 }
 
 void YarnWork::stitchTurn(int turningChain) {

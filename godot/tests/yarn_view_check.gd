@@ -6,6 +6,25 @@ func check(name: String, ok: bool) -> void:
 	print(("PASS  " if ok else "FAIL  ") + name)
 	if not ok: fails += 1
 
+# the width of the drawn piece along x
+func _extent(pos: PackedVector3Array) -> float:
+	var lo := 1.0e9
+	var hi := -1.0e9
+	for p in pos:
+		lo = minf(lo, p.x)
+		hi = maxf(hi, p.x)
+	return hi - lo
+
+# the distance from a ring's vertex to the next ring's... here: the mean distance of a vertex to its neighbour in the same ring (10 sides / 8 here)
+func _thickness(mesh: Dictionary) -> float:
+	var pos: PackedVector3Array = mesh["positions"]
+	var sum := 0.0
+	var n := 0
+	for i in range(0, mini(pos.size() - 8, 8 * 200), 8):
+		sum += pos[i].distance_to(pos[i + 4])   # opposite sides of one ring
+		n += 1
+	return sum / maxf(1.0, float(n))
+
 func _ready() -> void:
 	var c = (load("res://crochet/crochet.tscn") as PackedScene).instantiate()
 	add_child(c)
@@ -76,6 +95,48 @@ func _ready() -> void:
 	await yv.do_action("sc")
 	st = yv.session.get_state()
 	check("the stitch went into the picked loop, so the in-order cursor did not move, and the pick is spent", yv.picked == -1 and int(st["cursor"]) == before_cursor and int(st["made"]) == 1)
+
+	# which loops: both is ticked, unticking one works into the other only, unticking both skips the stitch
+	yv.reset_piece()
+	for i in 5:
+		await yv.do_action("chain")
+	await yv.do_action("turn")
+	check("both loops are ticked by default and the button says single crochet", yv.loop_front.button_pressed and yv.loop_back.button_pressed and yv.b_sc.text == "Single crochet")
+	yv.loop_back.button_pressed = false
+	check("unticking the back loop: the button now works into the front loop only", yv.b_sc.text.contains("front loop") and yv._sc_kind() == "sc_front")
+	await yv.do_action(yv._sc_kind())
+	check("...and the pattern says so (flo)", yv.session.get_pattern_text().contains("sc flo 1"))
+	yv.loop_front.button_pressed = false
+	check("unticking both turns the button into 'Skip stitch'", yv.b_sc.text == "Skip stitch" and yv._sc_kind() == "skip")
+	var p_skip: int = yv.session.get_particle_count()
+	var c_skip := int(yv.session.get_state()["cursor"])
+	await yv.do_action(yv._sc_kind())
+	check("a skip moves the cursor on and adds no yarn", int(yv.session.get_state()["cursor"]) == c_skip + 1 and yv.session.get_particle_count() == p_skip)
+	yv.loop_front.button_pressed = true
+	yv.loop_back.button_pressed = true
+
+	# expand and thin yarn: a way of looking, not a change of the work
+	yv.reset_piece()
+	for i in 4:
+		await yv.do_action("chain")
+	var m1: Dictionary = yv.session.get_mesh(-1, 8, 2)
+	var l1: Array = yv.session.get_loops()
+	var span1: float = (l1[4]["centre"] as Vector3).distance_to(l1[1]["centre"])
+	yv.expand_slider.value = 2.0
+	var l2: Array = yv.session.get_loops()
+	var span2: float = (l2[4]["centre"] as Vector3).distance_to(l2[1]["centre"])
+	check("expanding to 2x doubles the distances between the loops as shown (%.1f mm -> %.1f mm)" % [span1 * 1000, span2 * 1000], absf(span2 / span1 - 2.0) < 1.0e-3)
+	var m2: Dictionary = yv.session.get_mesh(-1, 8, 2)
+	var ex1 := _extent(m1["positions"])
+	var ex2 := _extent(m2["positions"])
+	check("...and the drawn yarn spreads out with it (the piece is wider), with the same number of vertices", ex2 > 1.8 * ex1 and (m2["positions"] as PackedVector3Array).size() == (m1["positions"] as PackedVector3Array).size())
+	var count_before: int = yv.session.get_particle_count()
+	check("expanding does not change the work itself", count_before == yv.session.get_particle_count() and yv.history.size() == 4)
+	yv.thick_slider.value = 0.5
+	var m3: Dictionary = yv.session.get_mesh(-1, 8, 2)
+	check("a thin-yarn view draws a narrower tube (same centre line)", _thickness(m3) < 0.8 * _thickness(m2))
+	yv.expand_slider.value = 1.0
+	yv.thick_slider.value = 1.0
 
 	# the structure of what was made: every pass through an eye is a clean threading (the topology is right)
 	yv.reset_piece()

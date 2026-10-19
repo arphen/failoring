@@ -14,11 +14,27 @@ Vector3 v3(const fl::Vec3& v) { return Vector3((real_t)v.x, (real_t)v.y, (real_t
 
 YarnSession::YarnSession() { reset(); }
 
+fl::Vec3 YarnSession::pivot() const {
+    fl::Vec3 c{};
+    if (work_.rod.x.empty()) return c;
+    for (const fl::Vec3& p : work_.rod.x) c += p;
+    return c / (double)work_.rod.x.size();
+}
+
+fl::Vec3 YarnSession::view(const fl::Vec3& p) const { return expand_ == 1.0 ? p : pivot() + (p - pivot()) * expand_; }
+
+void YarnSession::set_view(double expand, double thickness) {
+    expand_ = expand < 0.2 ? 0.2 : expand;
+    thickness_ = thickness < 0.1 ? 0.1 : thickness;
+}
+
 void YarnSession::reset() {
     work_ = fl::YarnWork();
     // the settings of a piece being worked by hand: the tuned tight lattice (WorkParams' defaults), a soft shape memory, strands that give a little
     work_.rod.params.radiusScale = 0.55;
     work_.rod.params.shapeStiffness = 40.0;
+    work_.rod.params.substeps = 2;   // the soft settling is for feel: cheap
+    work_.rod.params.iterations = 1;
     work_.slipKnot(fl::Vec3{0, 0, 0});
     started_ = true;
 }
@@ -29,9 +45,17 @@ Dictionary YarnSession::action(const String& kind, int opening) {
     int loop = -1;
     if (kind == "chain") {
         loop = work_.stitchChain();
-    } else if (kind == "sc") {
-        loop = work_.stitchSc(opening);
+    } else if (kind == "sc" || kind == "sc_front" || kind == "sc_back") {
+        const fl::Loops which = kind == "sc" ? fl::Loops::Both : (kind == "sc_front" ? fl::Loops::Front : fl::Loops::Back);
+        loop = work_.stitchSc(opening, which);
         if (loop < 0) r["msg"] = String("nothing to work into: turn the work first");
+    } else if (kind == "skip") {
+        if (work_.stitchSkip()) {
+            r["ok"] = true;
+            loop = work_.hook.empty() ? -1 : work_.hook.back();
+        } else {
+            r["msg"] = String("nothing to skip");
+        }
     } else if (kind == "turn") {
         // after the foundation chain there is no turning chain (sc in the 2nd chain from the hook); after a row, one chain
         work_.stitchTurn(work_.row == 0 ? 0 : 1);
@@ -57,7 +81,12 @@ Dictionary YarnSession::get_mesh(int up_to, int sides, int subdiv) {
     o.sides = sides > 2 ? sides : 8;
     o.subdiv = subdiv > 0 ? subdiv : 2;
     o.maxParticles = up_to;
-    const fl::YarnMesh m = fl::buildYarnMesh(work_.rod, o);
+    o.radiusScale = thickness_;
+    fl::YarnMesh m = fl::buildYarnMesh(work_.rod, o);
+    if (expand_ != 1.0) {
+        const fl::Vec3 pv = pivot();
+        for (fl::Vec3& p : m.pos) p = pv + (p - pv) * expand_;
+    }
     PackedVector3Array pos, nrm;
     PackedColorArray col;
     PackedInt32Array idx;
@@ -93,7 +122,7 @@ TypedArray<Dictionary> YarnSession::get_loops() const {
         d["id"] = (int)i;
         d["row"] = work_.loops[i].row;
         d["live"] = work_.loops[i].live;
-        d["centre"] = v3(e.centre);
+        d["centre"] = v3(view(e.centre));
         d["normal"] = v3(e.normal);
         d["radius"] = e.radius;
         out.push_back(d);
@@ -114,7 +143,7 @@ Dictionary YarnSession::get_state() const {
     d["made"] = work_.rowStitches();
     const auto hp = work_.hookPose();
     if (hp.valid) {
-        d["hook_tip"] = v3(hp.tip);
+        d["hook_tip"] = v3(view(hp.tip));
         d["hook_axis"] = v3(hp.axis);
     }
     d["text"] = String(work_.patternText().c_str());
@@ -140,4 +169,5 @@ void YarnSession::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_state"), &YarnSession::get_state);
     ClassDB::bind_method(D_METHOD("get_pattern_text"), &YarnSession::get_pattern_text);
     ClassDB::bind_method(D_METHOD("set_param", "name", "value"), &YarnSession::set_param);
+    ClassDB::bind_method(D_METHOD("set_view", "expand", "thickness"), &YarnSession::set_view);
 }

@@ -375,3 +375,12 @@ acceptance, with the measured numbers. Honest numbers; "not measured" where not 
   theory, twist relaxes to rest and carries evenly, two linked rings stay linked when pulled (linking number 1, and 0 with contact off), no strand pair closer
   than 2r, 6000 particles at 79 ms per 1/60 s step. Three mutants killed. The first, sweep-only version failed the physics (a chain stretched 2.5 %, a rod hung
   limp); the direct solve fixed that. Next: Y2 (slip knot, chain, sc, the plied-tube renderer, slack and thickness sliders), with a look by the user at the gate.
+
+### 2026-10-19 — Yarn mode Y2/Y3 first cut: the editor and an sc swatch (docs/crochet/reports/Y2.md)
+
+* The user asked for a lego-like editor (one click per stitch, hook animation, an animated turn, soft yarn, a pattern overlay, pick one loop or skip) and said go
+  on yarn mode. Built: `YarnSession` (GDExtension), the Yarn mode view, `YarnWork` with a stitch cursor and pattern text, a lattice design of chain and sc (a post
+  topped by a bar) tuned by `yarn_tune`, an exact bend-twist Jacobian in the rod solver (found when sharp corners diverged), anchor springs (shape memory),
+  expand / thin-yarn view sliders, front-loop / back-loop / skip. Tests: `test_crochet_rod` 7 groups + sharp corners, `test_crochet_yarn_work` (new),
+  `yarn_view_check` (new, 31 PASS). **Y2 gate: the user to look at the sc swatch** (pictures in the report). Open: hdc, dc, sl st, foundation sc, colours (Y5), a
+  faster soft solve (Y6), the rows' lean after a turn.

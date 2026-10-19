@@ -21,7 +21,7 @@ public:
     YarnSession();
     // A new piece: the slip knot at the origin, one loop on the hook.
     void reset();
-    // "chain", "sc", "turn": one hook action. `opening` is the loop to work into (-1: the next one in order). Returns
+    // "chain", "sc" (under both loops), "sc_front" / "sc_back" (one loop only), "skip" (the next stitch), "turn": one hook action. `opening` is the loop to work into (-1: the next one in order). Returns
     // {ok, loop, msg, particles (the yarn now has), row, cursor}.
     Dictionary action(const String& kind, int opening);
     // `n` soft-physics steps (the yarn settling)
@@ -35,6 +35,9 @@ public:
     Dictionary get_state() const;
     String get_pattern_text() const;
     void set_param(const String& name, double value);
+    // How the piece is looked at: `expand` scales the piece about its middle (the loops open up, the yarn keeps its thickness, so you see how they
+    // hook into each other); `thickness` scales the yarn's drawn radius (a thin-yarn view). Neither changes the work.
+    void set_view(double expand, double thickness);
 
 protected:
     static void _bind_methods();
@@ -42,6 +45,9 @@ protected:
 private:
     fl::YarnWork work_;
     bool started_ = false;
+    double expand_ = 1.0, thickness_ = 1.0;
+    fl::Vec3 pivot() const;
+    fl::Vec3 view(const fl::Vec3& p) const;   // a point of the work as it is shown
 };
 
 }  // namespace godot

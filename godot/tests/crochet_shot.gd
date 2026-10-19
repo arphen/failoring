@@ -41,6 +41,14 @@ func _ready() -> void:
 			var count := 1 if tok == "turn" else int(tok.substr(2))
 			for i in count:
 				await yv.do_action(kind)
+		if OS.has_environment("FL_SHOT_YARN_EXPAND"):
+			yv.expand_slider.value = float(OS.get_environment("FL_SHOT_YARN_EXPAND"))
+		if OS.has_environment("FL_SHOT_YARN_THICK"):
+			yv.thick_slider.value = float(OS.get_environment("FL_SHOT_YARN_THICK"))
+		if OS.has_environment("FL_SHOT_YARN_FLIP"):   # the other side of the work, as if it were turned over by hand (no row is added)
+			var pv: Vector3 = yv._live_centre()
+			yv._set_flip(yv.flip + PI, pv, yv.work_root.to_global(pv))
+			yv._frame_work(true)
 		if OS.has_environment("FL_SHOT_YARN_YAW"):
 			yv.orbit.yaw = float(OS.get_environment("FL_SHOT_YARN_YAW"))
 		if OS.has_environment("FL_SHOT_YARN_DIST"):
