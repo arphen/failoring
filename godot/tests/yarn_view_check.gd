@@ -298,6 +298,7 @@ func _ready() -> void:
 	check("the second turn goes the same way: after two turns the work faces the worker again (rotation %.0f deg)" % rad_to_deg(yv.flip), absf(yv.flip) < 1.0e-6 or absf(absf(yv.flip) - TAU) < 1.0e-6)
 
 	# the hook makes the stitch: it draws the new loop through the loop on the hook, then rests at the new loop
+	yv.reset_piece()
 	yv.animate = true
 	for i in 3:
 		await yv.do_action("chain")
@@ -310,6 +311,14 @@ func _ready() -> void:
 	check("...the first moment has less yarn out than the last (the loop is not out yet)", _extent(fr0["positions"]) < _extent(fr1["positions"]) + 1.0e-9)
 	check("the animated chains made three more stitches", int(yv.session.get_state()["made"]) == 3)
 	check("the hook rests at the new loop", yv.hook_node.global_position.distance_to(yv.work_root.to_global(yv._live_centre())) < 0.0015)
+	# the same animated: the first sc starts the row, a finished row is turned (the turning chain drawn through first, then the half turn)
+	for i in 2:
+		await yv.do_action("sc")
+	st = yv.session.get_state()
+	check("animated single crochets: row 1 has its two stitches and one loop on the hook", int(st["row"]) == 1 and int(st["made"]) == 2 and st["live"].size() == 1 and int(st["next"]) == -1)
+	await yv.do_action("turn")
+	st = yv.session.get_state()
+	check("the animated turn: row 2, a turning chain, the work turned half way round (%.0f deg), the hook at the loop" % rad_to_deg(yv.flip), int(st["row"]) == 2 and absf(absf(yv.flip) - PI) < 1.0e-6 and yv.hook_node.global_position.distance_to(yv.work_root.to_global(yv._live_centre())) < 0.0015 and not yv.busy)
 	yv.animate = false
 	print("RESULT: %d failed" % fails)
 	get_tree().quit(1 if fails > 0 else 0)
