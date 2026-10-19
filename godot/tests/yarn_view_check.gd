@@ -297,6 +297,33 @@ func _ready() -> void:
 	await yv.do_action("turn")
 	check("the second turn goes the same way: after two turns the work faces the worker again (rotation %.0f deg)" % rad_to_deg(yv.flip), absf(yv.flip) < 1.0e-6 or absf(absf(yv.flip) - TAU) < 1.0e-6)
 
+	# as in the photographs: the loop stands round the hook, the hands hold hook and work, the yarn is carried over the left index finger
+	yv.reset_piece()
+	for i in 6:
+		await yv.do_action("chain")
+	for i in 2:
+		await yv.do_action("sc")
+	check("the hands are shown: the right one on the hook, the left one by the loop", yv.right_hand.visible and yv.left_hand.visible and yv.hook_node.is_ancestor_of(yv.right_hand))
+	var rest_tip: Vector3 = yv._live_centre()
+	var flat_c: Vector3 = yv._loop_centre()
+	check("the hook rests through the loop on it, which stands (the tip is %.1f mm from the flat ring's middle)" % (rest_tip.distance_to(flat_c) * 1000), rest_tip.distance_to(flat_c) > 0.004)
+	var standing: PackedVector3Array = yv.session.get_mesh(-1, 8, 2)["positions"]
+	yv.session.set_stand(Vector3(-0.86, -0.38, -0.3), rest_tip, 0.0)
+	var flat: PackedVector3Array = yv.session.get_mesh(-1, 8, 2)["positions"]
+	yv._rest_hook()
+	var lift := 0.0
+	for i in mini(standing.size(), flat.size()):
+		lift = maxf(lift, standing[i].distance_to(flat[i]))
+	check("...the loop is lifted off the work (%.1f mm) and the rest of the yarn has not moved" % (lift * 1000), lift > 0.003 and standing.size() == flat.size())
+	var rc: PackedVector3Array = yv._run_curve(Vector3(0, 1.0, 0), Vector3.RIGHT, Vector3(0.13, 1.0, -0.11))
+	var nearest := 1.0e9
+	for q in rc:
+		nearest = minf(nearest, q.distance_to(yv._finger_tip_world()))
+	check("the yarn is carried over the tip of the left index finger (%.1f mm from it)" % (nearest * 1000), nearest < 0.012)
+	yv.hands_check.button_pressed = false
+	check("the hands can be hidden, and then the yarn goes straight to its ball", not yv.left_hand.visible and not yv.right_hand.visible)
+	yv.hands_check.button_pressed = true
+
 	# the hook makes the stitch: it draws the new loop through the loop on the hook, then rests at the new loop
 	yv.reset_piece()
 	yv.animate = true

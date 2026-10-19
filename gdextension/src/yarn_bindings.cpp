@@ -25,6 +25,55 @@ fl::Vec3 YarnSession::view(const fl::Vec3& p) const { return expand_ == 1.0 ? p 
 
 fl::Vec3 YarnSession::unview(const fl::Vec3& p) const { return expand_ == 1.0 ? p : pivot() + (p - pivot()) / expand_; }
 
+void YarnSession::set_stand(const Vector3& tip_dir, const Vector3& tip_pos, double k) {
+    const fl::Vec3 d{tip_dir.x, tip_dir.y, tip_dir.z};
+    if (fl::length2(d) > 1e-12) stand_dir_ = fl::normalized(d);
+    stand_tip_ = unview(fl::Vec3{tip_pos.x, tip_pos.y, tip_pos.z});
+    stand_k_ = k < 0.0 ? 0.0 : (k > 1.0 ? 1.0 : k);
+}
+
+bool YarnSession::standingAt(int x, int up_to) const {
+    const fl::YarnLoop& L = work_.loops[x];
+    const auto lastNode = [&](const fl::YarnLoop& l) { return work_.strands[l.strand].first + l.p1 + 1; };
+    if (up_to >= 0 && lastNode(L) >= up_to) return false;   // not drawn yet
+    if (L.live) return true;
+    if (up_to >= 0 && L.leftHookBy >= 0) return lastNode(work_.loops[L.leftHookBy]) >= up_to;   // taken off the hook by a loop not drawn yet
+    return false;
+}
+
+void YarnSession::pushStand(std::vector<StandSave>& saved, int up_to, int max_loop, const fl::Vec3& dir, const fl::Vec3& tip, int collapse_loop, double collapse_s) {
+    std::vector<int> st;
+    for (int x = 0; x < max_loop && x < (int)work_.loops.size(); ++x)
+        if (work_.loops[x].r1 - work_.loops[x].r0 >= 2 && standingAt(x, up_to)) st.push_back(x);
+    const int n = (int)st.size();
+    for (int j = 0; j < n; ++j) {
+        const int x = st[j];
+        double k = 1.0;
+        if (collapse_loop >= 0) {
+            for (int e : work_.loops[collapse_loop].through)
+                if (e == x) k = 1.0 - collapse_s;
+        }
+        const std::vector<fl::Vec3> ring = work_.standRing(x, dir, tip - dir * (0.003 * (n - 1 - j)), k * stand_k_);
+        const fl::YarnLoop& L = work_.loops[x];
+        for (int i = L.r0; i <= L.r1; ++i) {
+            const int g = work_.strands[L.strand].first + i;
+            saved.push_back({g, work_.rod.x[g]});
+            work_.rod.x[g] = ring[i - L.r0];
+        }
+    }
+}
+
+void YarnSession::popStand(const std::vector<StandSave>& saved) {
+    for (auto it = saved.rbegin(); it != saved.rend(); ++it) work_.rod.x[it->g] = it->x;
+}
+
+Vector3 YarnSession::get_stand_tip(const Vector3& tip_dir) const {
+    if (work_.hook.empty()) return Vector3();
+    const fl::Vec3 d{tip_dir.x, tip_dir.y, tip_dir.z};
+    if (fl::length2(d) < 1e-12) return v3(view(work_.eye(work_.hook.back()).centre));
+    return v3(view(work_.standTip(work_.hook.back(), fl::normalized(d))));
+}
+
 void YarnSession::set_view(double expand, double thickness) {
     expand_ = expand < 0.2 ? 0.2 : expand;
     thickness_ = thickness < 0.1 ? 0.1 : thickness;
@@ -157,7 +206,10 @@ Dictionary YarnSession::get_mesh(int up_to, int sides, int subdiv) {
     o.maxParticles = up_to;
     o.radiusScale = thickness_;
     o.segmentColour = work_.segmentColours();
+    std::vector<StandSave> saved;
+    if (stand_k_ > 0.0) pushStand(saved, up_to, (int)work_.loops.size(), stand_dir_, stand_tip_, -1, 0.0);
     fl::YarnMesh m = fl::buildYarnMesh(work_.rod, o);
+    popStand(saved);
     if (expand_ != 1.0) {
         const fl::Vec3 pv = pivot();
         for (fl::Vec3& p : m.pos) p = pv + (p - pv) * expand_;
@@ -186,7 +238,13 @@ Dictionary YarnSession::anim_frame(int loop, double s, double wrap, const Packed
     o.maxParticles = std::min(work_.rod.particleCount(), work_.strands[L.strand].first + L.p1 + 2);
     o.radiusScale = thickness_;
     o.segmentColour = work_.segmentColours();
+    std::vector<StandSave> standSaved;
+    if (stand_k_ > 0.0) {
+        const double e = s < 0.0 ? 0.0 : (s > 1.0 ? 1.0 : s * s * (3.0 - 2.0 * s));
+        pushStand(standSaved, o.maxParticles - 1, loop, fl::normalized(f.axis * -1.0), f.tip, loop, e);
+    }
     fl::YarnMesh m = fl::buildYarnMesh(work_.rod, o);
+    popStand(standSaved);
     for (size_t i = 0; i < f.pts.size(); ++i) work_.rod.x[f.first + i] = saved[i];
     if (expand_ != 1.0) {
         const fl::Vec3 pv = pivot();
@@ -334,7 +392,8 @@ Dictionary YarnSession::get_state() const {
     d["made"] = work_.rowStitches();
     const auto hp = work_.hookPose();
     if (hp.valid) {
-        d["hook_tip"] = v3(view(hp.tip));
+        d["hook_tip"] = v3(view(stand_k_ > 0.0 ? work_.standTip(work_.hook.back(), stand_dir_) : hp.tip));
+        d["loop_centre"] = v3(view(hp.tip));
         d["hook_axis"] = v3(hp.axis);
     }
     d["text"] = String(work_.patternText().c_str());
@@ -425,6 +484,8 @@ void YarnSession::_bind_methods() {
     ClassDB::bind_method(D_METHOD("reset"), &YarnSession::reset);
     ClassDB::bind_method(D_METHOD("action", "kind", "opening"), &YarnSession::action);
     ClassDB::bind_method(D_METHOD("anim_frame", "loop", "s", "wrap", "hang", "phi", "sides", "subdiv"), &YarnSession::anim_frame);
+    ClassDB::bind_method(D_METHOD("set_stand", "tip_dir", "tip_pos", "k"), &YarnSession::set_stand);
+    ClassDB::bind_method(D_METHOD("get_stand_tip", "tip_dir"), &YarnSession::get_stand_tip);
     ClassDB::bind_method(D_METHOD("tick", "n"), &YarnSession::tick);
     ClassDB::bind_method(D_METHOD("get_mesh", "up_to", "sides", "subdiv"), &YarnSession::get_mesh);
     ClassDB::bind_method(D_METHOD("get_particle_count"), &YarnSession::get_particle_count);

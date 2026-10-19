@@ -35,6 +35,7 @@ struct YarnLoop {
     bool live = false;    // on the hook
     int row = 0;          // the row it was made in
     Real ringScale = 1.0; // how far the ring's yarn has been pulled in (1 = as made)
+    int leftHookBy = -1;  // the loop whose pull-through took this loop off the hook (-1: still on it, or never was)
     std::vector<int> through;  // the loops whose eyes this loop's legs were pulled through
     Vec3 eyeShift{};      // where the loop is threaded, relative to the middle of its ring (a chain loop is threaded near its tip)
     int top = -1;         // the stitch this loop belongs to, by its top loop (a post, a yarn over or a middle loop point at the stitch's top; a top points at itself)
@@ -194,6 +195,13 @@ public:
         void applyHang(const std::vector<Vec3>& curve, Real phi);
     };
     PullFrame pullFrame(int loop, Real s, Real wrap = 0.0) const;
+    // A loop on the hook is a ring round the hook, standing on the work; it lies down when the next stitch is drawn through it. `standRing` is the ring's nodes (r0 ... r1)
+    // hinged about the chord between its two ends (where the legs come out) until it stands square to the hook (`tipDir`: the way from the handle to the tip), the way that
+    // lifts it off the work, and then moved so that its middle is a throat's length behind `tipPos` (the hook's tip). `k` 0 leaves the ring as made, 1 stands it.
+    std::vector<Vec3> standRing(int loop, const Vec3& tipDir, const Vec3& tipPos, Real k) const;
+    // where the tip of a hook through that loop, standing, rests
+    Vec3 standTip(int loop, const Vec3& tipDir) const;
+    static constexpr Real kStandBack = 0.007;   // how far behind the tip the loop sits on the hook
     // the colour of each rod segment (for drawing)
     std::vector<Vec3> segmentColours() const;
 

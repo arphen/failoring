@@ -218,6 +218,76 @@ YarnWork::PullFrame YarnWork::pullFrameBody(int loopId, Real s, Real wrap) const
     return f;
 }
 
+namespace {
+Vec3 rotateAbout(const Vec3& p, const Vec3& origin, const Vec3& axis, Real ang) {   // Rodrigues
+    const Vec3 v = p - origin;
+    const Real c = std::cos(ang), s = std::sin(ang);
+    return origin + v * c + cross(axis, v) * s + axis * (dot(axis, v) * (1.0 - c));
+}
+}  // namespace
+
+namespace {
+// The ring `ring` hinged about the chord between its ends until its normal lies along `tipDir`, the way that lifts its middle up the rows; returns the ring
+// hinged by `k` of the way and its middle.
+std::vector<Vec3> hingeRing(std::vector<Vec3> ring, const Vec3& tipDir, const Vec3& upDir, Real k, Vec3* middle) {
+    Vec3 c{};
+    for (const Vec3& q : ring) c += q;
+    c = c / (Real)std::max<size_t>(1, ring.size());
+    if (middle) *middle = c;
+    if (ring.size() < 3 || k <= 0.0) return ring;
+    const Vec3 A = ring.front(), B = ring.back();
+    Vec3 area{};
+    for (size_t i = 0; i < ring.size(); ++i) area += cross(ring[i] - c, ring[(i + 1) % ring.size()] - c);
+    if (length2(area) < 1e-30) return ring;
+    const Vec3 n = normalized(area);
+    Vec3 h = B - A;
+    if (length2(h) < 1e-10) h = cross(n, tipDir);
+    if (length2(h) < 1e-10) return ring;
+    h = normalized(h);
+    Vec3 np = n - h * dot(h, n), dp = tipDir - h * dot(h, tipDir);
+    if (length2(np) < 1e-12 || length2(dp) < 1e-12) return ring;
+    np = normalized(np);
+    dp = normalized(dp);
+    auto angleTo = [&](const Vec3& d) { return std::atan2(dot(h, cross(np, d)), dot(np, d)); };
+    const Real th1 = angleTo(dp), th2 = angleTo(-dp);
+    const Vec3 mid = (A + B) * 0.5;
+    const Real up1 = dot(rotateAbout(c, mid, h, th1) - mid, upDir), up2 = dot(rotateAbout(c, mid, h, th2) - mid, upDir);
+    const Real th = (up1 >= up2 ? th1 : th2) * k;
+    for (Vec3& q : ring) q = rotateAbout(q, mid, h, th);
+    if (middle) *middle = rotateAbout(c, mid, h, th);
+    return ring;
+}
+}  // namespace
+
+std::vector<Vec3> YarnWork::standRing(int loopId, const Vec3& tipDir, const Vec3& tipPos, Real k) const {
+    const YarnLoop& L = loops[loopId];
+    const Strand& S = strands[L.strand];
+    std::vector<Vec3> ring;
+    for (int i = L.r0; i <= L.r1; ++i) {
+        const int g = S.first + i;
+        ring.push_back(g < (int)rod.x.size() ? rod.x[g] : S.pts[i]);
+    }
+    Vec3 c2{};
+    ring = hingeRing(ring, tipDir, upDir, k, &c2);
+    if (k <= 0.0) return ring;
+    const Vec3 move = (tipPos - tipDir * kStandBack - c2) * k;   // the middle of the ring is carried onto the hook, a throat's length behind its tip
+    for (Vec3& q : ring) q += move;
+    return ring;
+}
+
+Vec3 YarnWork::standTip(int loopId, const Vec3& tipDir) const {
+    const YarnLoop& L = loops[loopId];
+    const Strand& S = strands[L.strand];
+    std::vector<Vec3> ring;
+    for (int i = L.r0; i <= L.r1; ++i) {
+        const int g = S.first + i;
+        ring.push_back(g < (int)rod.x.size() ? rod.x[g] : S.pts[i]);
+    }
+    Vec3 c2{};
+    hingeRing(ring, tipDir, upDir, 1.0, &c2);
+    return c2 + tipDir * kStandBack;
+}
+
 YarnWork::HookPose YarnWork::hookPose() const {
     HookPose h;
     if (hook.empty()) return h;
@@ -389,8 +459,11 @@ int YarnWork::loopAt(const Vec3& ringC, const Vec3& ringN0, const std::vector<in
         if (loops[li].live) {
             loops[li].live = false;
             hook.erase(std::remove(hook.begin(), hook.end(), li), hook.end());
+            loops[li].leftHookBy = -2;   // set to the new loop below
         }
     const int id = addLoop(active, e0 + 1, p1, true);
+    for (YarnLoop& Lp : loops)
+        if (Lp.leftHookBy == -2) Lp.leftHookBy = id;
     loops[id].r0 = r0;
     loops[id].r1 = r1;
     loops[id].t0 = oldEnd;

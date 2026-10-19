@@ -34,6 +34,7 @@ void fragment() {
 	ROUGHNESS = 0.95;
 }
 """
+const REST_HANDLE := Vector3(0.86, 0.38, 0.30)   # how the hook is held at rest: from the tip toward the right hand (world coordinates)
 const TURNING_CHAINS := {"sc": 1, "hdc": 2, "dc": 3, "slst": 1}
 const WORK_HEIGHT := 0.95          # the work is held at about the height of a table in the studio
 const WORK_TILT := 1.0             # rad: the work leans back like a piece held in the left hand, its face toward the worker above the table
@@ -54,6 +55,11 @@ var work_root: Node3D             # the piece, its hook and its markers, at tabl
 var yarn_node: MeshInstance3D
 var yarn_mat: StandardMaterial3D
 var hook_node: Node3D
+var left_hand: Node3D              # the left hand holds the work by the loop on the hook, its index finger lifting the yarn
+var right_hand: Node3D             # the right hand holds the hook (a child of the hook)
+var hands_check: CheckBox
+var _hand_basis := Basis(Vector3.RIGHT, -WORK_TILT)
+const FINGER_LOCAL := Vector3(-0.016, 0.026, 0.012)   # the left index finger's tip, in the hand's frame (x right, y up the work, z out of its face) from the loop on the hook
 var hook_sway := Vector3.ZERO      # a hand is never still: a small offset and tilt that come and go while the hook travels
 var hook_tilt := Vector3.ZERO
 var _run_ov := {}                  # while the hook makes a stitch: the run to the ball starts where the yarn is now (strand, end, dir, spin, rem, blend)
@@ -193,6 +199,15 @@ func _build_ui() -> void:
 	follow_check.text = "Follow the hook"
 	follow_check.button_pressed = true
 	bar.add_child(follow_check)
+	hands_check = CheckBox.new()
+	hands_check.text = "Hands"
+	hands_check.tooltip_text = "Show the hands: the right one holds the hook, the left one the work, its index finger carrying the yarn"
+	hands_check.button_pressed = true
+	hands_check.toggled.connect(func(on: bool) -> void:
+		left_hand.visible = on
+		right_hand.visible = on
+		_update_balls())
+	bar.add_child(hands_check)
 	overlay_check = CheckBox.new()
 	overlay_check.text = "Pattern overlay"
 	overlay_check.button_pressed = true
@@ -218,9 +233,9 @@ func _build_ui() -> void:
 	bar.add_child(tl)
 	thick_slider = HSlider.new()
 	thick_slider.min_value = 0.3
-	thick_slider.max_value = 1.0
+	thick_slider.max_value = 1.6
 	thick_slider.step = 0.05
-	thick_slider.value = 1.0
+	thick_slider.value = 1.3
 	thick_slider.custom_minimum_size = Vector2(90, 0)
 	thick_slider.tooltip_text = tl.tooltip_text
 	thick_slider.value_changed.connect(func(_v: float) -> void: _apply_view())
@@ -263,6 +278,7 @@ func _build_ui() -> void:
 	work_root.position = Vector3(0, WORK_HEIGHT, 0)
 	work_root.rotation = Vector3(-WORK_TILT, 0, 0)
 	stage.add_child(work_root)
+	session.set_view(expand_slider.value, thick_slider.value)
 	_build_mat()
 	yarn_node = MeshInstance3D.new()
 	yarn_mat = StandardMaterial3D.new()
@@ -272,6 +288,7 @@ func _build_ui() -> void:
 	yarn_node.material_override = yarn_mat
 	work_root.add_child(yarn_node)
 	_build_hook()
+	_build_hands()
 	_build_marker()
 	# the pattern as a semi-transparent overlay on the view
 	overlay_panel = PanelContainer.new()
@@ -406,86 +423,176 @@ func _build_mat() -> void:
 	m.position = Vector3(0, WORK_HEIGHT - 0.016, 0)
 	stage.add_child(m)
 
+# A smooth solid along z through elliptical sections [z, half width x, half width y, offset y], from the tip back; the first section closes the tip.
+func _loft(sections: Array, segs := 24) -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var rings: Array = []
+	var norms: Array = []
+	for sec in sections:
+		var ring := PackedVector3Array()
+		var nr := PackedVector3Array()
+		for k in segs:
+			var ang := TAU * float(k) / float(segs)
+			ring.append(Vector3(cos(ang) * float(sec[1]), sin(ang) * float(sec[2]) + float(sec[3]), float(sec[0])))
+			nr.append(Vector3(cos(ang) * maxf(float(sec[2]), 1.0e-6), sin(ang) * maxf(float(sec[1]), 1.0e-6), 0.0).normalized())
+		rings.append(ring)
+		norms.append(nr)
+	for i in range(rings.size() - 1):
+		for k in segs:
+			var k2 := (k + 1) % segs
+			var a: Vector3 = rings[i][k]
+			var b: Vector3 = rings[i][k2]
+			var c: Vector3 = rings[i + 1][k]
+			var d: Vector3 = rings[i + 1][k2]
+			var na: Vector3 = norms[i][k]
+			var nb: Vector3 = norms[i][k2]
+			var nc: Vector3 = norms[i + 1][k]
+			var nd: Vector3 = norms[i + 1][k2]
+			if i == 0:   # the tip: the first ring is a point, its normal points forward
+				na = Vector3(0, 0, -1)
+				nb = na
+			for t in [[a, na], [c, nc], [b, nb], [b, nb], [c, nc], [d, nd]]:
+				st.set_normal(t[1])
+				st.add_vertex(t[0])
+	# the back end, closed
+	var last: PackedVector3Array = rings[rings.size() - 1]
+	var zc: float = float(sections[sections.size() - 1][0])
+	for k in segs:
+		var k2 := (k + 1) % segs
+		for v in [last[k], Vector3(0, float(sections[sections.size() - 1][3]), zc), last[k2]]:
+			st.set_normal(Vector3(0, 0, 1))
+			st.add_vertex(v)
+	return st.commit()
+
+# A finger, or a thumb: capsules between the joints, a ball at each joint.
+func _limb(parent: Node3D, pts: Array, radius: float, mat: Material) -> void:
+	for i in range(pts.size()):
+		var j := MeshInstance3D.new()
+		var sp := SphereMesh.new()
+		sp.radius = radius
+		sp.height = radius * 2.0
+		sp.radial_segments = 16
+		sp.rings = 8
+		j.mesh = sp
+		j.material_override = mat
+		j.position = pts[i]
+		parent.add_child(j)
+		if i == 0:
+			continue
+		var a: Vector3 = pts[i - 1]
+		var b: Vector3 = pts[i]
+		var seg := MeshInstance3D.new()
+		var cm := CapsuleMesh.new()
+		cm.radius = radius
+		cm.height = a.distance_to(b)
+		cm.radial_segments = 16
+		cm.rings = 4
+		seg.mesh = cm
+		seg.material_override = mat
+		seg.position = (a + b) * 0.5
+		var dir := (b - a).normalized()
+		var ax := Vector3.UP.cross(dir)
+		seg.basis = Basis(ax.normalized(), Vector3.UP.angle_to(dir)) if ax.length() > 1.0e-6 else (Basis() if dir.y > 0.0 else Basis(Vector3.RIGHT, PI))
+		parent.add_child(seg)
+
+func _blob(parent: Node3D, at: Vector3, size: Vector3, mat: Material) -> void:
+	var m := MeshInstance3D.new()
+	var sp := SphereMesh.new()
+	sp.radius = 0.5
+	sp.height = 1.0
+	sp.radial_segments = 20
+	sp.rings = 10
+	m.mesh = sp
+	m.material_override = mat
+	m.position = at
+	m.scale = size
+	parent.add_child(m)
+
+# The hands, as in the photographs. The right one holds the hook by its thumb rest: the thumb on one flat and the index finger on the other, the other fingers curled under
+# the handle, the palm behind. The left one holds the work next to the loop on the hook: the thumb presses on its face, the index finger is raised and the yarn runs over
+# its tip, the middle finger is behind the work.
+func _build_hands() -> void:
+	var skin := StandardMaterial3D.new()
+	skin.albedo_color = Color(0.91, 0.72, 0.60)
+	skin.roughness = 0.65
+	var nail := StandardMaterial3D.new()
+	nail.albedo_color = Color(0.95, 0.80, 0.76)
+	nail.roughness = 0.35
+	# the right hand, in the hook's frame (the tip at the origin, the shaft along +z, the throat toward +y)
+	right_hand = Node3D.new()
+	hook_node.add_child(right_hand)
+	var tr := HOOK_LENGTH * 0.53   # the thumb rest
+	# seen from the worker's side the thumb is on top (toward the viewer, local -x), the index finger behind the hook
+	_limb(right_hand, [Vector3(-0.0042, 0.001, tr), Vector3(-0.013, -0.001, tr + 0.018), Vector3(-0.024, -0.005, tr + 0.038)], 0.0062, skin)
+	_limb(right_hand, [Vector3(0.0042, 0.002, tr), Vector3(0.012, 0.010, tr + 0.016), Vector3(0.019, 0.017, tr + 0.034), Vector3(0.024, 0.019, tr + 0.054)], 0.0056, skin)
+	_limb(right_hand, [Vector3(0.010, -0.006, tr + 0.040), Vector3(0.016, -0.012, tr + 0.054), Vector3(0.008, -0.016, tr + 0.066)], 0.0056, skin)
+	_limb(right_hand, [Vector3(0.002, -0.012, tr + 0.044), Vector3(0.006, -0.019, tr + 0.058), Vector3(-0.002, -0.021, tr + 0.070)], 0.0052, skin)
+	_blob(right_hand, Vector3(-0.002, -0.004, tr + 0.080), Vector3(0.046, 0.040, 0.060), skin)
+	_blob(right_hand, Vector3(0.0, -0.002, tr + 0.140), Vector3(0.040, 0.036, 0.120), skin)
+	# the left hand, in the frame of the work's lean (x right, y up the work, z out of its face), its origin at the loop on the hook
+	left_hand = Node3D.new()
+	stage.add_child(left_hand)
+	left_hand.basis = _hand_basis
+	_limb(left_hand, [Vector3(-0.115, 0.032, 0.012), Vector3(-0.088, 0.054, 0.016), Vector3(-0.056, 0.054, 0.014), FINGER_LOCAL], 0.0066, skin)   # the raised index finger
+	_limb(left_hand, [Vector3(-0.120, -0.020, 0.052), Vector3(-0.092, -0.016, 0.040), Vector3(-0.066, -0.010, 0.030), Vector3(-0.046, -0.006, 0.022)], 0.0076, skin)   # the thumb on the face
+	_limb(left_hand, [Vector3(-0.110, -0.010, -0.040), Vector3(-0.080, -0.012, -0.028), Vector3(-0.048, -0.008, -0.016)], 0.0066, skin)   # the middle finger behind
+	_blob(left_hand, Vector3(-0.146, 0.006, 0.016), Vector3(0.060, 0.075, 0.050), skin)
+
+# The left hand goes to the loop on the hook (it holds the work there); the tip of its index finger is where the yarn is carried.
+func _hands_to(w: Vector3) -> void:
+	left_hand.global_position = w
+
+func _finger_tip_world() -> Vector3:
+	return left_hand.to_global(FINGER_LOCAL)
+
 func _build_hook() -> void:
 	hook_node = Node3D.new()
 	var steel := StandardMaterial3D.new()
-	steel.albedo_color = Color(0.78, 0.80, 0.84)
-	steel.metallic = 0.85
-	steel.roughness = 0.28
-	# An inline crochet hook, the tip at the origin and the shaft along +z. The throat faces +y (`hook_roll` turns it): behind a rounded head with a lip that overhangs it,
-	# the neck is thinner and lies a little to -y, which leaves the groove the yarn sits in; then the shaft widens to its full thickness, with the thumb rest on it.
+	steel.albedo_color = Color(0.74, 0.76, 0.80)
+	steel.metallic = 0.6
+	steel.roughness = 0.35
+	steel.cull_mode = BaseMaterial3D.CULL_DISABLED
+	# An aluminium hook as in the photographs: one smooth piece. The tip at the origin, the shaft along +z, the throat facing +y (`hook_roll` turns it). A rounded head
+	# whose tip curls toward the throat, its back edge a lip over the groove, a thinner neck lying a little to -y (that is the groove the yarn sits in), the shaft
+	# swelling back to its full round, and the flat paddle of the thumb rest.
 	var rr := HOOK_RADIUS
-	var head := MeshInstance3D.new()
-	var hm := CapsuleMesh.new()
-	hm.radius = rr * 0.95
-	hm.height = rr * 2.4
-	hm.radial_segments = 16
-	hm.rings = 6
-	head.mesh = hm
-	head.material_override = steel
-	head.rotation = Vector3(PI * 0.5, 0, 0)
-	head.position = Vector3(0, rr * 0.08, rr * 1.2)
-	hook_node.add_child(head)
-	var lip := MeshInstance3D.new()   # the lip: the head's back edge, swept toward the throat so the yarn cannot slip off forward
-	var lm := SphereMesh.new()
-	lm.radius = rr * 0.5
-	lm.height = rr * 1.0
-	lip.mesh = lm
-	lip.material_override = steel
-	lip.position = Vector3(0, rr * 0.62, rr * 1.9)
-	hook_node.add_child(lip)
-	var neck := MeshInstance3D.new()
-	var nc := CylinderMesh.new()
-	nc.top_radius = rr * 0.6
-	nc.bottom_radius = rr * 0.6
-	nc.height = rr * 3.0
-	nc.radial_segments = 14
-	neck.mesh = nc
-	neck.material_override = steel
-	neck.rotation = Vector3(PI * 0.5, 0, 0)
-	neck.position = Vector3(0, -rr * 0.3, rr * 3.0)
-	hook_node.add_child(neck)
-	var taper := MeshInstance3D.new()
-	var tc := CylinderMesh.new()
-	tc.top_radius = rr
-	tc.bottom_radius = rr * 0.6
-	tc.height = rr * 1.2
-	tc.radial_segments = 16
-	taper.mesh = tc
-	taper.material_override = steel
-	taper.rotation = Vector3(PI * 0.5, 0, 0)
-	taper.position = Vector3(0, -rr * 0.05, rr * 4.4)
-	hook_node.add_child(taper)
-	var shaft := MeshInstance3D.new()
-	var cyl := CylinderMesh.new()
-	cyl.top_radius = rr
-	cyl.bottom_radius = rr
-	cyl.height = HOOK_LENGTH - rr * 5.0
-	cyl.radial_segments = 18
-	shaft.mesh = cyl
-	shaft.material_override = steel
-	shaft.rotation = Vector3(PI * 0.5, 0, 0)
-	shaft.position = Vector3(0, 0, rr * 5.0 + cyl.height * 0.5)
-	hook_node.add_child(shaft)
-	var rest := MeshInstance3D.new()   # the thumb rest
-	var bm := BoxMesh.new()
-	bm.size = Vector3(rr * 3.4, rr * 1.0, rr * 7.0)
-	rest.mesh = bm
-	rest.material_override = steel
-	rest.position = Vector3(0, 0, HOOK_LENGTH * 0.55)
-	hook_node.add_child(rest)
+	var ll := HOOK_LENGTH
+	var body := MeshInstance3D.new()
+	var secs: Array = []
+	for i in 8:   # the head: a dome whose tip is raised toward the throat side, a beak
+		var ang := float(i) / 7.0 * PI * 0.5
+		var zz := rr * 1.05 * (1.0 - cos(ang))
+		var rad := rr * 1.05 * sin(ang)
+		secs.append([zz, rad, rad, 0.22 * rr + 0.55 * rr * maxf(0.0, 1.0 - zz / (0.95 * rr))])
+	secs.append([2.0 * rr, 1.05 * rr, 1.05 * rr, 0.22 * rr])
+	secs.append([2.3 * rr, 0.98 * rr, 0.94 * rr, 0.14 * rr])   # the back edge of the head: the lip over the groove
+	secs.append([2.45 * rr, 0.72 * rr, 0.70 * rr, -0.18 * rr])
+	secs.append([2.65 * rr, 0.55 * rr, 0.55 * rr, -0.40 * rr])  # the neck
+	secs.append([3.8 * rr, 0.58 * rr, 0.58 * rr, -0.37 * rr])
+	secs.append([4.6 * rr, 0.85 * rr, 0.85 * rr, -0.12 * rr])
+	secs.append([5.5 * rr, rr, rr, 0.0])
+	secs.append_array([
+		[0.40 * ll, 1.0 * rr, 1.0 * rr, 0.0],
+		[0.46 * ll, 0.55 * rr, 1.9 * rr, 0.0],
+		[0.60 * ll, 0.55 * rr, 1.9 * rr, 0.0],
+		[0.67 * ll, 1.0 * rr, 1.0 * rr, 0.0],
+		[0.76 * ll, 1.0 * rr, 1.0 * rr, 0.0]])
+	body.mesh = _loft(secs)
+	body.material_override = steel
+	hook_node.add_child(body)
 	var handle := MeshInstance3D.new()
 	var hc := CylinderMesh.new()
 	hc.top_radius = HOOK_RADIUS * 2.0
 	hc.bottom_radius = HOOK_RADIUS * 1.7
-	hc.height = HOOK_LENGTH * 0.55
+	hc.height = HOOK_LENGTH * 0.40
 	handle.mesh = hc
 	var wood := StandardMaterial3D.new()
 	wood.albedo_color = Color(0.20, 0.45, 0.62)
 	wood.roughness = 0.5
 	handle.material_override = wood
 	handle.rotation = Vector3(PI * 0.5, 0, 0)
-	handle.position = Vector3(0, 0, HOOK_LENGTH * 0.78)
+	handle.position = Vector3(0, 0, HOOK_LENGTH * 0.86)
 	hook_node.add_child(handle)
 	stage.add_child(hook_node)
 
@@ -562,12 +669,19 @@ func do_action(kind: String, opening: int = -2, turn_chains: int = -1) -> bool:
 	soft_steps = 16 if animate else 0
 	_refresh()
 	if animate:
+		var hw0 := left_hand.global_position
+		var hw1 := work_root.to_global(_loop_centre())
+		var hand_tw := create_tween()
+		hand_tw.tween_method(func(t: float) -> void:
+			left_hand.global_position = hw0.lerp(hw1, _minjerk(t))
+			_update_balls(), 0.0, 1.0, 0.45)
 		await _move_hook(_live_centre(), 0.25)
+		await hand_tw.finished
 		if kind == "finish":   # the hook is taken away from the finished piece
 			await _move_hook(work_root.to_local(work_root.to_global(_live_centre()) + Vector3(0.09, 0.05, 0.02)), 0.6)
 		_frame_work(false)
 	else:
-		_place_hook(_live_centre())
+		_rest_hook()
 		_frame_work(true)
 	busy = false
 	return true
@@ -605,11 +719,11 @@ func _replay(actions: Array) -> void:
 			if String(a[0]) == "turn" and row_before > 0:
 				flip -= PI
 	flip = fmod(flip, TAU)
-	_set_flip(flip, _live_centre(), work_root.to_global(_live_centre()))
+	_set_flip(flip, _loop_centre(), work_root.to_global(_loop_centre()))
 	_rebuild(-1)
 	_refresh()
 	_frame_work(true)
-	_place_hook(_live_centre())
+	_rest_hook()
 
 # The hook makes the stitch, and the yarn is the yarn: it hangs from the work to its ball, and the ball turns as it is drawn off. For each loop the stitch made, the hook
 # comes at the eye it works into from the front, throat up, and goes in through it to behind (insert); it picks the yarn up off its hanging curve, lays it over the shaft
@@ -680,8 +794,11 @@ func _pull_animation(before: int, made: Array) -> void:
 		else:
 			var eye: Vector3 = f0["eye"]
 			var ax: Vector3 = f0["axis"]
-			await _hook_travel(eye + ax * 0.016, ax, 0.0, true)       # in front of the eye, throat up
-			await _hook_travel(f0["tip"], ax, 0.0, false)             # insert: through the eye to behind it
+			var ride: Callable = func() -> void: _show_mesh(session.get_mesh(before, 10, 3))
+			if not prev.is_empty():
+				ride = Callable()
+			await _hook_travel(eye + ax * 0.016, ax, 0.0, true, ride)   # in front of the eye, throat up
+			await _hook_travel(f0["tip"], ax, 0.0, false, ride)         # insert: through the eye to behind it
 			await _tween01(0.6, func(t: float) -> void:               # pick the yarn up and lay it over the shaft; the throat turns down
 				var u := _minjerk(t)
 				var d := _frame_step(iid, 0.0, 1.0, hang, u, rem, spin0 + dspin * 0.3 * u, has_run, strand)
@@ -718,7 +835,7 @@ func _grow(from_particles: int, to_particles: int) -> void:
 func _turn_animation() -> void:
 	var f0 := flip
 	flip = fmod(flip - PI, TAU)
-	var pivot_local := _live_centre()
+	var pivot_local := _loop_centre()
 	var pivot_world := work_root.to_global(pivot_local)
 	if not animate:
 		_set_flip(f0 - PI, pivot_local, pivot_world)
@@ -727,9 +844,12 @@ func _turn_animation() -> void:
 	tw.tween_method(func(t: float) -> void:
 		_set_flip(f0 - PI * t, pivot_local, pivot_world)
 		_place_hook(_live_centre())
+		_show_mesh(session.get_mesh(-1, 10, 3))
 		_update_balls(), 0.0, 1.0, 1.1).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 	await tw.finished
 	_set_flip(f0 - PI, pivot_local, pivot_world)
+	_place_hook(_live_centre())
+	_show_mesh(session.get_mesh(-1, 10, 3))
 	_update_balls()
 	_frame_work(false)
 
@@ -746,7 +866,7 @@ func _apply_view() -> void:
 	_rebuild(-1)
 	_update_marker()
 	if not busy:
-		_place_hook(_live_centre())
+		_rest_hook()
 		_frame_work(false)
 
 func _rebuild(up_to: int) -> void:
@@ -863,8 +983,24 @@ func _update_marker() -> void:
 func _ball_position(i: int) -> Vector3:
 	return Vector3(0.13 + 0.065 * i, WORK_HEIGHT - 0.016 + 0.003 + BALL_RADIUS, -0.11)
 
-# The run of a yarn from `e0` (leaving along `d0`, world coordinates) to its ball at `bp`: a curve that hangs a little, `n` points.
+# The run of a yarn from `e0` (leaving along `d0`, world coordinates) to its ball at `bp`, `n` points: from the work taut over the tip of the left index finger (when the
+# hands are shown), and from there to the ball hanging a little.
 func _run_curve(e0: Vector3, d0: Vector3, bp: Vector3, n := 25) -> PackedVector3Array:
+	if hands_check == null or left_hand == null or not hands_check.button_pressed:
+		return _run_curve_plain(e0, d0, bp, n)
+	var up := (_hand_basis * Vector3(0.3, 1.0, 0.2)).normalized()
+	var f := _finger_tip_world() + up * 0.0085   # over the finger
+	var n1 := maxi(6, n / 3)
+	var pts := PackedVector3Array()
+	for k in n1:
+		var t := float(k) / float(n1 - 1)
+		pts.append(e0.lerp(f, t))
+	var rest := _run_curve_plain(f, up, bp, n - n1 + 1)
+	for k in range(1, rest.size()):
+		pts.append(rest[k])
+	return pts
+
+func _run_curve_plain(e0: Vector3, d0: Vector3, bp: Vector3, n := 25) -> PackedVector3Array:
 	var surf := bp + (e0 - bp).normalized() * BALL_RADIUS * 0.96
 	var p1 := e0 + d0 * 0.03
 	var p2 := surf + ((e0 - surf).normalized() * 0.035 + Vector3.UP * 0.012)
@@ -1058,11 +1194,27 @@ func _update_extra_markers() -> void:
 		else:
 			m.visible = false
 
+# Where the tip of the resting hook is: through the loop on it, which stands round it.
 func _live_centre() -> Vector3:
 	var st: Dictionary = session.get_state()
 	if st.has("hook_tip"):
-		return st["hook_tip"]
+		return session.get_stand_tip(_rest_dir_piece())
 	return Vector3.ZERO
+
+# The middle of the ring of the loop on the hook as it was made (the piece's coordinates): what the work is turned about.
+func _loop_centre() -> Vector3:
+	var st: Dictionary = session.get_state()
+	return st["loop_centre"] if st.has("loop_centre") else Vector3.ZERO
+
+# The way from the handle to the tip of the resting hook, in the piece's coordinates.
+func _rest_dir_piece() -> Vector3:
+	return (work_root.global_basis.inverse() * (-REST_HANDLE.normalized())).normalized()
+
+# The hook at rest, the loop standing on it.
+func _rest_hook() -> void:
+	_hands_to(work_root.to_global(_loop_centre()))
+	_place_hook(_live_centre())
+	_show_mesh(session.get_mesh(-1, 10, 3))
 
 func _opening_centre(id: int) -> Vector3:
 	var loops: Array = session.get_loops()
@@ -1075,21 +1227,25 @@ func _place_hook(p: Vector3, axis := Vector3.ZERO, blend := 0.0) -> void:
 	if blend > 0.0 and axis.length() > 0.0:   # `axis` (the piece's coordinates) is the way from the tip to the handle: the shaft goes through the eye
 		_hook_axis = axis
 	_hook_blend = blend
-	var handle_dir := Vector3(0.86, 0.38, 0.30).normalized()
+	var handle_dir := REST_HANDLE.normalized()
 	if blend > 0.0 and _hook_axis.length() > 0.0:
 		handle_dir = handle_dir.lerp((work_root.global_basis * _hook_axis).normalized(), blend).normalized()
 	handle_dir = (handle_dir + hook_tilt).normalized()
 	hook_node.global_position = work_root.to_global(p) + hook_sway
 	hook_node.global_basis = Basis.looking_at(-handle_dir, Vector3.UP) * Basis(Vector3(0, 0, 1), hook_roll)   # the node's -z points from the handle to the tip
+	# the loops on the hook stand round it and ride it
+	session.set_stand((work_root.global_basis.inverse() * (-hook_node.global_basis.z)).normalized(), work_root.to_local(hook_node.global_position), 1.0)
 
 var _sway_phase := 0.0
 
 # The hook travels to `p` (the piece's coordinates) the way a hand takes it: along an arc that lifts it over the work (`arc`), with no jerk at either end and a little
 # drift and tilt on the way; its shaft turns to lie along `axis` (zero: let go of the eye, back to the usual way it is held) and its throat to `roll`.
-func _hook_travel(p: Vector3, axis: Vector3, roll: float, arc: bool) -> void:
+func _hook_travel(p: Vector3, axis: Vector3, roll: float, arc: bool, follow := Callable()) -> void:
 	if not animate:
 		hook_roll = roll
 		_place_hook(p, axis, 1.0 if axis.length() > 0.0 else 0.0)
+		if follow.is_valid():
+			follow.call()
 		return
 	var p0w := hook_node.global_position - hook_sway
 	var p1w := work_root.to_global(p)
@@ -1115,13 +1271,15 @@ func _hook_travel(p: Vector3, axis: Vector3, roll: float, arc: bool) -> void:
 		hook_tilt = Vector3(sin(t * 6.0 + ph), sin(t * 4.0 + ph * 1.1) * 0.5, sin(t * 5.0 + ph * 2.0)) * 0.06 * env
 		hook_roll = lerpf(r0, roll, u)
 		var ax := a0.lerp(a1, u).normalized() if a0.length() > 0.0 else a1
-		_place_hook(work_root.to_local(pw), ax, lerpf(b0, b1, u)), 0.0, 1.0, secs)
+		_place_hook(work_root.to_local(pw), ax, lerpf(b0, b1, u))
+		if follow.is_valid():
+			follow.call(), 0.0, 1.0, secs)
 	await tw.finished
 	hook_sway = Vector3.ZERO
 	hook_tilt = Vector3.ZERO
 
 func _move_hook(p: Vector3, _secs: float) -> void:
-	await _hook_travel(p, Vector3.ZERO, 0.0, true)
+	await _hook_travel(p, Vector3.ZERO, 0.0, true, func() -> void: _show_mesh(session.get_mesh(-1, 10, 3)))
 
 # The camera looks at the live end of the work, close enough to see the stitches.
 func _frame_work(snap: bool) -> void:

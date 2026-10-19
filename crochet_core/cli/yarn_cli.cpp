@@ -16,8 +16,11 @@ using namespace fl;
 
 namespace {
 
+Real gThick = 1.0;   // the drawn thickness of the yarn
+
 void views(const YarnWork& w, const std::string& prefix, const std::vector<std::string>& which, int lastLoops, bool colourByRow) {
     YarnMeshOptions mo;
+    mo.radiusScale = gThick;
     mo.segmentColour = w.segmentColours();
     if (colourByRow) {   // by row; the yarn between the loops (travel, tail) is pale
         static const Vec3 pal[] = {{0.25, 0.45, 0.85}, {0.88, 0.28, 0.22}, {0.25, 0.70, 0.35}, {0.90, 0.70, 0.20}};
@@ -104,6 +107,7 @@ int main(int argc, char** argv) {
     int lastLoops = 0;
     bool colour = false;
     int pull = -2;
+    bool stand = false;
     YarnWork w;
     for (int i = 2; i + 1 < argc; i += 2) {
         const std::string k = argv[i];
@@ -112,10 +116,12 @@ int main(int argc, char** argv) {
         else if (k == "--last") lastLoops = (int)v;
         else if (k == "--colour") colour = v != 0;
         else if (k == "--pull") pull = (int)v;
+        else if (k == "--stand") stand = v != 0;
         else if (k == "--cscale") w.rodParams.radiusScale = v;
         else if (k == "--pitch") w.wp.chainPitch = v * 1e-3;
         else if (k == "--chA") w.wp.chainA = v * 1e-3;
         else if (k == "--chB") w.wp.chainB = v * 1e-3;
+        else if (k == "--thick") gThick = v;
         else if (k == "--taper") w.wp.chainTaper = v;
         else if (k == "--chEye") w.wp.chainEye = v;
         else if (k == "--chLayer") w.wp.chainLayer = v * 1e-3;
@@ -165,6 +171,19 @@ int main(int argc, char** argv) {
     }
     std::printf("min strand gap %.3f mm (2r = %.2f)\n", minStrandGap(w.rod, 5) * 1e3, 2e3 * w.rodParams.radius);
     std::printf("%d particles, %zu strands, %zu loops\n%s", w.particleCount(), w.strands.size(), w.loops.size(), w.patternText().c_str());
+    if (stand) {   // the loops on the hook stand round it, the hook through them (as in the photographs)
+        const Vec3 tipDir = normalized(Vec3{-0.86, -0.38, -0.30});
+        YarnWork ws = w;
+        const Vec3 tip = ws.standTip(ws.hook.back(), tipDir);
+        for (size_t hi = 0; hi < ws.hook.size(); ++hi) {
+            const int x = ws.hook[hi];
+            const std::vector<Vec3> ring = w.standRing(x, tipDir, tip - tipDir * (0.003 * (ws.hook.size() - 1 - hi) * -1.0), 1.0);
+            for (int i = ws.loops[x].r0; i <= ws.loops[x].r1; ++i) ws.rod.x[ws.strands[ws.loops[x].strand].first + i] = ring[i - ws.loops[x].r0];
+        }
+        views(ws, out, {"front", "oblique", "side", "top"}, lastLoops, colour);
+        std::printf("standing: hook tip at (%.1f %.1f %.1f) mm\n", tip.x * 1e3, tip.y * 1e3, tip.z * 1e3);
+        return 0;
+    }
     views(w, out, {"front", "back", "top", "side", "oblique"}, lastLoops, colour);
     if (pull >= -1) pullViews(w, pull < 0 ? (int)w.loops.size() - 1 + pull + 1 : pull, out);
     return 0;

@@ -31,6 +31,11 @@ public:
     // The yarn while the hook draws `loop` (one of the loops `action` reports in "loops") through its eye, `s` 0..1: {positions, normals, colors, indices (as get_mesh),
     // tip, axis (from the hook's throat toward the handle, in the piece's coordinates), eye (the middle of the eye it goes through), through}. `wrap` 0..1 lays the working yarn over the shaft (the yarn over). `hang` (the piece's coordinates, may be empty) is the yarn as it hangs from the work to its ball before the hook picks it up: with `phi` below 1 the yarn is laid along it (0) and brought to its pose (1). Also {run_end, run_dir (where the run to the ball starts and the way it leaves), path_length (the yarn's length as posed)}. Only the yarn up to that loop is in the mesh.
     Dictionary anim_frame(int loop, double s, double wrap, const PackedVector3Array& hang, double phi, int sides, int subdiv);
+    // The loops on the hook are shown standing round it, riding it: `tip_dir` is the way from the handle to the tip, `tip_pos` the tip (the piece's coordinates), `k` 0 (off) .. 1.
+    // Applies to get_mesh and anim_frame; get_state()["hook_tip"] is then where the tip rests with the last loop standing on it.
+    void set_stand(const Vector3& tip_dir, const Vector3& tip_pos, double k);
+    // where the tip of a hook lying the way `tip_dir` says rests, through the last loop on the hook standing round it (the piece's coordinates as shown); zero without a loop
+    Vector3 get_stand_tip(const Vector3& tip_dir) const;
     // `n` soft-physics steps (the yarn settling)
     void tick(int n);
     // The yarn as a mesh: {positions, normals, colors, indices}; `up_to` draws only the first that many particles (-1: all).
@@ -75,6 +80,13 @@ private:
     bool started_ = false;
     double expand_ = 1.0, thickness_ = 1.0;
     int grip_ = -1;
+    fl::Vec3 stand_dir_{-0.86, -0.38, -0.30}, stand_tip_{};
+    double stand_k_ = 0.0;
+    struct StandSave { int g; fl::Vec3 x; };
+    bool standingAt(int loop, int up_to) const;
+    // poses the standing loops (those before `max_loop`) in the rod, remembering what was there; `collapse_loop`'s eyes lie down by `collapse_s`
+    void pushStand(std::vector<StandSave>& saved, int up_to, int max_loop, const fl::Vec3& dir, const fl::Vec3& tip, int collapse_loop, double collapse_s);
+    void popStand(const std::vector<StandSave>& saved);
     fl::Vec3 unview(const fl::Vec3& p) const;
     static Dictionary mesh_to_dict(const fl::YarnMesh& m);
     fl::Vec3 pivot() const;

@@ -70,6 +70,20 @@ func _ready() -> void:
 		if OS.has_environment("FL_SHOT_YARN_PITCH"):
 			yv.orbit.pitch = float(OS.get_environment("FL_SHOT_YARN_PITCH"))
 		yv.orbit.apply()
+		if OS.has_environment("FL_SHOT_HOOK"):   # the hook alone, from the side, the tip to the left: FL_SHOT_HOOK=<roll in degrees>
+			yv.yarn_node.visible = false
+			for bn in yv.ball_nodes:
+				(bn as Node3D).visible = false
+			for rn in yv.run_nodes:
+				(rn as Node3D).visible = false
+			var hp := Vector3(0, 0.95, 0.1)
+			yv.hook_node.global_position = hp
+			yv.hook_node.global_basis = Basis.looking_at(Vector3(-1, 0, 0), Vector3.UP) * Basis(Vector3(0, 0, 1), deg_to_rad(float(OS.get_environment("FL_SHOT_HOOK"))))
+			yv.orbit.target = hp + Vector3(0.010, 0, 0)
+			yv.orbit.dist = float(OS.get_environment("FL_SHOT_YARN_DIST")) if OS.has_environment("FL_SHOT_YARN_DIST") else 0.05
+			yv.orbit.pitch = 0.25
+			yv.orbit.yaw = 0.0
+			yv.orbit.apply()
 		if OS.has_environment("FL_SHOT_TURN"):   # a moment t (0..1) of the last turn, as the editor animates it
 			var pvt: Vector3 = yv._live_centre()
 			var wp: Vector3 = yv.work_root.to_global(pvt)

@@ -333,6 +333,40 @@ void testPullFrames() {
     }
 }
 
+void testStanding() {
+    std::printf("[a loop on the hook stands round it]\n");
+    YarnWork w;
+    w.slipKnot(Vec3{0, 0, 0});
+    for (int i = 0; i < 5; ++i) w.stitchChain();
+    w.stitchTurn(0);
+    for (int i = 0; i < 3; ++i) w.stitch("sc", -1);
+    const int live = w.hook.back();
+    const YarnLoop& L = w.loops[live];
+    const Vec3 tipDir = normalized(Vec3{-0.86, -0.38, -0.30});
+    const Vec3 tip = w.standTip(live, tipDir);
+    const std::vector<Vec3> flat = w.standRing(live, tipDir, tip, 0.0), st = w.standRing(live, tipDir, tip, 1.0);
+    Real same = 0;
+    for (int i = L.r0; i <= L.r1; ++i) same = std::max(same, length(flat[i - L.r0] - w.rod.x[w.strands[L.strand].first + i]));
+    CHECKP(same < 1e-12, "k = 0 leaves the ring as made");
+    Vec3 c{}, area{};
+    for (const Vec3& q : st) c += q;
+    c = c / (Real)st.size();
+    for (size_t i = 0; i < st.size(); ++i) area += cross(st[i] - c, st[(i + 1) % st.size()] - c);
+    const Real along = std::fabs(dot(normalized(area), tipDir));
+    CHECKP(along > 0.98, "standing, its ring is square to the hook (cos %.3f)", along);
+    CHECKP(length(c - (tip - tipDir * YarnWork::kStandBack)) < 1e-9, "...and its middle is a throat's length behind the tip");
+    CHECKP(length(st.front() - flat.front()) < 1e-9 && length(st.back() - flat.back()) < 1e-9, "...hinged where the legs come out: its ends have not moved (%.2g mm)", length(st.front() - flat.front()) * 1e3);
+    Vec3 cf{};
+    for (const Vec3& q : flat) cf += q;
+    cf = cf / (Real)flat.size();
+    CHECKP(dot(c - cf, w.upDir) > 0.002, "...lifted off the work by %.1f mm", dot(c - cf, w.upDir) * 1e3);
+    const std::vector<Vec3> moved = w.standRing(live, tipDir, tip + Vec3{0.01, 0, 0}, 1.0);
+    Vec3 cm{};
+    for (const Vec3& q : moved) cm += q;
+    cm = cm / (Real)moved.size();
+    CHECKP(length(cm - c - Vec3{0.01, 0, 0}) < 1e-9, "the loop rides the hook when the hook moves");
+}
+
 void testFinishOff() {
     std::printf("[fastening off]\n");
     YarnWork w;
@@ -364,6 +398,7 @@ void testFinishOff() {
 }  // namespace
 
 int main() {
+    testStanding();
     testFinishOff();
     testPullFrames();
     testCursor();
