@@ -12,9 +12,9 @@ acceptance, with the measured numbers. Honest numbers; "not measured" where not 
 | 3 | Stitch model (§4) | gauge sanity and monotonicity tests | done (T3.1, 2026-10-16) |
 | 4 | DSL + graph (§5) | all fixtures compile with the stated counts, error-message tests | done (T4.0-T4.2, 2026-10-17) |
 | 5 | Mesh + layout + relax (§6) | flat/cup/ruffle circle, tube, swatch size, hinge sign, mass | done (T5.1-T5.4, 2026-10-18) |
-| 6 | Scenes + load + metrics + CLI (§7) | strap analytic, force balance, settle, fit checks; PNG snapshots of all fixtures in docs/crochet-shots/ | in progress (T6.1-T6.4 done) |
+| 6 | Scenes + load + metrics + CLI (§7) | strap analytic, force balance, settle, fit checks; PNG snapshots of all fixtures in docs/crochet-shots/ | in progress (T6.1-T6.5 done, T6.5 waiting for the user's answers; T6.6 blocked on the user's real-bag measurements) |
 | 7 | Godot bindings + scene (§8) | crochet_api_check passes; the user can open, edit, run, and see the pouch hang on their Mac | done (T7.1-T7.4, 2026-10-18); opened, edited, run and looked at in the real renderer by the screenshot script; not driven by hand in the window |
-| 8 | Chart, lego, compare (§9) | five-variant comparison runs from one click; the table shows different corner angles | done (T8.1-T8.4, 2026-10-18); the one-click run works (tested over a few frames each); its real corner angles are the T6.5 runs, still going |
+| 8 | Chart, lego, compare (§9) | five-variant comparison runs from one click; the table shows different corner angles | done (T8.1-T8.4, 2026-10-18); the one-click run works (tested over a few frames each); its real corner angles are the T6.5 runs (done, see the log) |
 | 9 | Calibration (§10) | a swatch record changes the result and the UI says "calibrated" | done (T9.1-T9.2, 2026-10-18); with the plan's example numbers, not a real swatch |
 | 10 | Yarn-level look (§12) | optional | not started |
 
@@ -345,3 +345,22 @@ acceptance, with the measured numbers. Honest numbers; "not measured" where not 
   zooms towards the pointer; right / middle / shift+left drag pans; pinch zooms and two-finger scroll pans (as in the editor); near plane 1 cm (was 5);
   the camera stays in the room; a finished run no longer reframes over a camera the user set (new "Fit" button frames the piece again); the lamp
   stands are hidden. `crochet_orbit_check` (new, 29), `crochet_scene_check` and `crochet_compare_check` pass; 3 mutants killed.
+
+### 2026-10-19 — T6.5 five-variant report (user gate)
+
+* All five bag variants have run (cotton worsted, 4.5 mm, hung by the strap, MBA13 load). Report: `docs/crochet/reports/T6.5.md`, snapshots in
+  `docs/crochet-shots/bag_round_<variant>.png`.
+
+| piece | settled | corner angle (deg) | base sag (mm) | drop (cm) | bag height (cm) | gape (cm) | strap +% | load above rim (cm) | peak pressure (kPa) | mass (g) | frames |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| pouch (reference) | yes | - | - | 38.8 | 15.3 | 2.5 | 0.8 | 17.1 | 0 | 22 | 427 |
+| plain sc round | yes | 170.9 | 13.8 | 51.5 | 23.8 | 9.2 | 9.0 | 7.9 | 132 | 106 | 2049 |
+| BLO round | NO | 139.0 | 8.2 | 51.3 | 23.6 | 8.8 | 9.1 | 7.3 | 147 | 106 | 2193 |
+| FLO round | yes | 169.8 | 13.2 | 51.4 | 23.7 | 9.2 | 9.0 | 7.8 | 129 | 106 | 2134 |
+| sl st round | NO | 148.5 | 10.2 | 51.1 | 23.4 | 8.9 | 9.0 | 7.7 | 142 | 105 | 2190 |
+| surface sl st | yes | 166.7 | 12.0 | 51.5 | 23.8 | 9.2 | 9.0 | 7.9 | 175 | 107 | 1941 |
+
+* BLO and the sl st round hit the 1500-frame load cap (`|F_net|` 3.3 % and 4.1 % of the weight, bar 2 %): their corner angles and sags are provisional.
+  The relaxation itself is converged (plain and BLO, default against 1200 frames: at most 0.08 mm, corner angles identical).
+* FLO measures the same as plain (1.1 deg apart). Possible cause, unchecked: its -25 deg rest angle opposes the direction a bag wall turns.
+* Asked of the user: do the variants look and measure plausibly different, and which "chain around the bottom" (§11.3) did they mean.
