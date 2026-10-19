@@ -32,6 +32,29 @@ func _ready() -> void:
 		print("wrote ", wout, " wizard")
 		get_tree().quit()
 		return
+	if OS.has_environment("FL_SHOT_YARN"):   # yarn mode: FL_SHOT_YARN="ch5,turn,sc4" (comma separated actions: chN, scN, turn), no animations
+		var yv = c.yarn_view
+		yv.visible = true
+		yv.animate = false
+		for tok in OS.get_environment("FL_SHOT_YARN").split(","):
+			var kind := "turn" if tok == "turn" else ("chain" if tok.begins_with("ch") else "sc")
+			var count := 1 if tok == "turn" else int(tok.substr(2))
+			for i in count:
+				await yv.do_action(kind)
+		if OS.has_environment("FL_SHOT_YARN_YAW"):
+			yv.orbit.yaw = float(OS.get_environment("FL_SHOT_YARN_YAW"))
+		if OS.has_environment("FL_SHOT_YARN_DIST"):
+			yv.orbit.dist = float(OS.get_environment("FL_SHOT_YARN_DIST"))
+		if OS.has_environment("FL_SHOT_YARN_PITCH"):
+			yv.orbit.pitch = float(OS.get_environment("FL_SHOT_YARN_PITCH"))
+		yv.orbit.apply()
+		for i in 8:
+			await get_tree().process_frame
+		var yout := OS.get_environment("FL_SHOT_OUT") if OS.has_environment("FL_SHOT_OUT") else "/tmp/crochet_shot.png"
+		get_viewport().get_texture().get_image().save_png(yout)
+		print("wrote ", yout, " yarn ", yv.session.get_particle_count(), " particles")
+		get_tree().quit()
+		return
 	if OS.has_environment("FL_SHOT_COMPARE"):   # the compare view: FL_SHOT_COMPARE=variants|ab, FL_SHOT_FRAMES frames each
 		var cv = c.compare_view
 		cv.visible = true

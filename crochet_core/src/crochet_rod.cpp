@@ -197,6 +197,7 @@ int RodSystem::addChain(const std::vector<Vec3>& pts, bool closed, bool restFrom
         extForce.push_back(Vec3{});
         pinTarget.push_back(pts[i]);
         particleChain.push_back(ci);
+        anchor.push_back(pts[i]);
     }
     Quat qk = quatFromTo(kE3, tan[0]);
     for (int k = 0; k < nSeg; ++k) {
@@ -224,6 +225,7 @@ int RodSystem::addChain(const std::vector<Vec3>& pts, bool closed, bool restFrom
     chains.push_back(ch);
     lambdaS_.assign(3 * segA.size(), 0.0);
     lambdaB_.assign(3 * jointA.size(), 0.0);
+    lambdaA_.assign(3 * x.size(), 0.0);
     return ci;
 }
 
@@ -248,7 +250,7 @@ void RodSystem::extendChain(const std::vector<Vec3>& pts) {
         const Real wi = 1.0 / (0.5 * params.linearDensity * len);
         x.push_back(p); xPrev.push_back(p); v.push_back(Vec3{});
         w.push_back(wi); wFree.push_back(wi);
-        extForce.push_back(Vec3{}); pinTarget.push_back(p); particleChain.push_back(ci);
+        extForce.push_back(Vec3{}); pinTarget.push_back(p); particleChain.push_back(ci); anchor.push_back(p);
         const int sIdx = (int)segA.size();
         segA.push_back(last);
         segB.push_back((int)x.size() - 1);
@@ -273,6 +275,7 @@ void RodSystem::extendChain(const std::vector<Vec3>& pts) {
     }
     lambdaS_.assign(3 * segA.size(), 0.0);
     lambdaB_.assign(3 * jointA.size(), 0.0);
+    lambdaA_.assign(3 * x.size(), 0.0);
 }
 
 void RodSystem::setRestLengthsFromShape(int chain, Real scale) {
@@ -671,6 +674,21 @@ void RodSystem::solveStatics() {
     }
 }
 
+// The shape memory: a soft spring of stiffness shapeStiffness pulls every free particle back to its anchor (XPBD, one constraint per particle).
+void RodSystem::solveAnchors(Real h2inv) {
+    const Real alpha = h2inv / params.shapeStiffness;
+    for (size_t i = 0; i < x.size(); ++i) {
+        if (w[i] <= 0) continue;
+        Vec3 lam{lambdaA_[3 * i], lambdaA_[3 * i + 1], lambdaA_[3 * i + 2]};
+        const Vec3 C = x[i] - anchor[i];
+        const Vec3 dl = (-C - lam * alpha) / (w[i] + alpha);
+        lambdaA_[3 * i] += dl.x;
+        lambdaA_[3 * i + 1] += dl.y;
+        lambdaA_[3 * i + 2] += dl.z;
+        x[i] += dl * w[i];
+    }
+}
+
 void RodSystem::solveFloor(Real /*h*/) {
     const Real mu = params.friction;
     const Real r = params.radius * params.radiusScale;
@@ -730,6 +748,7 @@ void RodSystem::step(Real dt) {
         if (params.contact) buildPairs();
         std::fill(lambdaS_.begin(), lambdaS_.end(), 0.0);
         std::fill(lambdaB_.begin(), lambdaB_.end(), 0.0);
+        std::fill(lambdaA_.begin(), lambdaA_.end(), 0.0);
         for (int it = 0; it < params.iterations; ++it) {
             const bool rev = (it & 1) != 0;  // alternate the sweep direction: information travels both ways along a chain
             for (size_t ci = 0; ci < chains.size(); ++ci) {
@@ -741,6 +760,7 @@ void RodSystem::step(Real dt) {
                 for (int k = 0; k < ch.segments; ++k) solveStretchShear(ch.firstSegment + (rev ? ch.segments - 1 - k : k), h2inv);
                 for (int k = 0; k < ch.joints; ++k) solveBendTwist(ch.firstJoint + (rev ? ch.joints - 1 - k : k), h2inv);
             }
+            if (params.shapeStiffness > 0) solveAnchors(h2inv);
             if (params.contact) solveContacts(h);
             if (params.floorOn) solveFloor(h);
             if (!statics.empty()) solveStatics();

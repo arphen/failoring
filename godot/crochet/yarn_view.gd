@@ -1,0 +1,522 @@
+extends Control
+# Yarn mode (docs/YARN_MODE_PLAN.md, section 11): crochet a piece one hook action at a time and watch the yarn. It should feel like a lego
+# simulator: click a stitch, the hook performs it, the stitch appears, go again. A stitch button asks nothing: it works into the next stitch of
+# the row below, both loops. Clicking a loop in the view picks it as the opening for the next stitch instead. "Turn" turns the work over: the
+# camera swings round it, because the worker sees the other side. The pattern so far is a semi-transparent overlay.
+#
+# The yarn is YarnSession's (crochet_core YarnWork): one continuous yarn, its loops placed on a lattice, soft under a shape memory spring.
+# The hook is cosmetic: it moves to the opening, the yarn grows, it moves to the new loop on the hook.
+
+const Studio = preload("res://studio.gd")
+const Look = preload("res://look.gd")
+const Orbit = preload("res://crochet/crochet_orbit.gd")
+
+signal closed
+
+const HOOK_LENGTH := 0.07
+const HOOK_RADIUS := 0.0022
+const PICK_RADIUS_PX := 28.0
+const YARN_COLOUR := Color(0.80, 0.30, 0.22)
+const WORK_HEIGHT := 0.95          # the work is held at about the height of a table in the studio
+const WORK_TILT := 1.0             # rad: the work leans back like a piece held in the left hand, its face toward the worker above the table
+
+var session: YarnSession
+var animate := true               # tests switch the animations off
+var busy := false
+var history: Array = []           # [kind, opening] of every action, for undo (replayed)
+var picked := -1                  # a loop the user clicked: the opening of the next stitch (-1: the next in order)
+var flip := 0.0                   # 0: the right side of the work faces the worker; PI after a turn
+var soft_steps := 0               # rod steps still to run so that new yarn settles
+
+var sub_view: SubViewport
+var stage: Node3D
+var orbit := Orbit.new()
+var view_container: SubViewportContainer
+var work_root: Node3D             # the piece, its hook and its markers, at table height
+var yarn_node: MeshInstance3D
+var yarn_mat: StandardMaterial3D
+var hook_node: Node3D
+var marker: MeshInstance3D
+var status_label: Label
+var target_label: Label
+var overlay_panel: PanelContainer
+var overlay_text: RichTextLabel
+var follow_check: CheckBox
+var overlay_check: CheckBox
+var b_chain: Button
+var b_sc: Button
+var b_turn: Button
+var b_undo: Button
+var _shown_particles := 0         # how much of the yarn is drawn (it grows as it is made)
+var _marker_t := 0.0
+
+func _ready() -> void:
+	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	session = YarnSession.new()
+	_build_ui()
+	_rebuild(-1)
+	_refresh()
+	_frame_work(true)
+
+# ------------------------------------------------------------------------------------------------ UI
+
+func _build_ui() -> void:
+	var back := ColorRect.new()
+	back.color = Color(0.11, 0.12, 0.14)
+	back.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(back)
+	var root := VBoxContainer.new()
+	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(root)
+	var bar := HBoxContainer.new()
+	root.add_child(bar)
+	var title := Label.new()
+	title.text = "Yarn mode  "
+	title.add_theme_font_size_override("font_size", 16)
+	bar.add_child(title)
+	b_chain = _button("Chain", "yarn over, pull through the loop on the hook", func() -> void: do_action("chain"))
+	bar.add_child(b_chain)
+	b_sc = _button("Single crochet", "into the next stitch of the row below, under both loops; click a loop first to work into that one instead",
+			func() -> void: do_action("sc"))
+	bar.add_child(b_sc)
+	b_turn = _button("Turn", "turn the work over at the end of a row", func() -> void: do_action("turn"))
+	bar.add_child(b_turn)
+	b_undo = _button("Undo", "take the last stitch back", func() -> void: undo())
+	bar.add_child(b_undo)
+	bar.add_child(_button("New piece", "start again from a slip knot", func() -> void: reset_piece()))
+	follow_check = CheckBox.new()
+	follow_check.text = "Follow the hook"
+	follow_check.button_pressed = true
+	bar.add_child(follow_check)
+	overlay_check = CheckBox.new()
+	overlay_check.text = "Pattern overlay"
+	overlay_check.button_pressed = true
+	overlay_check.toggled.connect(func(on: bool) -> void: overlay_panel.visible = on)
+	bar.add_child(overlay_check)
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bar.add_child(spacer)
+	var close := _button("Back", "", func() -> void:
+		visible = false
+		closed.emit())
+	bar.add_child(close)
+	status_label = Label.new()
+	status_label.text = ""
+	root.add_child(status_label)
+	var holder := Control.new()   # the 3D view with the pattern overlay and the target note on top of it
+	holder.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	holder.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	holder.custom_minimum_size = Vector2(500, 360)
+	root.add_child(holder)
+	var vc := SubViewportContainer.new()
+	vc.stretch = true
+	vc.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	sub_view = SubViewport.new()
+	sub_view.own_world_3d = true
+	vc.add_child(sub_view)
+	vc.gui_input.connect(_on_view_input)
+	view_container = vc
+	holder.add_child(vc)
+	stage = Node3D.new()
+	sub_view.add_child(stage)
+	var env := WorldEnvironment.new()
+	env.environment = Environment.new()
+	Look.environment(env.environment)
+	stage.add_child(env)
+	var studio := Studio.build(stage)
+	env.environment.sky = studio["sky"]
+	for fx in studio["fixtures"]:
+		(fx as Node3D).visible = false
+	orbit.setup(stage, Look)
+	orbit.yaw = 0.0
+	orbit.pitch = -0.85
+	work_root = Node3D.new()
+	work_root.position = Vector3(0, WORK_HEIGHT, 0)
+	work_root.rotation = Vector3(-WORK_TILT, 0, 0)
+	stage.add_child(work_root)
+	_build_mat()
+	yarn_node = MeshInstance3D.new()
+	yarn_mat = StandardMaterial3D.new()
+	yarn_mat.vertex_color_use_as_albedo = true
+	yarn_mat.roughness = 0.9
+	yarn_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	yarn_node.material_override = yarn_mat
+	work_root.add_child(yarn_node)
+	_build_hook()
+	_build_marker()
+	# the pattern as a semi-transparent overlay on the view
+	overlay_panel = PanelContainer.new()
+	overlay_panel.modulate = Color(1, 1, 1, 0.62)
+	overlay_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay_panel.position = Vector2(12, 12)
+	overlay_text = RichTextLabel.new()
+	overlay_text.bbcode_enabled = true
+	overlay_text.fit_content = true
+	overlay_text.scroll_active = false
+	overlay_text.custom_minimum_size = Vector2(300, 0)
+	overlay_text.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay_panel.add_child(overlay_text)
+	holder.add_child(overlay_panel)
+	target_label = Label.new()
+	target_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	target_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.8))
+	holder.add_child(target_label)
+	target_label.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
+	target_label.offset_left = 12
+	target_label.offset_top = -34
+	target_label.offset_bottom = -8
+
+func _button(text: String, tip: String, cb: Callable) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.tooltip_text = tip
+	b.pressed.connect(cb)
+	return b
+
+# a small cloth mat the work lies on
+func _build_mat() -> void:
+	var m := MeshInstance3D.new()
+	var d := CylinderMesh.new()
+	d.top_radius = 0.30
+	d.bottom_radius = 0.30
+	d.height = 0.006
+	d.radial_segments = 48
+	m.mesh = d
+	var mt := StandardMaterial3D.new()
+	mt.albedo_color = Color(0.80, 0.78, 0.72)
+	mt.roughness = 0.95
+	m.material_override = mt
+	m.position = Vector3(0, WORK_HEIGHT - 0.016, 0)
+	stage.add_child(m)
+
+func _build_hook() -> void:
+	hook_node = Node3D.new()
+	var steel := StandardMaterial3D.new()
+	steel.albedo_color = Color(0.78, 0.80, 0.84)
+	steel.metallic = 0.85
+	steel.roughness = 0.28
+	var shaft := MeshInstance3D.new()
+	var cyl := CylinderMesh.new()
+	cyl.top_radius = HOOK_RADIUS
+	cyl.bottom_radius = HOOK_RADIUS
+	cyl.height = HOOK_LENGTH
+	cyl.radial_segments = 14
+	shaft.mesh = cyl
+	shaft.material_override = steel
+	# the node's -z axis points from the handle to the tip: the cylinder lies along z with its tip at the origin
+	shaft.rotation = Vector3(PI * 0.5, 0, 0)
+	shaft.position = Vector3(0, 0, HOOK_LENGTH * 0.5)
+	hook_node.add_child(shaft)
+	var head := MeshInstance3D.new()
+	var sph := SphereMesh.new()
+	sph.radius = HOOK_RADIUS * 1.15
+	sph.height = HOOK_RADIUS * 2.3
+	head.mesh = sph
+	head.material_override = steel
+	hook_node.add_child(head)
+	var handle := MeshInstance3D.new()
+	var hc := CylinderMesh.new()
+	hc.top_radius = HOOK_RADIUS * 2.0
+	hc.bottom_radius = HOOK_RADIUS * 1.7
+	hc.height = HOOK_LENGTH * 0.55
+	handle.mesh = hc
+	var wood := StandardMaterial3D.new()
+	wood.albedo_color = Color(0.20, 0.45, 0.62)
+	wood.roughness = 0.5
+	handle.material_override = wood
+	handle.rotation = Vector3(PI * 0.5, 0, 0)
+	handle.position = Vector3(0, 0, HOOK_LENGTH * 0.78)
+	hook_node.add_child(handle)
+	stage.add_child(hook_node)
+
+func _build_marker() -> void:
+	marker = MeshInstance3D.new()
+	var t := TorusMesh.new()
+	t.inner_radius = 0.0046
+	t.outer_radius = 0.0060
+	t.rings = 24
+	t.ring_segments = 8
+	marker.mesh = t
+	var m := StandardMaterial3D.new()
+	m.albedo_color = Color(0.2, 0.9, 0.5, 0.75)
+	m.emission_enabled = true
+	m.emission = Color(0.1, 0.8, 0.4)
+	m.emission_energy_multiplier = 1.2
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	marker.material_override = m
+	marker.visible = false
+	work_root.add_child(marker)
+
+# ------------------------------------------------------------------------------------------------ actions
+
+# One hook action. Everything the stitch needs is chosen: it goes into the next stitch of the row below (both loops), or into the loop the
+# user clicked. Returns false when it could not be made (the status line says why).
+func do_action(kind: String, opening: int = -2) -> bool:
+	if busy:
+		return false
+	if opening == -2:
+		opening = picked
+	busy = true
+	var st: Dictionary = session.get_state()
+	if kind == "sc" and opening < 0 and int(st.get("next", -1)) < 0:
+		status_label.text = "Nothing to work into: turn the work over first."
+		busy = false
+		return false
+	var open_id := opening if opening >= 0 else int(st.get("next", -1))
+	if animate and kind != "turn":
+		var at := _opening_centre(open_id) if (kind == "sc" and open_id >= 0) else _live_centre()
+		await _move_hook(at, 0.30)
+	var before := session.get_particle_count()
+	var r: Dictionary = session.action(kind, opening)
+	if not bool(r.get("ok", false)):
+		status_label.text = String(r.get("msg", "that did not work"))
+		busy = false
+		return false
+	history.append([kind, opening])
+	picked = -1
+	if kind == "turn":
+		_rebuild(-1)
+		await _turn_animation()
+	else:
+		await _grow(before, int(r["particles"]))
+	soft_steps = 40 if animate else 0
+	_refresh()
+	if animate:
+		await _move_hook(_live_centre(), 0.25)
+		_frame_work(false)
+	else:
+		_place_hook(_live_centre())
+		_frame_work(true)
+	busy = false
+	return true
+
+func undo() -> void:
+	if busy or history.size() == 0:
+		return
+	var keep: Array = history.duplicate()
+	keep.pop_back()
+	_replay(keep)
+
+func reset_piece() -> void:
+	if busy:
+		return
+	_replay([])
+
+# Rebuilds the piece from a list of [kind, opening] without the animations.
+func _replay(actions: Array) -> void:
+	session.reset()
+	history.clear()
+	picked = -1
+	flip = 0.0
+	for a in actions:
+		var r: Dictionary = session.action(String(a[0]), int(a[1]))
+		if bool(r.get("ok", false)):
+			history.append(a)
+			if String(a[0]) == "turn":
+				flip += PI
+	flip = fmod(flip, TAU)
+	_set_flip(flip, _live_centre(), work_root.to_global(_live_centre()))
+	_rebuild(-1)
+	_refresh()
+	_frame_work(true)
+	_place_hook(_live_centre())
+
+func _grow(from_particles: int, to_particles: int) -> void:
+	if not animate or to_particles - from_particles < 4:
+		_rebuild(-1)
+		return
+	var tw := create_tween()
+	tw.tween_method(func(n: float) -> void: _rebuild(int(n)), float(from_particles), float(to_particles), 0.45).set_trans(Tween.TRANS_SINE)
+	await tw.finished
+	_rebuild(-1)
+
+# Turning the work over: the piece is flipped about its own vertical axis, lifted a little on the way, as a left hand would turn it; the
+# worker sees the other side. The camera and the hook stay where they are.
+func _turn_animation() -> void:
+	var f0 := flip
+	flip = fmod(flip + PI, TAU)
+	var pivot_local := _live_centre()
+	var pivot_world := work_root.to_global(pivot_local)
+	if not animate:
+		_set_flip(f0 + PI, pivot_local, pivot_world)
+		return
+	var tw := create_tween()
+	tw.tween_method(func(t: float) -> void:
+		var lift := sin(t * PI) * 0.035
+		_set_flip(f0 + PI * t, pivot_local, pivot_world + Vector3(0, lift, 0))
+		_place_hook(_live_centre()), 0.0, 1.0, 1.2).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	await tw.finished
+	_set_flip(f0 + PI, pivot_local, pivot_world)
+	_frame_work(false)
+
+# The piece leans back (the face toward the worker) and is turned by `f` about its own vertical axis; `pivot_local` stays at `pivot_world`.
+func _set_flip(f: float, pivot_local: Vector3, pivot_world: Vector3) -> void:
+	work_root.basis = Basis(Vector3.RIGHT, -WORK_TILT) * Basis(Vector3.UP, f)
+	work_root.position = pivot_world - work_root.basis * pivot_local
+
+# ------------------------------------------------------------------------------------------------ drawing
+
+func _rebuild(up_to: int) -> void:
+	var d: Dictionary = session.get_mesh(up_to, 10, 3)
+	var pos: PackedVector3Array = d["positions"]
+	if pos.size() == 0:
+		yarn_node.mesh = null
+		return
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = pos
+	arrays[Mesh.ARRAY_NORMAL] = d["normals"]
+	arrays[Mesh.ARRAY_COLOR] = d["colors"]
+	arrays[Mesh.ARRAY_INDEX] = d["indices"]
+	var m := ArrayMesh.new()
+	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	yarn_node.mesh = m
+	_shown_particles = up_to if up_to >= 0 else session.get_particle_count()
+
+func _refresh() -> void:
+	var st: Dictionary = session.get_state()
+	var next_id := int(st.get("next", -1))
+	var targets: PackedInt32Array = st["targets"]
+	var cursor := int(st["cursor"])
+	b_sc.disabled = next_id < 0 and picked < 0
+	b_undo.disabled = history.size() == 0
+	var row := int(st["row"])
+	var made := int(st["made"])
+	if row == 0:
+		status_label.text = "Foundation chain: %d chains so far. Chain as many as you like, then Turn and work single crochet back along them." % made
+	elif next_id < 0:
+		status_label.text = "Row %d is done (%d stitches). Turn the work over for the next row." % [row, cursor]
+	else:
+		status_label.text = "Row %d: stitch %d of %d. Single crochet goes into the highlighted stitch; click another loop to work into that instead." % [row, cursor + 1, targets.size()]
+	_refresh_overlay(st)
+	_update_marker()
+
+# The pattern so far, as symbols, semi transparent over the view. o = chain, x = single crochet; the stitch being worked into is marked.
+func _refresh_overlay(st: Dictionary) -> void:
+	var lines: PackedStringArray = String(st["text"]).split("\n", false)
+	var out := "[b]Pattern[/b]\n"
+	var row := 0
+	for line in lines:
+		var syms := ""
+		for part in line.split(", ", false):
+			var bits := part.split(" ")
+			var n := int(bits[1]) if bits.size() > 1 else 1
+			for i in n:
+				syms += "o " if bits[0] == "ch" else "x "
+		out += "[color=#bbbbbb]row %d[/color]  %s\n" % [row, syms]
+		row += 1
+	if lines.size() == 0:
+		out += "[color=#bbbbbb](a slip knot)[/color]\n"
+	overlay_text.text = out
+	var next_id := int(st.get("next", -1))
+	var target := picked if picked >= 0 else next_id
+	target_label.text = ("Next stitch: into loop %d%s" % [target, " (picked)" if picked >= 0 else ""]) if target >= 0 else ""
+
+func _update_marker() -> void:
+	var st: Dictionary = session.get_state()
+	var id := picked if picked >= 0 else int(st.get("next", -1))
+	if id < 0:
+		marker.visible = false
+		return
+	var loops: Array = session.get_loops()
+	if id >= loops.size():
+		marker.visible = false
+		return
+	var l: Dictionary = loops[id]
+	marker.visible = true
+	marker.position = l["centre"]
+	var n: Vector3 = l["normal"]
+	# the torus lies in the xz plane (its axis is y); turn its axis onto the loop's normal
+	var basis := Basis()
+	var up_ref := Vector3(0, 1, 0)
+	var axis := up_ref.cross(n)
+	if axis.length() > 1.0e-6:
+		basis = Basis(axis.normalized(), up_ref.angle_to(n))
+	elif n.y < 0:
+		basis = Basis(Vector3(1, 0, 0), PI)
+	marker.basis = basis
+
+func _live_centre() -> Vector3:
+	var st: Dictionary = session.get_state()
+	if st.has("hook_tip"):
+		return st["hook_tip"]
+	return Vector3.ZERO
+
+func _opening_centre(id: int) -> Vector3:
+	var loops: Array = session.get_loops()
+	if id >= 0 and id < loops.size():
+		return loops[id]["centre"]
+	return _live_centre()
+
+# The hook's tip goes to `p` (in the piece's coordinates). Its shaft comes from the worker's right hand, up and a little toward the worker.
+func _place_hook(p: Vector3) -> void:
+	var handle_dir := Vector3(0.86, 0.38, 0.30).normalized()
+	hook_node.global_position = work_root.to_global(p)
+	hook_node.global_basis = Basis.looking_at(-handle_dir, Vector3.UP)   # the node's -z points from the handle to the tip
+
+func _move_hook(p: Vector3, secs: float) -> void:
+	if not animate:
+		_place_hook(p)
+		return
+	var p0 := work_root.to_local(hook_node.global_position)
+	var tw := create_tween()
+	tw.tween_method(func(t: float) -> void: _place_hook(p0.lerp(p, t)), 0.0, 1.0, secs).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	await tw.finished
+
+# The camera looks at the live end of the work, close enough to see the stitches.
+func _frame_work(snap: bool) -> void:
+	var at := _live_centre()
+	var tgt := work_root.to_global(at + Vector3(0, 0.004, 0))
+	if snap or not follow_check.button_pressed:
+		if snap:
+			orbit.target = tgt
+			orbit.radius = 0.05
+			orbit.dist = 0.085
+			orbit.apply()
+		return
+	if animate:
+		var t0 := orbit.target
+		var tw := create_tween()
+		tw.tween_method(func(t: float) -> void:
+			orbit.target = t0.lerp(tgt, t)
+			orbit.apply(), 0.0, 1.0, 0.5).set_trans(Tween.TRANS_SINE)
+	else:
+		orbit.target = tgt
+		orbit.apply()
+
+# ------------------------------------------------------------------------------------------------ input and frames
+
+func _on_view_input(event: InputEvent) -> void:
+	orbit.handle(event, view_container.size, _on_click)
+
+# A click that did not drag picks the loop nearest to it (within a few pixels) as the opening of the next stitch.
+func _on_click(pos: Vector2) -> void:
+	if busy:
+		return
+	var best := -1
+	var best_d := PICK_RADIUS_PX
+	var loops: Array = session.get_loops()
+	for l in loops:
+		var c: Vector3 = l["centre"]
+		if orbit.cam.is_position_behind(c):
+			continue
+		var s := orbit.cam.unproject_position(c)
+		var d := s.distance_to(pos)
+		if d < best_d:
+			best_d = d
+			best = int(l["id"])
+	if best >= 0:
+		picked = -1 if best == picked else best
+		_refresh()
+
+func _process(delta: float) -> void:
+	_marker_t += delta
+	if marker != null and marker.visible:
+		var pulse := 1.0 + 0.10 * sin(_marker_t * 5.0)
+		marker.scale = Vector3(pulse, pulse, pulse)
+	if soft_steps > 0 and not busy:
+		session.tick(2)
+		soft_steps -= 2
+		if soft_steps % 6 == 0:
+			_rebuild(-1)

@@ -33,7 +33,11 @@ YarnMesh buildYarnMesh(const RodSystem& rs, const YarnMeshOptions& o) {
     const int sides = std::max(3, o.sides), sub = std::max(1, o.subdiv);
     for (size_t ci = 0; ci < rs.chains.size(); ++ci) {
         const RodChain& ch = rs.chains[ci];
-        const int n = ch.particles, S = ch.segments;
+        int n = ch.particles, S = ch.segments;
+        if (o.maxParticles >= 0) {   // only the part of the yarn made so far (a fraction of a segment is not drawn)
+            n = std::min(n, std::max(0, o.maxParticles - ch.firstParticle));
+            S = std::min(S, n - 1);
+        }
         if (S < 1) continue;
         auto P = [&](int i) {
             if (ch.closed) return rs.x[ch.firstParticle + ((i % n) + n) % n];

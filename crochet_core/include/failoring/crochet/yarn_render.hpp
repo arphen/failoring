@@ -20,6 +20,7 @@ struct YarnMeshOptions {
     Real plyContrast = 0.35;   // 0 = a plain tube
     Vec3 colour{0.80, 0.30, 0.22};
     std::vector<Vec3> segmentColour;  // optional: one colour per rod segment (overrides `colour`)
+    int maxParticles = -1;     // draw only the first this many particles of each chain (the yarn growing as it is made); -1 = all
 };
 
 struct YarnMesh {

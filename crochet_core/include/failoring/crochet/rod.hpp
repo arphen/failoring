@@ -44,6 +44,7 @@ struct RodParams {
     bool contact = true;          // off: strands pass through each other (a debugging tool and the mutant of the linking test)
     int contactSkipSegments = 2;  // segments of one chain this close (in index) do not touch
     Real radiusScale = 1.0;       // contact radius scale (the plan's "yarn thickness" slider)
+    Real shapeStiffness = 0.0;    // N/m of the soft spring that pulls a particle back to its anchor (0 = none): the shape memory of a designed piece
     // dynamics
     Vec3 gravity{0, -9.81, 0};
     Real damping = 2.0;           // 1/s, velocity damping
@@ -78,6 +79,7 @@ public:
     std::vector<Vec3> extForce;        // N, applied every step until cleared
     std::vector<Vec3> pinTarget;       // where a pinned particle is heading (it moves linearly over each step)
     std::vector<int> particleChain;
+    std::vector<Vec3> anchor;          // where a particle was designed to be (see shapeStiffness)
     // segments (segment s joins particles segA[s] and segB[s])
     std::vector<int> segA, segB, segChain, segIndex;
     std::vector<Quat> q, qPrev;
@@ -107,6 +109,7 @@ public:
     void pin(int particle);
     void unpin(int particle);
     void movePin(int particle, const Vec3& target) { pinTarget[particle] = target; }
+    void setAnchorsToShape() { anchor = x; }   // the present shape is the designed one
     void fixOrientation(int segment) { wq[segment] = 0; }
 
     void step(Real dt);
@@ -131,6 +134,7 @@ private:
     std::vector<Pair> pairs_;
     std::vector<Real> lambdaS_;        // per segment, 3 comps
     std::vector<Real> lambdaB_;        // per joint, 3 comps
+    std::vector<Real> lambdaA_;        // per particle, 3 comps (the anchor springs)
     void buildPairs();
     void solveStretchShear(int s, Real h2inv);
     void solveChainDirect(int chain, Real h2inv);
@@ -138,6 +142,7 @@ private:
     void solveContacts(Real h);
     void solveFloor(Real h);
     void solveStatics();
+    void solveAnchors(Real h2inv);
     bool skipPair(int a, int b) const;
 };
 

@@ -23,6 +23,7 @@ struct YarnLoop {
     bool live = false;    // on the hook
     int row = 0;          // the row it was made in (for the caller's bookkeeping)
     Real ringScale = 1.0; // how far the ring's yarn has been pulled in (1 = as made)
+    std::vector<int> through;  // the loops whose eyes this loop's legs were pulled through
 };
 
 struct EyeFrame {
@@ -80,17 +81,43 @@ public:
     int sc(int opening);
     // turns the work over: the next row goes back the other way, on the other side
     void turn();
+    // --- the editor's view of the work (docs/YARN_MODE_PLAN.md section 11): one click per stitch, with the usual choices made ---
+    // The opening the next stitch goes into when the user does not pick one: the next stitch of the row below, in the order they are worked.
+    int nextOpening() const;
+    // single crochet into `opening` (-1: the next opening); the cursor moves on. Returns the new live loop, or -1 when there is nothing to work into.
+    int stitchSc(int opening = -1);
+    // a chain stitch (it is not worked into anything, so the cursor stays)
+    int stitchChain();
+    // turns the work over: `turningChain` chain stitches (1 for sc), then the next row goes back along the row just made. After the foundation
+    // chain the loop on the hook is the first chain from the hook and is skipped (sc in the 2nd chain from the hook).
+    void stitchTurn(int turningChain);
+    // The openings the work is going into, in order, and how far along (for the editor to highlight).
+    const std::vector<int>& targetRow() const { return target_; }
+    int cursor() const { return cursor_; }
+    int rowStitches() const { return (int)made_.size(); }
+    // The pattern so far as CrochetPARADE text, one line per row ("ch 8", "sc 7").
+    std::string patternText() const;
     // runs `steps` rod steps (settleSteps when 0)
     void settle(int steps = 0);
     // Pulls the whole yarn up to its rest lengths scaled by `factor` (< 1 tightens, > 1 loosens) and relaxes.
     void setSlack(Real factor, int steps = 200);
 
     EyeFrame eye(int loop) const;
+    // where a (cosmetic) hook would be: at the ring of the live loop, along its axis; invalid before the slip knot
+    struct HookPose { Vec3 tip, axis; bool valid = false; };
+    HookPose hookPose() const;
     Vec3 endPosition() const;
     int particleCount() const { return rod.particleCount(); }
 
 private:
+    std::vector<int> target_;    // the openings of the row being worked into, in the order they will be worked
+    std::vector<int> made_;      // the loops this row has made, in order (the stitches' top loops)
+    int cursor_ = 0;
+    std::vector<std::pair<std::string, int>> log_;   // (kind, count) of the actions, a turn starts a new row
     Real slack_ = 1.0;
+    Vec3 origin_{0, 0, 0};
+    int chainCount_ = 0;
+    Vec3 zAxis() const { return cross(Vec3{1, 0, 0}, upDir); }   // the front of the work (it does not turn with the row direction)
     int finger(const std::vector<int>& eyesLoops, bool consume, const Vec3* axisHint = nullptr);
     // A loop whose ring is put at `ringC`, its plane square to `ringN`; its legs go from the ring through the eyes of `eyesLoops` (in order)
     // and back. The legs pass each eye towards the ring, bending to face it when the line is too slanting.
@@ -104,5 +131,9 @@ private:
 // is unchanged by any motion of the yarn that does not pass a strand through another one: the check that expanding and tightening the
 // work keeps every loop hooked into what it was hooked into.
 std::vector<std::array<int, 3>> loopPiercings(const YarnWork& w);
+
+// For every loop that was pulled through other loops: the signed piercings of each of those loops' ring discs by this loop's own legs, as
+// {loop, eye, +count, -count}. A finger that really threads an eye has exactly one piercing each way ({.., 1, 1}).
+std::vector<std::array<int, 4>> threadingReport(const YarnWork& w);
 
 }  // namespace fl

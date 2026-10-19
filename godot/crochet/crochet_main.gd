@@ -71,6 +71,7 @@ var _vertex_of_stitch := PackedInt32Array()
 var _indices := PackedInt32Array()
 var _line_stitches := {}                      # pattern line (1-based) -> PackedInt32Array of stitch ids
 var compare_view: Control                     # crochet_compare.gd
+var yarn_view: Control                        # yarn_view.gd
 var calibrate_view: Control                   # crochet_calibrate.gd
 var records: Array = []                       # the calibration records (crochet_records.gd)
 var edit_menu: PopupMenu                      # the right-click menu of the chart (plan 9.2)
@@ -154,6 +155,11 @@ func _build_ui() -> void:
 	compare_view.visible = false
 	add_child(compare_view)
 	compare_view.closed.connect(func() -> void: set_process(true))
+	yarn_view = Control.new()   # yarn mode: crochet one hook action at a time, hidden until "Yarn mode"
+	yarn_view.set_script(load("res://crochet/yarn_view.gd"))
+	yarn_view.visible = false
+	add_child(yarn_view)
+	yarn_view.closed.connect(func() -> void: set_process(true))
 	calibrate_view = Control.new()   # the swatch calibration wizard
 	calibrate_view.set_script(load("res://crochet/crochet_calibrate.gd"))
 	calibrate_view.visible = false
@@ -198,6 +204,9 @@ func _build_top_bar() -> Control:
 	var compare := _small("Compare", "Two patterns or settings side by side, or the five hinge-round variants of the laptop bag")
 	compare.pressed.connect(func() -> void: compare_view.visible = true)
 	bar.add_child(compare)
+	var yarn_mode := _small("Yarn mode", "Crochet a piece one hook action at a time: click a stitch, the hook makes it, see the yarn")
+	yarn_mode.pressed.connect(func() -> void: yarn_view.visible = true)
+	bar.add_child(yarn_mode)
 	var calibrate := _small("Calibrate", "Measure a swatch of this yarn on this hook: the stitch model then uses your numbers instead of the starter values")
 	calibrate.pressed.connect(func() -> void: open_calibration())
 	bar.add_child(calibrate)
