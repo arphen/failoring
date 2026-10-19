@@ -57,6 +57,12 @@ func _ready() -> void:
 						break
 			for i in count:
 				await yv.do_action(kind)
+		if OS.has_environment("FL_SHOT_SIM"):   # the simulated slip knot, held at frame FL_SHOT_SIM (FL_SHOT_YARN="" to start from nothing)
+			await yv.start_sim("slip_knot")
+			yv.sim_playing = false
+			yv._show_sim_frame(int(OS.get_environment("FL_SHOT_SIM")))
+			yv.orbit.target = yv.sim_root.global_position
+			yv.orbit.dist = 0.12
 		if OS.has_environment("FL_SHOT_YARN_EXPAND"):
 			yv.expand_slider.value = float(OS.get_environment("FL_SHOT_YARN_EXPAND"))
 		if OS.has_environment("FL_SHOT_YARN_THICK"):

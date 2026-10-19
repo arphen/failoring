@@ -24,11 +24,11 @@ set(CROCHET_CORE ${CMAKE_CURRENT_SOURCE_DIR}/../crochet_core)
 add_library(crochet_core STATIC
   ${CROCHET_CORE}/src/yarn.cpp ${CROCHET_CORE}/src/stitch_model.cpp ${CROCHET_CORE}/src/parse.cpp
   ${CROCHET_CORE}/src/graph.cpp ${CROCHET_CORE}/src/crochet_mesh.cpp ${CROCHET_CORE}/src/crochet_model.cpp ${CROCHET_CORE}/src/crochet_layout.cpp ${CROCHET_CORE}/src/snapshot.cpp ${CROCHET_CORE}/src/crochet_relax.cpp ${CROCHET_CORE}/src/crochet_scene.cpp ${CROCHET_CORE}/src/crochet_metrics.cpp ${CROCHET_CORE}/src/crochet_session.cpp ${CROCHET_CORE}/src/crochet_run.cpp ${CROCHET_CORE}/src/crochet_calibration.cpp ${CROCHET_CORE}/src/crochet_hinge_fit.cpp
-  ${CROCHET_CORE}/src/crochet_rod.cpp ${CROCHET_CORE}/src/yarn_render.cpp ${CROCHET_CORE}/src/yarn_work.cpp)
+  ${CROCHET_CORE}/src/crochet_rod.cpp ${CROCHET_CORE}/src/yarn_render.cpp ${CROCHET_CORE}/src/yarn_work.cpp ${CROCHET_CORE}/src/yarn_sim.cpp)
 target_include_directories(crochet_core PUBLIC ${CROCHET_CORE}/include)
 target_link_libraries(crochet_core PUBLIC cloth_core)
 
-add_library(failoring SHARED src/failoring_sim.cpp src/gpu_cg.cpp src/register_types.cpp src/crochet_bindings.cpp src/yarn_bindings.cpp)
+add_library(failoring SHARED src/failoring_sim.cpp src/gpu_cg.cpp src/register_types.cpp src/crochet_bindings.cpp src/yarn_bindings.cpp src/yarn_sim_bindings.cpp)
 target_link_libraries(failoring PRIVATE godot-cpp cloth_core crochet_core)
 set_target_properties(failoring PROPERTIES
   LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/../godot/bin)

@@ -4,6 +4,7 @@
 #include "crochet_bindings.h"
 #include "failoring_sim.h"
 #include "yarn_bindings.h"
+#include "yarn_sim_bindings.h"
 
 using namespace godot;
 
@@ -14,6 +15,7 @@ static void initialize_failoring(ModuleInitializationLevel level) {
     GDREGISTER_CLASS(CrochetScene);
     GDREGISTER_CLASS(CrochetCalibration);
     GDREGISTER_CLASS(YarnSession);
+    GDREGISTER_CLASS(YarnSimSession);
 }
 static void uninitialize_failoring(ModuleInitializationLevel level) { (void)level; }
 

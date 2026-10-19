@@ -249,6 +249,8 @@ func _build_ui() -> void:
 	thick_slider.tooltip_text = tl.tooltip_text
 	thick_slider.value_changed.connect(func(_v: float) -> void: _apply_view())
 	bar.add_child(thick_slider)
+	bar.add_child(_button("Slip knot, simulated", "Watch a slip knot made from one real strand of yarn: the hook goes through a ring, catches the yarn and draws it through, and the knot closes. Nothing is placed: the yarn is simulated (it cannot pass through itself or the hook).",
+			func() -> void: start_sim("slip_knot")))
 	var close := _button("Back", "", func() -> void:
 		visible = false
 		closed.emit())
@@ -256,6 +258,7 @@ func _build_ui() -> void:
 	status_label = Label.new()
 	status_label.text = ""
 	root.add_child(status_label)
+	_build_sim_bar(root)
 	var holder := Control.new()   # the 3D view with the pattern overlay and the target note on top of it
 	holder.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	holder.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -1411,6 +1414,7 @@ func _on_click(pos: Vector2) -> void:
 	_refresh()
 
 func _process(delta: float) -> void:
+	_sim_process(delta)
 	_marker_t += delta
 	if marker != null and marker.visible:
 		var pulse := 1.0 + 0.10 * sin(_marker_t * 5.0)
@@ -1420,3 +1424,146 @@ func _process(delta: float) -> void:
 		soft_steps -= 2
 		if session.is_grabbed() or soft_steps % 6 == 0:
 			_rebuild(-1)
+
+# ------------------------------------------------------------------------------------------------ the simulator (docs/YARN_MODE_PLAN.md section 14)
+
+# A procedure simulated from one real strand of yarn, played back: the hook (drawn from the capsules the yarn collides with) moves, the yarn does
+# what the physics makes it do. The design piece and its hook are hidden meanwhile.
+var sim_session: YarnSimSession
+var sim_root: Node3D
+var sim_yarn: MeshInstance3D
+var sim_hook: MeshInstance3D
+var sim_bar: HBoxContainer
+var sim_slider: HSlider
+var sim_play: Button
+var sim_speed: OptionButton
+var sim_caption: Label
+var sim_t := 0.0
+var sim_playing := false
+var sim_frames := 0
+var _sim_shown := -1
+var _sim_hidden: Array = []
+
+func _build_sim_bar(root: Control) -> void:
+	sim_bar = HBoxContainer.new()
+	sim_bar.visible = false
+	root.add_child(sim_bar)
+	sim_play = _button("Pause", "play or pause", func() -> void:
+		if not sim_playing and sim_t * 60.0 >= sim_frames - 1:
+			sim_t = 0.0
+		sim_playing = not sim_playing
+		sim_play.text = "Pause" if sim_playing else "Play")
+	sim_bar.add_child(sim_play)
+	sim_bar.add_child(_button("Again", "from the start", func() -> void:
+		sim_t = 0.0
+		sim_playing = true
+		sim_play.text = "Pause"))
+	sim_speed = OptionButton.new()
+	for sp in ["1/4 speed", "1/2 speed", "real speed"]:
+		sim_speed.add_item(sp)
+	sim_speed.select(1)
+	sim_speed.tooltip_text = "how fast it plays (real speed is how fast the hook moved in the simulation)"
+	sim_bar.add_child(sim_speed)
+	sim_slider = HSlider.new()
+	sim_slider.custom_minimum_size = Vector2(260, 0)
+	sim_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sim_slider.tooltip_text = "drag to any moment"
+	sim_slider.value_changed.connect(func(v: float) -> void:
+		if not sim_playing:
+			sim_t = v / 60.0
+			_show_sim_frame(int(v)))
+	sim_bar.add_child(sim_slider)
+	sim_bar.add_child(_button("Done", "back to the piece", func() -> void: close_sim()))
+	sim_caption = Label.new()
+	sim_caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	sim_caption.custom_minimum_size = Vector2(420, 0)
+	sim_caption.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sim_bar.add_child(sim_caption)
+
+func start_sim(procedure: String) -> void:
+	if busy:
+		return
+	status_label.text = "Simulating the yarn..."
+	await get_tree().process_frame
+	if sim_session == null:
+		sim_session = YarnSimSession.new()
+	sim_frames = sim_session.record(procedure)
+	if sim_frames == 0:
+		status_label.text = "Nothing to simulate for " + procedure
+		return
+	if sim_root == null:
+		sim_root = Node3D.new()
+		work_root.add_child(sim_root)
+		sim_yarn = MeshInstance3D.new()
+		sim_yarn.material_override = yarn_mat
+		sim_root.add_child(sim_yarn)
+		sim_hook = MeshInstance3D.new()
+		var steel := StandardMaterial3D.new()
+		steel.albedo_color = Color(0.74, 0.76, 0.80)
+		steel.metallic = 0.6
+		steel.roughness = 0.35
+		sim_hook.material_override = steel
+		sim_root.add_child(sim_hook)
+	_sim_hidden.clear()
+	for n in [yarn_node, hook_node, left_hand, marker] + ball_nodes + run_nodes + hover_nodes + extra_markers:
+		if n != null and n is Node3D and (n as Node3D).visible:
+			(n as Node3D).visible = false
+			_sim_hidden.append(n)
+	sim_root.visible = true
+	sim_slider.max_value = sim_frames - 1
+	sim_bar.visible = true
+	sim_t = 0.0
+	_sim_shown = -1
+	sim_playing = true
+	sim_play.text = "Pause"
+	_show_sim_frame(0)
+	status_label.text = "Simulated, %d frames: one strand of yarn, a rigid hook, the left hand holding the yarn. Nothing is placed." % sim_frames
+
+func close_sim() -> void:
+	sim_playing = false
+	if sim_root != null:
+		sim_root.visible = false
+	sim_bar.visible = false
+	for n in _sim_hidden:
+		if is_instance_valid(n):
+			(n as Node3D).visible = true
+	_sim_hidden.clear()
+	_refresh()
+
+func _sim_process(delta: float) -> void:
+	if not sim_playing or sim_frames == 0:
+		return
+	var speeds := [0.25, 0.5, 1.0]
+	sim_t += delta * float(speeds[sim_speed.selected])
+	var f := int(sim_t * 60.0)
+	if f >= sim_frames - 1:
+		f = sim_frames - 1
+		sim_playing = false
+		sim_play.text = "Play"
+	_show_sim_frame(f)
+	sim_slider.set_value_no_signal(f)
+
+func _sim_mesh(d: Dictionary) -> ArrayMesh:
+	var pos: PackedVector3Array = d.get("positions", PackedVector3Array())
+	if pos.size() == 0:
+		return null
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = pos
+	arrays[Mesh.ARRAY_NORMAL] = d["normals"]
+	arrays[Mesh.ARRAY_COLOR] = d["colors"]
+	arrays[Mesh.ARRAY_INDEX] = d["indices"]
+	var m := ArrayMesh.new()
+	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return m
+
+func _show_sim_frame(f: int) -> void:
+	f = clampi(f, 0, sim_frames - 1)
+	if f == _sim_shown:
+		return
+	_sim_shown = f
+	sim_yarn.mesh = _sim_mesh(sim_session.get_yarn_mesh(f, 12, 3))
+	sim_hook.mesh = _sim_mesh(sim_session.get_hook_mesh(f))
+	var info: Dictionary = sim_session.get_frame_info(f)
+	var on_hook := absi(int(info.get("loops_on_hook", 0)))
+	sim_caption.text = "%s.   %.1f s%s" % [info.get("phase", ""), f / 60.0, ("   (a loop on the hook)" if on_hook == 1 else "")]

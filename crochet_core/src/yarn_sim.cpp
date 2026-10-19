@@ -298,6 +298,7 @@ void makeSlipKnot(YarnSim& sim) {
     // the hook comes from the front, the tip pointing into the ring, the throat toward the yarn behind the ring
     const Real deep = -zb - 3.4 * R;                   // the tip this far back puts the yarn behind the ring at the mouth of the throat
     // the left hand pinches the ring where it closes (over the tail) and holds the working yarn loosely: the ring keeps its shape
+    sim.phase = "The yarn laid in a ring, the working yarn behind it; the left hand pinches where the ring crosses the tail";
     const int pinch = sim.grab(Vec3{2.8 * m, -14.5 * m, -0.3 * m}, 5.2 * m);
     const Real tension0 = sim.ball.tension;
     sim.ball.tension = 0.3 * tension0;   // held loosely while the hook works
@@ -306,16 +307,22 @@ void makeSlipKnot(YarnSim& sim) {
     const Vec3 th{-1, 0, 0};
     sim.hook = hookPose(Vec3{6.5 * m, 1 * m, 30 * m}, Vec3{0, 0, -1}, th);
     sim.settle(10);
+    sim.phase = "The hook goes in through the ring";
     sim.moveHook(hookPose(Vec3{6.5 * m, 1 * m, deep}, Vec3{0, 0, -1}, th), 1.4);   // in through the ring, past the yarn behind it
+    sim.phase = "It catches the working yarn behind the ring in its throat";
     sim.moveHook(hookPose(Vec3{1.3 * m, 1 * m, deep}, Vec3{0, 0, -1}, th), 1.0);   // across, behind the yarn: it is deep in the throat
+    sim.phase = "It draws a bight of it back out through the ring";
     sim.moveHook(hookPose(Vec3{1.3 * m, 1 * m, 22 * m}, Vec3{0, 0, -1}, th), 1.8);   // back out through the ring: the yarn comes through in a bight
     // The bight hangs in the throat, its legs running back through the ring: it lies beside the hook, not round it. Swinging the handle round to
     // the right (the tip now points left, the throat toward the crocheter) puts the hook through it: the loop on the hook.
     const Real thr = 2.6 * R;
+    sim.phase = "The handle swings round to the right: the hook is now through the bight, a loop on the hook";
     sim.moveHook(hookPose(Vec3{1.3 * m - thr, 1 * m, 22 * m + thr}, Vec3{-1, 0, 0}, Vec3{0, 0, 1}), 1.4);
     // the left hand still holds the knot: the hook pushed on, tip first, slides through the loop, which rides back off the neck onto the shaft
+    sim.phase = "The hook slides on through the loop, which rides onto the shaft";
     sim.moveHook(hookPose(Vec3{1.3 * m - thr - 14 * m, 1 * m, 22 * m + thr}, Vec3{-1, 0, 0}, Vec3{0, 0.5, 1}), 1.2);
     // the knot closed: the pinch let go, the tail drawn down, the working yarn held tighter
+    sim.phase = "The left hand lets go; the tail is pulled down and the working yarn up: the knot closes";
     sim.release(pinch);
     const Vec3 t0 = sim.tail.target;
     const int n = (int)(1.6 / sim.params.dt);
@@ -328,6 +335,7 @@ void makeSlipKnot(YarnSim& sim) {
         if (sim.onFrame) sim.onFrame();
     }
     // snugged: the working yarn pulled firmly closes the loop on the shaft
+    sim.phase = "The working yarn pulled firmly snugs the loop on the shaft: the slip knot";
     sim.ball.tension = 6.0 * tension0;
     sim.settle(60);
     sim.ball.tension = tension0;

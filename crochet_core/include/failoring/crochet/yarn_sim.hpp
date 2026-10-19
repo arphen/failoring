@@ -87,6 +87,7 @@ public:
     void settle(int frames);
     void relaxStraight(Real f, int fromJoint = 0);   // the curl the yarn was laid with, times f (it lets go of it), from a joint on
     std::function<void()> onFrame;   // called after every frame (a recorder, a renderer)
+    std::string phase;               // what the hands are doing now, in words (a script sets it)
 
     // measures
     Real maxStrain() const;
