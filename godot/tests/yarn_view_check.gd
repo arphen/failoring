@@ -331,6 +331,13 @@ func _ready() -> void:
 		var gm: Dictionary = yv.session.get_mesh(nn, 8, 2)
 		grown_ok = grown_ok and (gm["positions"] as PackedVector3Array).size() > 0
 	check("the yarn can be drawn at any length while the loops on the hook stand (no hang, a mesh each time)", grown_ok)
+	# the two lattices: open (the yarn does not pass through itself) is the default; dense can be chosen and the piece is made again on it
+	check("the open lattice is the default (a thin yarn, %.2f mm radius)" % (yv.session.get_radius() * 1000), yv.session.get_open_lattice() and yv.session.get_radius() < 0.0006 and yv.lattice_option.selected == 0)
+	var n_before: int = yv.history.size()
+	yv.set_lattice(false)
+	check("choosing Dense makes the same piece again on the thick yarn (%.2f mm radius, %d actions kept)" % [yv.session.get_radius() * 1000, yv.history.size()], not yv.session.get_open_lattice() and yv.session.get_radius() > 0.001 and yv.history.size() == n_before and absf(yv.hook_node.scale.x - 1.0) < 1.0e-6)
+	yv.set_lattice(true)
+	check("...and Open back again", yv.session.get_open_lattice() and yv.session.get_radius() < 0.0006 and yv.hook_node.scale.x < 0.9)
 	# the hook makes the stitch: it draws the new loop through the loop on the hook, then rests at the new loop
 	yv.reset_piece()
 	yv.animate = true

@@ -333,6 +333,42 @@ void testPullFrames() {
     }
 }
 
+// The yarn is one strand that does not pass through itself: no two stretches of the centre line that are not neighbours along the yarn come closer than the yarn's width.
+void testNoSelfIntersection() {
+    std::printf("[the yarn does not pass through itself]\n");
+    {
+        YarnWork w;
+        w.slipKnot(Vec3{0, 0, 0});
+        const std::vector<YarnOverlap> ov = findOverlaps(w, 2.0 * w.rodParams.radius);
+        CHECKP(ov.empty(), "the slip knot: no two stretches of the yarn come closer than its width (%zu pairs, the closest %.2f mm)", ov.size(), ov.empty() ? 0.0 : ov[0].dist * 1e3);
+        YarnWork cross;   // the checker sees a real crossing: a strand pulled through another
+        cross.slipKnot(Vec3{0, 0, 0});
+        cross.strands[0].pts[10] = cross.strands[0].pts[60];
+        CHECKP(!findOverlaps(cross, 2.0 * cross.rodParams.radius).empty(), "...and the checker finds a yarn put through itself");
+    }
+    YarnWork w;
+    w.useOpenLattice();
+    w.slipKnot(Vec3{0, 0, 0});
+    for (int i = 0; i < 5; ++i) w.stitchChain();
+    w.stitchTurn(0);
+    for (int i = 0; i < 4; ++i) w.stitchSc();
+    w.stitchTurn(1);
+    for (int i = 0; i < 4; ++i) w.stitchSc();
+    const Real twoR = 2.0 * w.rodParams.radius;
+    const std::vector<YarnOverlap> ov = findOverlaps(w, twoR);
+    Real closest = 1e300;
+    for (const YarnOverlap& o : ov) closest = std::min(closest, o.dist);
+    CHECKP(ov.empty() || closest > 0.9 * twoR, "two rows of single crochet on the open lattice: nothing closer than 90%% of the yarn's width (%zu pairs below it, closest %.3f of the width)", ov.size(),
+           ov.empty() ? 1.0 : closest / twoR);
+    int bad = 0, total = 0;
+    for (const auto& t : threadingReport(w)) {
+        if (t[0] <= 1) continue;
+        ++total;
+        if (t[2] != 1 || t[3] != 1) ++bad;
+    }
+    CHECKP(total > 20 && bad * 20 <= total, "...and every finger still goes through its loops once each way (%d of %d)", total - bad, total);
+}
+
 void testStanding() {
     std::printf("[a loop on the hook stands round it]\n");
     YarnWork w;
@@ -398,6 +434,7 @@ void testFinishOff() {
 }  // namespace
 
 int main() {
+    testNoSelfIntersection();
     testStanding();
     testFinishOff();
     testPullFrames();

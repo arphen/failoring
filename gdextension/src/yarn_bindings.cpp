@@ -82,6 +82,7 @@ void YarnSession::set_view(double expand, double thickness) {
 void YarnSession::reset() {
     grip_ = -1;
     work_ = fl::YarnWork();   // the tuned tight lattice, a soft shape memory, strands that give a little (YarnWork's defaults)
+    if (open_lattice_) work_.useOpenLattice();
     work_.slipKnot(fl::Vec3{0, 0, 0}, fl::Vec3{0.80, 0.30, 0.22});
     started_ = true;
 }
@@ -486,6 +487,9 @@ void YarnSession::_bind_methods() {
     ClassDB::bind_method(D_METHOD("anim_frame", "loop", "s", "wrap", "hang", "phi", "sides", "subdiv"), &YarnSession::anim_frame);
     ClassDB::bind_method(D_METHOD("set_stand", "tip_dir", "tip_pos", "k"), &YarnSession::set_stand);
     ClassDB::bind_method(D_METHOD("get_stand_tip", "tip_dir"), &YarnSession::get_stand_tip);
+    ClassDB::bind_method(D_METHOD("get_radius"), &YarnSession::get_radius);
+    ClassDB::bind_method(D_METHOD("set_open_lattice", "open"), &YarnSession::set_open_lattice);
+    ClassDB::bind_method(D_METHOD("get_open_lattice"), &YarnSession::get_open_lattice);
     ClassDB::bind_method(D_METHOD("tick", "n"), &YarnSession::tick);
     ClassDB::bind_method(D_METHOD("get_mesh", "up_to", "sides", "subdiv"), &YarnSession::get_mesh);
     ClassDB::bind_method(D_METHOD("get_particle_count"), &YarnSession::get_particle_count);

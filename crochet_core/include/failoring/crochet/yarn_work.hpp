@@ -62,6 +62,9 @@ struct EyeFrame {
 };
 
 struct WorkParams {
+    // The design on a thin yarn and an open lattice (a stitch of 50 yarn radii): the work that does not pass through itself. See openLattice().
+    static struct WorkParams openLattice();
+
     // The shape of a finger as it is made (m): two legs side by side through the eyes it is pulled through, then a ring (a bar, for the stitches).
     // The design is made tight, on a lattice; these were found by `yarn_tune` for clean threading with no overlap beyond what worsted squeezes.
     Real hookRadius = 0.0;
@@ -83,6 +86,13 @@ struct WorkParams {
     Real closeFactor = 1.0;        // a loop that a finger is pulled through is pulled in: its ring's rest length times this (once per pass)
     Real closeFloor = 1.0;         // ... but no further than this fraction of the ring as made
     int settleSteps = 0;           // rod steps after each action
+    // The design lays each loop's yarn by formula and the strands may then pass through each other. After every action the new yarn is thinned and grown back to its radius
+    // under contact (the rod solver keeps the strands apart), and what comes out is the work's geometry: the next stitch is made on it. 0 stages: off.
+    int relaxStages = 0;           // radius steps from relaxThin to 1 (the open lattice uses 10)
+    int relaxSteps = 40;           // rod steps at each
+    Real relaxThin = 0.2;          // the new yarn starts at this fraction of its radius
+    Real relaxShape = 5.0;         // the soft spring that keeps the yarn near where it was designed while it is pushed apart (N/m)
+    Real relaxReach = 0.04;        // only the yarn within this (m) of the new yarn is moved
     // the lattice the rings are placed on
     Real stitchWidth = 0.00846;    // between neighbouring rings in a row
     Real stitchHeight = 0.00568;   // one row of single crochet
@@ -117,6 +127,8 @@ public:
     int active = 0;                // the strand being worked with
 
     YarnWork();
+    // The thin yarn on the open lattice, relaxed under contact after every action: the work does not pass through itself (WorkParams::openLattice). Call before slipKnot.
+    void useOpenLattice();
 
     // Starts the first yarn: a tail, the slip knot's ring and one loop on the hook, at `at`. Returns the new live loop.
     int slipKnot(const Vec3& at, const Vec3& colour = Vec3{0.80, 0.30, 0.22});
@@ -168,6 +180,8 @@ public:
 
     // Rebuilds the rod system from the strands (every action does it; call it after changing `rodParams`).
     void materialize();
+    // materialize() and, when relaxStages > 0, relaxNew()
+    void commit();
     // runs `steps` rod steps (settleSteps when 0)
     void settle(int steps = 0);
 
@@ -227,6 +241,8 @@ private:
     int loopAt(const Vec3& ringC, const Vec3& ringN, const std::vector<int>& eyesLoops, const Vec3* major = nullptr, Real semiA = -1, Real semiB = -1,
                const std::vector<int>* modes = nullptr, const Vec3* front = nullptr);
     PullFrame pullFrameBody(int loop, Real s, Real wrap) const;
+    void relaxNew();                 // untangle the yarn added since the last time (see WorkParams::relaxStages)
+    std::vector<int> settled_;       // per strand: how many of its nodes have been relaxed (they are the work's geometry)
     int addLoop(int strand, int p0, int p1, bool live);
     void pushLog(const std::string& kind, int strand);
     void appendPath(const std::vector<Vec3>& way);   // to the active strand

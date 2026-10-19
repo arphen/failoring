@@ -73,6 +73,12 @@ int main(int argc, char** argv) {
     int stages = 12, steps = 60;
     Real slack = 1.0, shape = 5.0, from = 0.15, to = 1.0, ribA = 0.0, ribB = 0.0, damping = -1.0;
     int iters = -1, sub = -1;
+    Real ea = -1.0, tf = 0.985;
+    int tighten = 0, tsteps = 30;
+    bool straight = false;
+    int smooth = 0, squeeze = 0;
+    Real sf = 0.95, zf = 1.0, sshape2 = 20.0;
+    Real smoothShape = 2.0, smoothEI = -1.0;
     for (int i = 2; i + 1 < argc; i += 2) {
         const std::string k = argv[i];
         const double v = std::atof(argv[i + 1]);
@@ -86,6 +92,18 @@ int main(int argc, char** argv) {
         else if (k == "--iters") iters = (int)v;
         else if (k == "--sub") sub = (int)v;
         else if (k == "--damp") damping = v;
+        else if (k == "--ea") ea = v;
+        else if (k == "--tighten") tighten = (int)v;
+        else if (k == "--tf") tf = v;
+        else if (k == "--tsteps") tsteps = (int)v;
+        else if (k == "--straight") straight = v != 0;
+        else if (k == "--smooth") smooth = (int)v;
+        else if (k == "--squeeze") squeeze = (int)v;
+        else if (k == "--sf") sf = v;
+        else if (k == "--zf") zf = v;
+        else if (k == "--sshape2") sshape2 = v;
+        else if (k == "--sshape") smoothShape = v;
+        else if (k == "--sei") smoothEI = v;
         else if (k == "--a") ribA = v * 1e-3;
         else if (k == "--b") ribB = v * 1e-3;
     }
@@ -94,6 +112,7 @@ int main(int argc, char** argv) {
     RodSystem rs = w.rod;
     rs.params.gravity = Vec3{};
     rs.params.shapeStiffness = shape;
+    if (ea > 0) rs.params.EA = ea;
     if (iters > 0) rs.params.iterations = iters;
     if (sub > 0) rs.params.substeps = sub;
     if (damping > 0) rs.params.damping = damping;
@@ -144,6 +163,68 @@ int main(int argc, char** argv) {
             std::printf("  worst %zu: %.2f of the width at (%.1f %.1f %.1f) mm: loop %d (seg %d) vs loop %d (seg %d)\n", k, worst[k].ratio, pa.x * 1e3, pa.y * 1e3, pa.z * 1e3, ownerOf[rs.segA[worst[k].a]], worst[k].a,
                         ownerOf[rs.segA[worst[k].b]], worst[k].b);
             (void)pb;
+        }
+    }
+    if (smooth > 0) {   // let the yarn's own stiffness round the corners the lattice has, while it is held near where it is
+        for (Vec3& d : rs.restDarboux) d = Vec3{};
+        rs.params.shapeStiffness = smoothShape;
+        if (smoothEI > 0) rs.params.EI = smoothEI;
+        rs.setAnchorsToShape();
+        for (int k = 0; k < smooth; ++k) rs.step(1.0 / 120.0);
+        Real mr2 = 0;
+        std::printf("smoothed (%d steps): close(<95%%) %d, closest %.2f\n", smooth, countClose(rs, 0.95, &mr2), mr2);
+    }
+    if (squeeze > 0) {   // pull the stitches closer under contact with the yarn's length fixed: the shape memory's anchors are scaled about the middle in the fabric plane
+        Vec3 c0{};
+        for (const Vec3& q : rs.x) c0 += q;
+        c0 = c0 / (Real)rs.x.size();
+        const std::vector<Vec3> a0 = rs.x;
+        rs.params.shapeStiffness = sshape2;
+        Real fx = 1.0, fz = 1.0;
+        for (int st = 0; st < squeeze; ++st) {
+            fx *= sf;
+            fz *= zf;
+            for (size_t i = 0; i < a0.size(); ++i) {
+                const Vec3 d = a0[i] - c0;
+                rs.anchor[i] = c0 + Vec3{d.x * fx, d.y * fx, d.z * fz};
+            }
+            for (int k = 0; k < tsteps; ++k) rs.step(1.0 / 120.0);
+            if (st % 4 == 3 || st == squeeze - 1) {
+                Vec3 lo(1e300, 1e300, 1e300), hi(-1e300, -1e300, -1e300);
+                Real maxStrain = 0;
+                for (int sgi = 0; sgi < rs.segmentCount(); ++sgi) maxStrain = std::max(maxStrain, std::fabs(length(rs.x[rs.segB[sgi]] - rs.x[rs.segA[sgi]]) / rs.restLen[sgi] - 1.0));
+                for (const Vec3& q : rs.x) {
+                    lo = Vec3(std::min(lo.x, q.x), std::min(lo.y, q.y), std::min(lo.z, q.z));
+                    hi = Vec3(std::max(hi.x, q.x), std::max(hi.y, q.y), std::max(hi.z, q.z));
+                }
+                std::printf("squeeze %d (xy x%.2f): close(<95%%) %d, closest %.2f, strain max %.2f, extent %.0f x %.0f x %.0f mm\n", st + 1, fx, countClose(rs, 0.95, &mr), mr, maxStrain, (hi.x - lo.x) * 1e3,
+                            (hi.y - lo.y) * 1e3, (hi.z - lo.z) * 1e3);
+            }
+        }
+    }
+    if (tighten > 0) {   // pull the yarn tight: every strand's rest length a little shorter at a time, under contact, until it jams
+        if (straight) for (Vec3& d : rs.restDarboux) d = Vec3{};
+        rs.params.shapeStiffness = 0.0;
+        Real total = 1.0;
+        for (int st = 0; st < tighten; ++st) {
+            rs.scaleRestLengths(tf);
+            total *= tf;
+            for (int k = 0; k < tsteps; ++k) rs.step(1.0 / 120.0);
+            if (st % 5 == 4 || st == tighten - 1) {
+                Real maxStrain = 0, meanStrain = 0;
+                for (int sgi = 0; sgi < rs.segmentCount(); ++sgi) {
+                    const Real e = length(rs.x[rs.segB[sgi]] - rs.x[rs.segA[sgi]]) / rs.restLen[sgi] - 1.0;
+                    maxStrain = std::max(maxStrain, e);
+                    meanStrain += e;
+                }
+                Vec3 lo(1e300, 1e300, 1e300), hi(-1e300, -1e300, -1e300);
+                for (const Vec3& p : rs.x) {
+                    lo = Vec3(std::min(lo.x, p.x), std::min(lo.y, p.y), std::min(lo.z, p.z));
+                    hi = Vec3(std::max(hi.x, p.x), std::max(hi.y, p.y), std::max(hi.z, p.z));
+                }
+                std::printf("tighten %d (lengths x%.2f): close(<95%%) %d, closest %.2f, strain max %.2f mean %.3f, extent %.0f x %.0f x %.0f mm\n", st + 1, total, countClose(rs, 0.95, &mr), mr, maxStrain,
+                            meanStrain / std::max(1, rs.segmentCount()), (hi.x - lo.x) * 1e3, (hi.y - lo.y) * 1e3, (hi.z - lo.z) * 1e3);
+            }
         }
     }
     // the topology: every finger through its loops once each way?

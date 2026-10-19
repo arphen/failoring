@@ -16,6 +16,24 @@ using namespace fl;
 
 namespace {
 
+// the design parameters by name (--wp "stitchWidth=0.0185,legGap=0.0014")
+struct NamedParam { const char* name; Real* (*get)(WorkParams&); };
+#define NP(field) {#field, [](WorkParams& w) -> Real* { return &w.field; }}
+const NamedParam kNamed[] = {NP(stitchWidth), NP(stitchHeight), NP(layerGap), NP(ringRadius), NP(legGap), NP(approach), NP(fingerLength), NP(barA), NP(barB), NP(barTilt), NP(postRise),
+                             NP(workingRun), NP(hdcScale), NP(dcScale), NP(slstScale), NP(yoHdc), NP(yoDc), NP(riseDc), NP(midDc), NP(yoLayer), NP(chainPitch), NP(chainA), NP(chainB),
+                             NP(chainLayer), NP(chainTaper), NP(chainEye), NP(flare), NP(tailLength)};
+void setNamed(WorkParams& wp, const std::string& list) {
+    std::stringstream ss(list);
+    std::string item;
+    while (std::getline(ss, item, ',')) {
+        const size_t eq = item.find('=');
+        if (eq == std::string::npos) continue;
+        const std::string name = item.substr(0, eq);
+        for (const NamedParam& n : kNamed)
+            if (name == n.name) *n.get(wp) = std::atof(item.c_str() + eq + 1);
+    }
+}
+
 Real gThick = 1.0;   // the drawn thickness of the yarn
 
 void views(const YarnWork& w, const std::string& prefix, const std::vector<std::string>& which, int lastLoops, bool colourByRow) {
@@ -124,6 +142,8 @@ int main(int argc, char** argv) {
         else if (k == "--chA") w.wp.chainA = v * 1e-3;
         else if (k == "--chB") w.wp.chainB = v * 1e-3;
         else if (k == "--thick") gThick = v;
+        else if (k == "--wp") setNamed(w.wp, argv[i + 1]);
+        else if (k == "--open") { if (v != 0) w.useOpenLattice(); }
         else if (k == "--rad") w.rodParams.radius = v * 1e-3;
         else if (k == "--taper") w.wp.chainTaper = v;
         else if (k == "--chEye") w.wp.chainEye = v;

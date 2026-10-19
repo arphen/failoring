@@ -18,20 +18,23 @@ struct Param { const char* name; Real* (*get)(WorkParams&); Real lo, hi; };
 
 #define P(field, lo, hi) {#field, [](WorkParams& w) -> Real* { return &w.field; }, lo, hi}
 const Param kParams[] = {
-    P(stitchWidth, 0.0055, 0.0120), P(stitchHeight, 0.0055, 0.0120), P(layerGap, 0.0010, 0.0060), P(ringRadius, 0.0024, 0.0060),
-    P(legGap, 0.0006, 0.0030), P(approach, 0.0010, 0.0040), P(fingerLength, 0.0005, 0.0030), P(barA, 0.0030, 0.0080), P(barB, 0.0012, 0.0040),
-    P(barTilt, 0.15, 0.9), P(postRise, 0.5, 1.1), P(workingRun, 0.0010, 0.0040), P(hdcScale, 1.45, 1.6), P(dcScale, 1.9, 2.1), P(slstScale, 0.3, 0.6),
-    P(yoHdc, 0.3, 0.8), P(yoDc, 0.25, 0.6), P(riseDc, 0.55, 0.9), P(midDc, 0.7, 1.0), P(yoLayer, 0.4, 1.6)};
+    P(stitchWidth, 0.0055, 0.0320), P(stitchHeight, 0.0055, 0.0320), P(layerGap, 0.0010, 0.0100), P(ringRadius, 0.0024, 0.0100),
+    P(legGap, 0.0006, 0.0050), P(approach, 0.0010, 0.0080), P(fingerLength, 0.0005, 0.0050), P(barA, 0.0030, 0.0150), P(barB, 0.0012, 0.0080),
+    P(barTilt, 0.15, 0.9), P(postRise, 0.5, 1.1), P(workingRun, 0.0010, 0.0100), P(hdcScale, 1.45, 1.6), P(dcScale, 1.9, 2.1), P(slstScale, 0.3, 0.6),
+    P(yoHdc, 0.3, 0.8), P(yoDc, 0.25, 0.6), P(riseDc, 0.55, 0.9), P(midDc, 0.7, 1.0), P(yoLayer, 0.4, 1.6),
+    P(chainPitch, 0.005, 0.032), P(chainA, 0.003, 0.020), P(chainB, 0.0015, 0.0100), P(chainLayer, 0.0005, 0.0100), P(chainTaper, 0.0, 0.6), P(chainEye, 0.0, 0.8)};
 const int kN = (int)(sizeof(kParams) / sizeof(kParams[0]));
 const int kFirstNew = 12;   // the parameters from here on belong to hdc, dc and sl st only (the first twelve are the sc and chain design, found earlier)
 
 struct Score { int unclean = 0, passes = 0, extra = 0; Real pen = 0, total = 0; };
 
-Real gRadius = 1.25e-3, gWant = 0.5;   // the yarn's radius, and how much of its width two strands must keep between their centre lines (0.5: worsted may be squeezed)
+Real gRadius = 1.25e-3, gWant = 0.5, gRibA = 0.0, gRibB = 0.0;   // (a flat yarn: its half widths; 0 = round)   // the yarn's radius, and how much of its width two strands must keep between their centre lines (0.5: worsted may be squeezed)
 
 Score evaluate(const WorkParams& base) {
     YarnWork w;
     w.rodParams.radius = gRadius;
+    w.rodParams.ribbonWidth = gRibA;
+    w.rodParams.ribbonThickness = gRibB;
     w.wp = base;
     w.slipKnot(Vec3{0, 0, 0});
     for (int i = 0; i < 6; ++i) w.stitchChain();
@@ -57,7 +60,12 @@ Score evaluate(const WorkParams& base) {
     for (int a = 0; a < S; ++a)
         for (int b = a + 7; b < S; ++b) {
             const SegSegResult r = closestSegmentSegment(rs.x[rs.segA[a]], rs.x[rs.segB[a]], rs.x[rs.segA[b]], rs.x[rs.segB[b]]);
-            if (r.dist2 < want * want) {
+            if (gRibA > 0.0) {   // flat yarn: the gap in the direction the pair is separated
+                if (r.dist2 < 4.0 * gRibA * gRibA) {
+                    const Real gap = rs.contactGap(a, b);
+                    if (gap < 0) s.pen += (gap * 1e3) * (gap * 1e3) * gWant;
+                }
+            } else if (r.dist2 < want * want) {
                 const Real d = (want - std::sqrt(r.dist2)) * 1e3;
                 s.pen += d * d;
             }
@@ -72,6 +80,8 @@ int main(int argc, char** argv) {
     const int iters = argc > 1 ? std::atoi(argv[1]) : 300;
     if (const char* e = std::getenv("YARN_TUNE_RAD")) gRadius = std::atof(e) * 1e-3;     // mm
     if (const char* e = std::getenv("YARN_TUNE_WANT")) gWant = std::atof(e);
+    if (const char* e = std::getenv("YARN_TUNE_A")) gRibA = std::atof(e) * 1e-3;   // mm
+    if (const char* e = std::getenv("YARN_TUNE_B")) gRibB = std::atof(e) * 1e-3;
     const bool onlyNew = argc > 3 && std::string(argv[3]) == "new";
     std::mt19937 rng(argc > 2 ? std::atoi(argv[2]) : 1);
     std::uniform_real_distribution<Real> u01(0, 1);

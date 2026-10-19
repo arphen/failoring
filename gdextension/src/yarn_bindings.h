@@ -22,8 +22,12 @@ class YarnSession : public RefCounted {
 
 public:
     YarnSession();
-    // A new piece: the slip knot at the origin, one loop on the hook.
+    // A new piece: the slip knot at the origin, one loop on the hook, on the lattice chosen by set_open_lattice.
     void reset();
+    // true (the default): a thin yarn on an open lattice, relaxed under contact after every action, so the yarn does not pass through itself; false: the dense lattice, thick yarn (it
+    // looks like crochet but strands overlap). Takes effect with the next reset().
+    void set_open_lattice(bool open) { open_lattice_ = open; }
+    bool get_open_lattice() const { return open_lattice_; }
     // "chain", "sc" / "hdc" / "dc" / "slst" (under both loops), the same with "_front" / "_back" (one loop only), "skip" (the next stitch), "finish" (fasten off: cut the yarn and draw the end through the loop on the hook), "turn" (`opening` is
     // then the number of turning chains): one hook action. `opening` is the loop to work into (-1: the next one in order). Returns
     // {ok, loop, loops (the loops it made, in order), msg, particles (the yarn now has), row, cursor}.
@@ -36,6 +40,8 @@ public:
     void set_stand(const Vector3& tip_dir, const Vector3& tip_pos, double k);
     // where the tip of a hook lying the way `tip_dir` says rests, through the last loop on the hook standing round it (the piece's coordinates as shown); zero without a loop
     Vector3 get_stand_tip(const Vector3& tip_dir) const;
+    // the yarn's radius (m)
+    double get_radius() const { return work_.rodParams.radius; }
     // `n` soft-physics steps (the yarn settling)
     void tick(int n);
     // The yarn as a mesh: {positions, normals, colors, indices}; `up_to` draws only the first that many particles (-1: all).
@@ -80,6 +86,7 @@ private:
     bool started_ = false;
     double expand_ = 1.0, thickness_ = 1.0;
     int grip_ = -1;
+    bool open_lattice_ = true;
     fl::Vec3 stand_dir_{-0.86, -0.38, -0.30}, stand_tip_{};
     double stand_k_ = 0.0;
     struct StandSave { int g; fl::Vec3 x; };

@@ -20,6 +20,7 @@ const PICK_RADIUS_PX := 28.0
 const YARN_COLOUR := Color(0.80, 0.30, 0.22)
 const SWATCHES := [Color(0.80, 0.30, 0.22), Color(0.95, 0.58, 0.18), Color(0.93, 0.88, 0.76), Color(0.25, 0.45, 0.78), Color(0.30, 0.62, 0.38), Color(0.14, 0.14, 0.16)]
 const BALL_RADIUS := 0.026
+const OPEN_TOOL_SCALE := 0.55      # on the open lattice the yarn is thin (0.8 mm): a thinner hook, and hands to match
 const BALL_SHADER := """shader_type spatial;
 uniform vec4 albedo : source_color = vec4(0.8, 0.3, 0.2, 1.0);
 varying vec3 obj;
@@ -55,6 +56,8 @@ var work_root: Node3D             # the piece, its hook and its markers, at tabl
 var yarn_node: MeshInstance3D
 var yarn_mat: StandardMaterial3D
 var hook_node: Node3D
+var tool_scale := OPEN_TOOL_SCALE              # the hook and the hands are scaled to the yarn (the open lattice's yarn is thin)
+var lattice_option: OptionButton
 var left_hand: Node3D              # the left hand holds the work by the loop on the hook, its index finger lifting the yarn
 var right_hand: Node3D             # the right hand holds the hook (a child of the hook)
 var hands_check: CheckBox
@@ -199,6 +202,12 @@ func _build_ui() -> void:
 	follow_check.text = "Follow the hook"
 	follow_check.button_pressed = true
 	bar.add_child(follow_check)
+	lattice_option = OptionButton.new()
+	lattice_option.add_item("Open lattice: thin yarn, no crossings")
+	lattice_option.add_item("Dense: thick yarn, overlaps")
+	lattice_option.tooltip_text = "Open: one strand that does not pass through itself (a thin yarn on wide stitches). Dense: looks like crochet, but the strands overlap each other."
+	lattice_option.item_selected.connect(func(i: int) -> void: set_lattice(i == 0))
+	bar.add_child(lattice_option)
 	hands_check = CheckBox.new()
 	hands_check.text = "Hands"
 	hands_check.tooltip_text = "Show the hands: the right one holds the hook, the left one the work, its index finger carrying the yarn"
@@ -233,9 +242,9 @@ func _build_ui() -> void:
 	bar.add_child(tl)
 	thick_slider = HSlider.new()
 	thick_slider.min_value = 0.3
-	thick_slider.max_value = 1.6
+	thick_slider.max_value = 1.0
 	thick_slider.step = 0.05
-	thick_slider.value = 1.3
+	thick_slider.value = 1.0
 	thick_slider.custom_minimum_size = Vector2(90, 0)
 	thick_slider.tooltip_text = tl.tooltip_text
 	thick_slider.value_changed.connect(func(_v: float) -> void: _apply_view())
@@ -289,6 +298,7 @@ func _build_ui() -> void:
 	work_root.add_child(yarn_node)
 	_build_hook()
 	_build_hands()
+	left_hand.basis = _hand_basis.scaled(Vector3.ONE * tool_scale)
 	_build_marker()
 	# the pattern as a semi-transparent overlay on the view
 	overlay_panel = PanelContainer.new()
@@ -695,6 +705,17 @@ func undo() -> void:
 		return
 	var keep: Array = history.duplicate()
 	keep.pop_back()
+	_replay(keep)
+
+# The open lattice (the yarn does not pass through itself) or the dense one; the piece so far is made again on it.
+func set_lattice(open: bool) -> void:
+	if busy:
+		return
+	session.set_open_lattice(open)
+	tool_scale = OPEN_TOOL_SCALE if open else 1.0
+	left_hand.basis = _hand_basis.scaled(Vector3.ONE * tool_scale)
+	lattice_option.select(0 if open else 1)
+	var keep: Array = history.duplicate()
 	_replay(keep)
 
 func reset_piece() -> void:
@@ -1116,7 +1137,7 @@ func _update_balls() -> void:
 		var spin_axis := Vector3.UP.cross(bp - e0)
 		if spin_axis.length() > 1.0e-6:
 			b.basis = Basis(spin_axis.normalized(), spin)
-		var d: Dictionary = session.tube(pts, col, 0.00125 * thick_slider.value, 8, 2)
+		var d: Dictionary = session.tube(pts, col, session.get_radius() * thick_slider.value, 8, 2)
 		var arrays := []
 		arrays.resize(Mesh.ARRAY_MAX)
 		arrays[Mesh.ARRAY_VERTEX] = d["positions"]
@@ -1237,6 +1258,7 @@ func _place_hook(p: Vector3, axis := Vector3.ZERO, blend := 0.0) -> void:
 	handle_dir = (handle_dir + hook_tilt).normalized()
 	hook_node.global_position = work_root.to_global(p) + hook_sway
 	hook_node.global_basis = Basis.looking_at(-handle_dir, Vector3.UP) * Basis(Vector3(0, 0, 1), hook_roll)   # the node's -z points from the handle to the tip
+	hook_node.scale = Vector3.ONE * tool_scale
 	# the loops on the hook stand round it and ride it
 	session.set_stand((work_root.global_basis.inverse() * (-hook_node.global_basis.z)).normalized(), work_root.to_local(hook_node.global_position), 1.0)
 

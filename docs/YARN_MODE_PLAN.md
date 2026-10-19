@@ -203,3 +203,19 @@ stands round it, hinged about its legs, riding the hook and lying down when the 
 index finger carrying the yarn, the yarn goes over its tip); the yarn is drawn 1.3x thicker by default (the photographs' stitches are dense).
 Not like the photographs yet: the hands are stylised capsules, the yarn is a plain tube (the photographs show flat, plied yarn with visible twist), the fabric still has gaps the photographs
 do not have (the Y2 look is still the user's call), the hairpin of a pull-through is a fold of the design's own loop rather than yarn physically drawn through.
+
+### 13.v Non-intersecting yarn (2026-10-19, the user's slip-knot screenshot)
+
+The user: the slip knot was clearly self-intersecting; the yarn must be one strand that does not pass through itself. Measured first (`yarn_cli --overlaps`, `findOverlaps`): the slip knot crossed
+itself in two places (its connecting yarn ran straight through the tail), and the 5x5 sc swatch had ~11,000 pairs of segments closer than a yarn width, 424 of them below a quarter of it. The
+display also overlapped the yarn on purpose (contact radius scale 0.55 of the drawn radius, drawn 1.3x thicker): the picture could not have been clean.
+What was learnt:
+- A round yarn of radius r needs a stitch of about 50 r (Storck's 1/10 for the yarn width over the stitch is a floor; the relaxed lattice agreed): at r = 1.25 mm the 8.5 mm lattice cannot be
+  made non-intersecting, not by relaxation and not by tuning. Dense crochet only looks dense because real yarn is squashed.
+- A flat (ribbon) yarn, wide in the fabric's plane and thin across it (contact in the rod solver and a flat section in the renderer, both tested), did not rescue the dense lattice either:
+  the tuner's floor stayed in the tens of thousands of mm^2.
+- Inflating the yarn from thin to full under the contact solver does untangle a design that is nearly an embedding and keeps its threading (chains, thin yarn), but turns a too-tight design into a jumble.
+So the work is a thin yarn on an open lattice: the lattice is tuned (yarn_tune, objective: threading of every finger plus the overlap penalty at 0.95 of the yarn's width) for the yarn's radius, and
+after every action the new yarn is thinned and grown back under contact (`YarnWork::relaxNew`); what comes out is the work's geometry.
+The slip knot's connecting yarn now runs outside the ring and above the tail, a quarter turn round the axis, as a smooth curve (0 pairs closer than a yarn width).
+Found on the way: a patch had dropped the stitch animation (stitches fell back to the old growing yarn, which hung in a windowed run, so a second click on Chain did nothing); restored and tested.

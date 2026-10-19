@@ -26,6 +26,38 @@ constexpr Real kMassScale = 1.0e4;   // see RodSystem::setMassScale: the springs
 
 }  // namespace
 
+WorkParams WorkParams::openLattice() {
+    WorkParams w;
+    w.legGap = 0.00225;
+    w.approach = 0.00737;
+    w.fingerLength = 0.00284;
+    w.ringRadius = 0.00682;
+    w.chainPitch = 0.02491;
+    w.chainA = 0.00759;
+    w.chainB = 0.00380;
+    w.chainLayer = 0.00364;
+    w.chainTaper = 0.52777;
+    w.chainEye = 0.13535;
+    w.workingRun = 0.00121;
+    w.stitchWidth = 0.01978;
+    w.stitchHeight = 0.01190;
+    w.layerGap = 0.00933;
+    w.barA = 0.00442;
+    w.barB = 0.00340;
+    w.barTilt = 0.69340;
+    w.postRise = 0.53225;
+    w.hdcScale = 1.45000;
+    w.dcScale = 2.10000;
+    w.slstScale = 0.56758;
+    w.yoHdc = 0.55814;
+    w.yoDc = 0.60000;
+    w.riseDc = 0.59177;
+    w.midDc = 0.77521;
+    w.yoLayer = 1.60000;
+    w.relaxStages = 10;
+    return w;
+}
+
 YarnWork::YarnWork() {
     rodParams.gravity = Vec3{};   // the work floats: the shape of the loops is what is being looked at
     rodParams.EA = 30.0;
@@ -36,6 +68,13 @@ YarnWork::YarnWork() {
     rodParams.iterations = 1;
     rodParams.radiusScale = 0.55; // worsted is soft: strands may be squeezed
     rodParams.shapeStiffness = 40.0;
+    rod.params = rodParams;
+}
+
+void YarnWork::useOpenLattice() {
+    wp = WorkParams::openLattice();
+    rodParams.radius = 0.4e-3;     // a round yarn that does not pass through itself needs a stitch of about 50 of its radii (docs/YARN_MODE_PLAN.md 13.v)
+    rodParams.radiusScale = 1.0;   // drawn as thick as it is: strands do not pass through each other
     rod.params = rodParams;
 }
 
@@ -55,6 +94,53 @@ void YarnWork::materialize() {
         fresh.pin(ch.firstParticle);   // the tail end is held
     }
     rod = std::move(fresh);
+}
+
+void YarnWork::commit() {
+    materialize();
+    if (wp.relaxStages > 0) relaxNew();
+}
+
+void YarnWork::relaxNew() {
+    const Real r = rodParams.radius;
+    if (settled_.size() < strands.size()) settled_.resize(strands.size(), 0);
+    RodSystem& rs = rod;
+    std::vector<int> fresh;   // the segments of the yarn added since the last time
+    Vec3 c{};
+    int nc = 0;
+    for (size_t si = 0; si < strands.size(); ++si) {
+        const Strand& S = strands[si];
+        if (S.pts.size() < 2) continue;
+        const RodChain& ch = rs.chains[rs.particleChain[S.first]];
+        for (int i = 0; i + 1 < (int)S.pts.size(); ++i)
+            if (i + 1 >= settled_[si]) {
+                fresh.push_back(ch.firstSegment + i);
+                c += S.pts[i];
+                ++nc;
+            }
+    }
+    if (fresh.empty()) return;
+    c = c / (Real)nc;
+    Real extent = 0;
+    for (size_t si = 0; si < strands.size(); ++si)
+        for (int i = std::max(0, settled_[si] - 1); i < (int)strands[si].pts.size(); ++i) extent = std::max(extent, length(strands[si].pts[i] - c));
+    rs.params.shapeStiffness = wp.relaxShape;
+    rs.params.radiusScale = 1.0;
+    rs.freezeOutside(c, extent + wp.relaxReach);
+    for (int st = 0; st < wp.relaxStages; ++st) {
+        const Real f = wp.relaxThin + (1.0 - wp.relaxThin) * (Real)(st + 1) / (Real)wp.relaxStages;
+        for (int sg : fresh) rs.radius[sg] = r * f;
+        for (int k = 0; k < wp.relaxSteps; ++k) rs.step(1.0 / 120.0);
+    }
+    rs.thaw();
+    for (size_t si = 0; si < strands.size(); ++si) {
+        Strand& S = strands[si];
+        for (int i = 0; i < (int)S.pts.size() && S.first + i < (int)rs.x.size(); ++i) S.pts[i] = rs.x[S.first + i];
+        settled_[si] = (int)S.pts.size();
+    }
+    rs.params.shapeStiffness = rodParams.shapeStiffness;
+    for (Real& rr : rs.radius) rr = r;
+    rs.setAnchorsToShape();
 }
 
 void YarnWork::settle(int steps) {
@@ -518,6 +604,7 @@ int YarnWork::slipKnot(const Vec3& at, const Vec3& colour) {
     strands.clear();
     loops.clear();
     hook.clear();
+    settled_.clear();
     active = 0;
     pending_ = false;
     const Real R = 0.0055, r = rodParams.radius;
@@ -587,7 +674,7 @@ int YarnWork::slipKnot(const Vec3& at, const Vec3& colour) {
     log_.clear();
     row = 0;
     const int id = loopAt(at + progress * wp.stitchWidth + zAxis() * wp.layerGap, zAxis(), {ring});
-    materialize();
+    commit();
     return id;
 }
 
@@ -617,7 +704,7 @@ int YarnWork::chain() {
         id = loopAt(c, lean, {hook.back()}, &along, wp.barA, wp.barB);
         ++turnChains_;
     }
-    materialize();
+    commit();
     return id;
 }
 
@@ -678,19 +765,19 @@ int YarnWork::tallStitch(const std::string& kind, int opening, Loops which) {
 
 int YarnWork::sc(int opening, Loops which) {
     const int id = tallStitch("sc", opening, which);
-    materialize();
+    commit();
     return id;
 }
 
 int YarnWork::hdc(int opening, Loops which) {
     const int id = tallStitch("hdc", opening, which);
-    materialize();
+    commit();
     return id;
 }
 
 int YarnWork::dc(int opening, Loops which) {
     const int id = tallStitch("dc", opening, which);
-    materialize();
+    commit();
     return id;
 }
 
@@ -706,7 +793,7 @@ int YarnWork::slst(int opening, Loops which) {
     const Real h = heightOf("slst") * wp.stitchHeight;
     // through the opening and then the loop on the hook, in one go: a flat loop half a stitch along
     const int id = loopAt(base + upDir * h + along * (0.5 * wp.stitchWidth) - z * (0.3 * wp.layerGap), lean, {opening, hook.back()}, &along, wp.barA, wp.barB, &modes, &z);
-    materialize();
+    commit();
     return id;
 }
 
@@ -753,7 +840,7 @@ int YarnWork::finishOff() {
     S.cut = true;
     finished_ = true;
     pushLog("fo", active);
-    materialize();
+    commit();
     return id;
 }
 
