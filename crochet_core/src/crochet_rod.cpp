@@ -859,7 +859,7 @@ void RodSystem::solveRings(Real frac) {
         r.seg = best;
         const int ia = segA[best], ib = segB[best];
         const Vec3 c = x[ia] + (x[ib] - x[ia]) * bs;
-        const Vec3 d = at - c;
+        const Vec3 d = (at - c) * r.stiffness;
         const Real wa = (1 - bs) * w[ia], wb = bs * w[ib];
         const Real den = (1 - bs) * wa + bs * wb;
         if (den <= 0) continue;
@@ -962,10 +962,10 @@ void RodSystem::step(Real dt) {
                 for (int k = 0; k < ch.joints; ++k) solveBendTwist(ch.firstJoint + (rev ? ch.joints - 1 - k : k), h2inv);
             }
             if (params.shapeStiffness > 0) solveAnchors(h2inv);
+            if (!rings.empty()) solveRings(frac);   // before contact: a ring never drags yarn through yarn
             if (params.contact) solveContacts(h);
             if (params.floorOn) solveFloor(h);
             if (!statics.empty()) solveStatics(staticsNow, staticsBefore);
-            if (!rings.empty()) solveRings(frac);
         }
         // 3. velocities
         for (int i = 0; i < n; ++i) v[i] = w[i] > 0 ? (x[i] - xPrev[i]) / h : Vec3{};

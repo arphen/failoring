@@ -77,6 +77,7 @@ struct StaticCapsule {
 struct SlideRing {
     Vec3 at{};
     int seg = 0;
+    Real stiffness = 1.0;   // the fraction of the error corrected per iteration
     Vec3 from_{};
     bool started_ = false;
 };

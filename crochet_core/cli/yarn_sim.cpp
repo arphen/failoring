@@ -89,6 +89,7 @@ int main(int argc, char** argv) {
     sim.params.massScale = massScale;
     sim.params.damping = damp;
     if (std::getenv("SIM_REEL")) std::sscanf(std::getenv("SIM_REEL"), "%lf,%lf", &sim.reelSlack, &sim.reelForce);
+    if (std::getenv("SIM_THK")) sim.throatStiffness = std::atof(std::getenv("SIM_THK"));
     if (std::getenv("SIM_SUB")) sim.params.substeps = std::atoi(std::getenv("SIM_SUB"));
     if (std::getenv("SIM_IT")) sim.params.iterations = std::atoi(std::getenv("SIM_IT"));
     if (std::getenv("SIM_MU")) sim.params.friction = std::atof(std::getenv("SIM_MU"));
@@ -121,7 +122,13 @@ int main(int argc, char** argv) {
         ++shot;
     };
     std::string lastPhase;
+    int windFrom = std::getenv("SIM_WIND") ? std::atoi(std::getenv("SIM_WIND")) : -1;
     sim.onFrame = [&] {
+        if (windFrom >= 0 && sim.frame >= windFrom && sim.frame % 6 == 0) {
+            const int n = sim.rs.particleCount();
+            std::printf("  wind f%d [%s] all %.2f  last60 %.2f  last40 %.2f\n", sim.frame, sim.phase.substr(0, 28).c_str(), sim.windingNear(0, n - 1),
+                        sim.windingNear(n - 60, n - 1), sim.windingNear(n - 40, n - 1));
+        }
         if (std::getenv("SIM_PHASESHOT") && sim.phase != lastPhase && sim.frame > std::atoi(std::getenv("SIM_PHASESHOT"))) {
             snap("phase");
             std::printf("  phase shot %d at frame %d: %s\n", shot - 1, sim.frame, sim.phase.c_str());

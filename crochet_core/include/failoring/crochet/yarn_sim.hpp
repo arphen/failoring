@@ -88,7 +88,10 @@ public:
     // The throat holds the yarn in it (a ring at the middle of the throat that the yarn runs through) while `throatRing` is set
     void setThroatRing(bool on, int fromParticle = 0);
     bool throatRingOn() const { return throatRing_ >= 0; }
-    bool fingerEyelet = true;   // the finger is an eyelet the yarn slides through (true) or a capsule it lies over (false)
+    bool fingerEyelet = true;
+    Real throatStiffness = 0.5;   // the throat's hold is soft (contact can push back on it), the finger's is firm
+    bool homeSet = false;   // where the hook works from, stitch after stitch (set by the first chain)
+    Vec3 home{};   // the finger is an eyelet the yarn slides through (true) or a capsule it lies over (false)
     // Fingers and other fixed things the yarn runs past (it slides along them): capsules added to the hook's.
     std::vector<StaticCapsule> fixtures;
     int grab(const Vec3& at, Real radius);   // returns the grip's index
@@ -117,6 +120,9 @@ public:
     int loopsOnHook(const Vec3& out) const;
     // The linking number of the yarn with the hook's axis, both closed far away: 1 (or -1) with one loop on the hook.
     Real hookLinking() const;
+    // How far the yarn from particle i0 to i1 goes round the hook's axis (turns, signed), counting only the stretches of it within `reach` of the
+    // axis and level with the hook; the largest such stretch.
+    Real windingNear(int i0, int i1, Real reach = 0.008) const;
     std::vector<Vec3> yarn() const { return rs.x; }
 
 private:
