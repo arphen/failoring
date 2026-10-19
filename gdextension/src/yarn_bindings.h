@@ -3,6 +3,7 @@
 #pragma once
 
 #include <godot_cpp/classes/ref_counted.hpp>
+#include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/color.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/packed_color_array.hpp>
@@ -41,6 +42,10 @@ public:
     // is picked up where it was dropped, a new one is started.
     void set_colour(const Color& colour, const String& when);
     TypedArray<Color> get_colours() const;   // the yarns so far
+    // Loops the next stitch's last pull-through picks up as well (the way a seam is joined); toggles one on or off. get_state()["extra"] lists them.
+    void toggle_extra(int loop);
+    // The pattern so far as rows of runs: [[{kind, count, colour}]]
+    TypedArray<Array> get_pattern_rows() const;
     // How the piece is looked at: `expand` scales the piece about its middle (the loops open up, the yarn keeps its thickness, so you see how they
     // hook into each other); `thickness` scales the yarn's drawn radius (a thin-yarn view). Neither changes the work.
     void set_view(double expand, double thickness);

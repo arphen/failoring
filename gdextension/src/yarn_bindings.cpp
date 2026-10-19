@@ -79,6 +79,29 @@ void YarnSession::set_colour(const Color& c, const String& when) {
     work_.setNextColour(fl::Vec3{c.r, c.g, c.b}, when == "stitch" ? fl::ColourAt::Stitch : fl::ColourAt::PullThrough);
 }
 
+void YarnSession::toggle_extra(int loop) { work_.toggleExtraLoop(loop); }
+
+TypedArray<Array> YarnSession::get_pattern_rows() const {
+    TypedArray<Array> out;
+    for (const auto& row : work_.patternRows()) {
+        Array r;
+        for (const fl::LogEntry& e : row) {
+            Dictionary d;
+            d["kind"] = String(e.kind.c_str());
+            d["count"] = e.count;
+            if (e.strand >= 0 && e.strand < (int)work_.strands.size()) {
+                const fl::Vec3 c = work_.strands[e.strand].colour;
+                d["colour"] = Color((float)c.x, (float)c.y, (float)c.z);
+            } else {
+                d["colour"] = Color(0.7f, 0.7f, 0.7f);
+            }
+            r.push_back(d);
+        }
+        out.push_back(r);
+    }
+    return out;
+}
+
 TypedArray<Color> YarnSession::get_colours() const {
     TypedArray<Color> out;
     for (const fl::Strand& s : work_.strands) out.push_back(Color((float)s.colour.x, (float)s.colour.y, (float)s.colour.z));
@@ -162,6 +185,9 @@ Dictionary YarnSession::get_state() const {
     }
     d["text"] = String(work_.patternText().c_str());
     d["progress"] = v3(work_.progress);
+    PackedInt32Array extra;
+    for (int e : work_.extraLoops()) extra.push_back(e);
+    d["extra"] = extra;
     d["strands"] = (int)work_.strands.size();
     d["pending_colour"] = work_.colourPending();
     const fl::Vec3 ac = work_.activeColour();
@@ -234,6 +260,8 @@ void YarnSession::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_param", "name", "value"), &YarnSession::set_param);
     ClassDB::bind_method(D_METHOD("set_colour", "colour", "when"), &YarnSession::set_colour);
     ClassDB::bind_method(D_METHOD("get_colours"), &YarnSession::get_colours);
+    ClassDB::bind_method(D_METHOD("toggle_extra", "loop"), &YarnSession::toggle_extra);
+    ClassDB::bind_method(D_METHOD("get_pattern_rows"), &YarnSession::get_pattern_rows);
     ClassDB::bind_method(D_METHOD("set_view", "expand", "thickness"), &YarnSession::set_view);
     ClassDB::bind_method(D_METHOD("grab", "origin", "dir"), &YarnSession::grab);
     ClassDB::bind_method(D_METHOD("drag_to", "point"), &YarnSession::drag_to);

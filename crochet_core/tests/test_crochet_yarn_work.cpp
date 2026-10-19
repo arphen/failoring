@@ -114,6 +114,62 @@ void testStitchKinds() {
            "the pattern text names them: '%s'", w.patternText().c_str());
 }
 
+// Colours: a colour change starts (or picks up) a yarn at the stitch's last pull-through; extra loops can be picked up in a pull-through (a seam).
+void testColoursAndSeams() {
+    std::printf("[colours and seams]\n");
+    YarnWork w;
+    w.slipKnot(Vec3{0, 0, 0});
+    for (int i = 0; i < 7; ++i) w.stitchChain();
+    w.stitchTurn(0);
+    const int redTop = w.stitchSc();   // the top loop of the first stitch, in the first colour
+    for (int i = 0; i < 2; ++i) w.stitchSc();
+    CHECKP(w.strands.size() == 1 && w.active == 0, "one yarn so far");
+    const Vec3 orange{0.95, 0.58, 0.18};
+    w.setNextColour(orange);
+    CHECKP(w.colourPending() && w.strands.size() == 1, "choosing a colour changes nothing until the next stitch");
+    const int seam = w.stitchSc();
+    CHECKP(w.strands.size() == 2 && w.active == 1 && !w.colourPending(), "the next stitch starts the new yarn");
+    CHECKP(w.loops[seam].strand == 1, "its top loop is the new colour (the usual way: the last pull-through changes the colour)");
+    const int post = w.loops[seam].through[0];
+    CHECKP(w.loops[post].strand == 0, "while its post, pulled up through the stitch below, is still the old colour");
+    CHECKP(w.strands[1].pts.size() > 10 && length(w.strands[1].pts.front() - w.strands[0].pts.back()) < 0.12, "the new yarn's tail is by the work, the dropped one's end stays at the seam");
+    w.stitchSc();
+    w.stitchTurn(1);
+    w.stitchSc();
+    // back to the first colour: it is picked up where it was dropped (no third yarn)
+    w.setNextColour(Vec3{0.80, 0.30, 0.22});
+    const int dropEnd = (int)w.strands[0].pts.size();
+    w.stitchSc();
+    CHECKP(w.strands.size() == 2 && w.active == 0 && (int)w.strands[0].pts.size() > dropEnd, "going back to the first colour picks that yarn up again, where it was dropped (%zu yarns)", w.strands.size());
+    // the whole stitch in the new colour
+    YarnWork v;
+    v.slipKnot(Vec3{0, 0, 0});
+    for (int i = 0; i < 4; ++i) v.stitchChain();
+    v.stitchTurn(0);
+    v.stitchSc();
+    v.setNextColour(orange, ColourAt::Stitch);
+    const int whole = v.stitchSc();
+    CHECKP(v.loops[whole].strand == 1 && v.loops[v.loops[whole].through[0]].strand == 1, "from the start of the stitch: its post is the new colour too");
+    // a seam variation: the last pull-through also picks up a loop of the other colour
+    w.toggleExtraLoop(redTop);
+    CHECKP(w.extraLoops().size() == 1 && w.extraLoops()[0] == redTop, "an extra loop is marked for the next stitch's last pull-through");
+    const int joined = w.stitchSc();
+    bool has = false;
+    for (int e : w.loops[joined].through) has = has || e == redTop;
+    int plus = 0, minus = 0;
+    for (const auto& t : threadingReport(w))
+        if (t[0] == joined && t[1] == redTop) { plus = t[2]; minus = t[3]; }
+    CHECKP(has && plus >= 1 && minus >= 1 && w.extraLoops().empty(), "the pull-through goes through it too (%d up, %d down) and the mark is cleared", plus, minus);
+    const auto rows = w.patternRows();
+    bool twoYarns = false;
+    for (const auto& r : rows) {
+        bool y0 = false, y1 = false;
+        for (const LogEntry& e : r) { y0 = y0 || e.strand == 0; y1 = y1 || e.strand == 1; }
+        twoYarns = twoYarns || (y0 && y1);
+    }
+    CHECKP(rows.size() >= 3 && twoYarns, "the pattern rows remember which yarn each stitch was made in (%zu rows)", rows.size());
+}
+
 void testOneLoop() {
     std::printf("[one loop]\n");
     auto make = [](Loops which, int& post, int& opening) {
@@ -211,6 +267,7 @@ int main() {
     testCursor();
     testThreading();
     testStitchKinds();
+    testColoursAndSeams();
     testOneLoop();
     testDeterminism();
     testSoftPull();

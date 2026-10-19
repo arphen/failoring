@@ -44,6 +44,13 @@ enum class Loops { Both, Front, Back };
 // the new colour's first loop) or from the start of the stitch (the whole stitch, post and top, is the new colour).
 enum class ColourAt { PullThrough, Stitch };
 
+// One entry of the pattern so far: a run of the same stitch in the same yarn.
+struct LogEntry {
+    std::string kind;   // "ch", "sc", "hdc", "dc", "sl st", "sc flo", ..., "sk", or "turn" (which starts a new row)
+    int count = 1;
+    int strand = -1;    // the yarn the stitches were made with (-1: none)
+};
+
 struct EyeFrame {
     Vec3 centre, normal;  // the normal follows the yarn's direction by the right hand rule
     Real radius = 0;      // of the circle of the ring's area
@@ -138,6 +145,11 @@ public:
     int rowStitches() const { return (int)made_.size(); }
     // The pattern so far as CrochetPARADE text, one line per row ("ch 8", "sc 7").
     std::string patternText() const;
+    // ... and as rows of runs (for drawing it): each row is a list of entries
+    std::vector<std::vector<LogEntry>> patternRows() const;
+    // Loops the last pull-through of the next stitch picks up as well as its own: the way a seam is joined. They are cleared once a stitch is made.
+    void toggleExtraLoop(int loop);
+    const std::vector<int>& extraLoops() const { return extra_; }
 
     // Rebuilds the rod system from the strands (every action does it; call it after changing `rodParams`).
     void materialize();
@@ -158,7 +170,8 @@ private:
     std::vector<int> target_;    // the openings of the row being worked into, in the order they will be worked
     std::vector<int> made_;      // the loops this row has made, in order (the stitches' top loops)
     int cursor_ = 0;
-    std::vector<std::pair<std::string, int>> log_;   // (kind, count) of the actions, a turn starts a new row
+    std::vector<LogEntry> log_;   // the actions, a turn starts a new row
+    std::vector<int> extra_;      // loops the next stitch's last pull-through picks up as well (the seam variations)
     Vec3 origin_{0, 0, 0};
     int chainCount_ = 0;
     int turnChains_ = 0;         // turning chains made at the start of this row
@@ -173,6 +186,7 @@ private:
     int loopAt(const Vec3& ringC, const Vec3& ringN, const std::vector<int>& eyesLoops, const Vec3* major = nullptr, Real semiA = -1, Real semiB = -1,
                const std::vector<int>* modes = nullptr, const Vec3* front = nullptr);
     int addLoop(int strand, int p0, int p1, bool live);
+    void pushLog(const std::string& kind, int strand);
     void appendPath(const std::vector<Vec3>& way);   // to the active strand
     int startYarn(const Vec3& colour);                // a new strand: a tail by the hook; returns its index
     void applyPendingColour(ColourAt now);

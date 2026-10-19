@@ -421,15 +421,21 @@ int YarnWork::tallStitch(const std::string& kind, int opening, Loops which) {
         // pull through two: the loop just pulled up and the yarn over; then through that and the loop that was on the hook
         const int m = loopAt(base + upDir * (wp.midDc * h) + z * (0.2 * wp.layerGap), lean, {b1, y1}, &along, wp.barA, wp.barB);
         applyPendingColour(ColourAt::PullThrough);
-        return loopAt(base + upDir * h + along * (0.5 * wp.stitchWidth) - z * (0.3 * wp.layerGap), lean, {m, hook[hook.size() - 2]}, &along, wp.barA, wp.barB);
+        std::vector<int> eyes{m, hook[hook.size() - 2]};
+        eyes.insert(eyes.end(), extra_.begin(), extra_.end());
+        return loopAt(base + upDir * h + along * (0.5 * wp.stitchWidth) - z * (0.3 * wp.layerGap), lean, eyes, &along, wp.barA, wp.barB);
     }
     if (kind == "hdc") {
         applyPendingColour(ColourAt::PullThrough);
         // the hook has [.., L, yarn over, pulled-up loop]
-        return loopAt(base + upDir * h + along * (0.5 * wp.stitchWidth) - z * (0.3 * wp.layerGap), lean, {b1, y1, hook[hook.size() - 3]}, &along, wp.barA, wp.barB);
+        std::vector<int> eyes{b1, y1, hook[hook.size() - 3]};
+        eyes.insert(eyes.end(), extra_.begin(), extra_.end());
+        return loopAt(base + upDir * h + along * (0.5 * wp.stitchWidth) - z * (0.3 * wp.layerGap), lean, eyes, &along, wp.barA, wp.barB);
     }
     applyPendingColour(ColourAt::PullThrough);
-    return loopAt(base + upDir * h + along * (0.5 * wp.stitchWidth) - z * (0.3 * wp.layerGap), lean, {b1, hook[hook.size() - 2]}, &along, wp.barA, wp.barB);
+    std::vector<int> eyes{b1, hook[hook.size() - 2]};
+    eyes.insert(eyes.end(), extra_.begin(), extra_.end());
+    return loopAt(base + upDir * h + along * (0.5 * wp.stitchWidth) - z * (0.3 * wp.layerGap), lean, eyes, &along, wp.barA, wp.barB);
 }
 
 int YarnWork::sc(int opening, Loops which) {
@@ -477,8 +483,7 @@ int YarnWork::stitchChain() {
     if (hook.empty()) return -1;
     const int id = chain();
     made_.push_back(id);
-    if (!log_.empty() && log_.back().first == "ch") ++log_.back().second;
-    else log_.push_back({"ch", 1});
+    pushLog("ch", loops[id].strand);
     return id;
 }
 
@@ -495,16 +500,15 @@ int YarnWork::stitch(const std::string& kind, int opening, Loops which) {
     made_.push_back(id);
     const std::string name = kind == "slst" ? "sl st" : kind;
     const std::string logged = which == Loops::Both ? name : name + (which == Loops::Front ? " flo" : " blo");
-    if (!log_.empty() && log_.back().first == logged) ++log_.back().second;
-    else log_.push_back({logged, 1});
+    pushLog(logged, loops[id].strand);
+    extra_.clear();
     return id;
 }
 
 bool YarnWork::stitchSkip() {
     if (nextOpening() < 0) return false;
     ++cursor_;
-    if (!log_.empty() && log_.back().first == "sk") ++log_.back().second;
-    else log_.push_back({"sk", 1});
+    pushLog("sk", -1);
     return true;
 }
 
@@ -515,14 +519,18 @@ void YarnWork::stitchTurn(int turningChain) {
     if (foundation && !target_.empty()) target_.erase(target_.begin());   // sc in the 2nd chain from the hook
     made_.clear();
     cursor_ = 0;
-    log_.push_back({"turn", 1});
+    log_.push_back({"turn", 1, -1});
     turn();   // the work is turned over before its turning chain is made: the chain goes the new way
     turnChains_ = 0;
     for (int i = 0; i < turningChain; ++i) {
-        chain();
-        if (!log_.empty() && log_.back().first == "ch") ++log_.back().second;
-        else log_.push_back({"ch", 1});
+        const int id = chain();
+        pushLog("ch", loops[id].strand);
     }
+}
+
+void YarnWork::pushLog(const std::string& kind, int strand) {
+    if (!log_.empty() && log_.back().kind == kind && log_.back().strand == strand) ++log_.back().count;
+    else log_.push_back({kind, 1, strand});
 }
 
 std::string YarnWork::patternText() const {
@@ -531,13 +539,41 @@ std::string YarnWork::patternText() const {
         if (!line.empty()) out += line + "\n";
         line.clear();
     };
-    for (const auto& a : log_) {
-        if (a.first == "turn") { flush(); continue; }
+    // runs of the same stitch in different yarns are one run in the text (the colours are in patternRows)
+    std::string lastKind;
+    int run = 0;
+    auto emit = [&]() {
+        if (run == 0) return;
         if (!line.empty()) line += ", ";
-        line += a.first + " " + std::to_string(a.second);
+        line += lastKind + " " + std::to_string(run);
+        run = 0;
+    };
+    for (const LogEntry& a : log_) {
+        if (a.kind == "turn") { emit(); flush(); continue; }
+        if (a.kind != lastKind) emit();
+        lastKind = a.kind;
+        run += a.count;
     }
+    emit();
     flush();
     return out;
+}
+
+std::vector<std::vector<LogEntry>> YarnWork::patternRows() const {
+    std::vector<std::vector<LogEntry>> rows(1);
+    for (const LogEntry& a : log_) {
+        if (a.kind == "turn") { rows.emplace_back(); continue; }
+        rows.back().push_back(a);
+    }
+    if (rows.back().empty() && rows.size() > 1) rows.pop_back();
+    return rows;
+}
+
+void YarnWork::toggleExtraLoop(int loop) {
+    if (loop < 0 || loop >= (int)loops.size()) return;
+    const auto it = std::find(extra_.begin(), extra_.end(), loop);
+    if (it != extra_.end()) extra_.erase(it);
+    else extra_.push_back(loop);
 }
 
 // ---------------------------------------------------------------------------------------------------------------- checks on the topology

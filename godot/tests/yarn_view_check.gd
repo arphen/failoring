@@ -168,6 +168,27 @@ func _ready() -> void:
 		seen[snappedf(col.r, 0.2)] = true
 	check("the mesh carries both colours", seen.size() >= 2)
 
+	# the overlay shows the stitch types in the yarn's colours, and Shift + click marks an extra loop for the next pull-through
+	yv.reset_piece()
+	for i in 4:
+		await yv.do_action("chain")
+	await yv.do_action("turn")
+	await yv.do_action("hdc")
+	yv.choose_colour(Color(0.95, 0.58, 0.18))
+	await yv.do_action("sc")
+	var ov: String = yv.overlay_text.text
+	check("the overlay draws chains as o, half doubles as T and single crochet as +, in colour", ov.contains("o ") and ov.contains("T ") and ov.contains("+ ") and ov.contains("[color=#f2"))
+	await get_tree().process_frame
+	yv.orbit.apply()
+	var l_extra: Array = yv.session.get_loops()
+	var ex_id := int(yv.session.get_state()["targets"][1])
+	yv._click_shift = true
+	yv._on_click(yv.orbit.cam.unproject_position(l_extra[ex_id]["centre"]))
+	yv._click_shift = false
+	check("Shift + click marks the loop as an extra one for the next last pull-through (and does not pick it as the opening)", (yv.session.get_state()["extra"] as PackedInt32Array).has(ex_id) and yv.picked == -1)
+	await yv.do_action("sc")
+	check("making the stitch clears the mark", (yv.session.get_state()["extra"] as PackedInt32Array).size() == 0)
+
 	# soft yarn: take hold of a strand, pull it, let go
 	yv.reset_piece()
 	for i in 5:

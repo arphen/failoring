@@ -39,6 +39,8 @@ var yarn_node: MeshInstance3D
 var yarn_mat: StandardMaterial3D
 var hook_node: Node3D
 var marker: MeshInstance3D
+var extra_markers: Array = []       # yellow rings on the loops picked up in the next last pull-through
+var _click_shift := false
 var status_label: Label
 var target_label: Label
 var overlay_panel: PanelContainer
@@ -545,28 +547,40 @@ func _refresh() -> void:
 	_refresh_overlay(st)
 	_update_marker()
 
-# The pattern so far, as symbols, semi transparent over the view. o = chain, x = single crochet; the stitch being worked into is marked.
+# The pattern so far, as symbols in the yarn's colour, semi transparent over the view. o chain, + single crochet, T half double, a dagger double,
+# a dot slip stitch, a dash a skipped stitch; an underline marks a stitch worked into one loop only.
+const SYMBOLS := {"ch": "o", "sc": "+", "hdc": "T", "dc": "†", "sl st": "•", "sk": "–"}
+
 func _refresh_overlay(st: Dictionary) -> void:
-	var lines: PackedStringArray = String(st["text"]).split("\n", false)
 	var out := "[b]Pattern[/b]\n"
-	var row := 0
-	for line in lines:
+	var rows: Array = session.get_pattern_rows()
+	var n := 0
+	for row in rows:
 		var syms := ""
-		for part in line.split(", ", false):
-			var bits := part.split(" ")
-			var n := int(bits[1]) if bits.size() > 1 else 1
-			for i in n:
-				syms += "o " if bits[0] == "ch" else "x "
-		out += "[color=#bbbbbb]row %d[/color]  %s\n" % [row, syms]
-		row += 1
-	if lines.size() == 0:
+		for e in row:
+			var kind := String(e["kind"])
+			var one := kind.ends_with(" flo") or kind.ends_with(" blo")
+			var base := kind.substr(0, kind.length() - 4) if one else kind
+			var sym := String(SYMBOLS.get(base, "?"))
+			var col: Color = e["colour"]
+			var piece := ""
+			for i in int(e["count"]):
+				piece += ("[u]%s[/u] " % sym) if one else (sym + " ")
+			syms += "[color=#%s]%s[/color]" % [col.to_html(false), piece]
+		out += "[color=#bbbbbb]row %d[/color]  %s\n" % [n, syms]
+		n += 1
+	if rows.size() == 0 or (rows.size() == 1 and (rows[0] as Array).size() == 0):
 		out += "[color=#bbbbbb](a slip knot)[/color]\n"
 	overlay_text.text = out
 	var next_id := int(st.get("next", -1))
 	var target := picked if picked >= 0 else next_id
+	var extra: PackedInt32Array = st.get("extra", PackedInt32Array())
 	target_label.text = ("Next stitch: into loop %d%s" % [target, " (picked)" if picked >= 0 else ""]) if target >= 0 else ""
+	if extra.size() > 0:
+		target_label.text += "   last pull-through also takes %d loop%s (Shift+click toggles)" % [extra.size(), "" if extra.size() == 1 else "s"]
 
 func _update_marker() -> void:
+	_update_extra_markers()
 	var st: Dictionary = session.get_state()
 	var id := picked if picked >= 0 else int(st.get("next", -1))
 	if id < 0:
@@ -589,6 +603,33 @@ func _update_marker() -> void:
 	elif n.y < 0:
 		basis = Basis(Vector3(1, 0, 0), PI)
 	marker.basis = basis
+
+func _update_extra_markers() -> void:
+	var extra: PackedInt32Array = session.get_state().get("extra", PackedInt32Array())
+	var loops: Array = session.get_loops()
+	while extra_markers.size() < extra.size():
+		var m := MeshInstance3D.new()
+		m.mesh = marker.mesh
+		var mt := StandardMaterial3D.new()
+		mt.albedo_color = Color(1.0, 0.85, 0.2, 0.8)
+		mt.emission_enabled = true
+		mt.emission = Color(0.9, 0.7, 0.1)
+		mt.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mt.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		m.material_override = mt
+		work_root.add_child(m)
+		extra_markers.append(m)
+	for i in extra_markers.size():
+		var m: MeshInstance3D = extra_markers[i]
+		if i < extra.size() and int(extra[i]) < loops.size():
+			var l: Dictionary = loops[int(extra[i])]
+			m.visible = true
+			m.position = l["centre"]
+			var n: Vector3 = l["normal"]
+			var axis := Vector3.UP.cross(n)
+			m.basis = Basis(axis.normalized(), Vector3.UP.angle_to(n)) if axis.length() > 1.0e-6 else Basis()
+		else:
+			m.visible = false
 
 func _live_centre() -> Vector3:
 	var st: Dictionary = session.get_state()
@@ -641,6 +682,8 @@ func _frame_work(snap: bool) -> void:
 # ------------------------------------------------------------------------------------------------ input and frames
 
 func _on_view_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+		_click_shift = (event as InputEventMouseButton).shift_pressed
 	# Ctrl (or Cmd) + left drag takes hold of the yarn under the pointer and pulls it; letting go, the work springs back
 	if event is InputEventMouseButton and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
 		var mb := event as InputEventMouseButton
@@ -704,7 +747,10 @@ func _on_click(pos: Vector2) -> void:
 			best_d = d
 			best = int(l["id"])
 	if best >= 0:
-		picked = -1 if best == picked else best
+		if _click_shift:   # Shift + click: this loop is picked up in the last pull-through of the next stitch as well (a seam variation)
+			session.toggle_extra(best)
+		else:
+			picked = -1 if best == picked else best
 		_refresh()
 
 func _process(delta: float) -> void:
