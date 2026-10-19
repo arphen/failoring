@@ -88,8 +88,13 @@ int main(int argc, char** argv) {
     sim.params.segment = segMm * 1e-3;
     sim.params.massScale = massScale;
     sim.params.damping = damp;
+    if (std::getenv("SIM_REEL")) std::sscanf(std::getenv("SIM_REEL"), "%lf,%lf", &sim.reelSlack, &sim.reelForce);
+    if (std::getenv("SIM_SUB")) sim.params.substeps = std::atoi(std::getenv("SIM_SUB"));
+    if (std::getenv("SIM_IT")) sim.params.iterations = std::atoi(std::getenv("SIM_IT"));
     if (std::getenv("SIM_MU")) sim.params.friction = std::atof(std::getenv("SIM_MU"));
-    sim.build(slipKnotLayout(sim.params.radius));
+    const bool rig = std::getenv("SIM_RIG") != nullptr;
+    if (rig) buildLoopRig(sim, Vec3{-0.02, 0, 0.02});
+    else sim.build(slipKnotLayout(sim.params.radius));
     std::printf("%d particles\n", sim.rs.particleCount());
     int shot = 0;
     Real worstGap = 1e9, worstStrain = 0, worstPen = 0;
@@ -97,7 +102,7 @@ int main(int argc, char** argv) {
     auto snap = [&](const char* tag) {
         const YarnMesh m = sceneMesh(sim);
         YarnCamera cam;
-        cam.target = Vec3{0, -0.002, 0.004};
+        cam.target = std::getenv("SIM_FOLLOW") ? sim.hook.tip + sim.hook.axis() * 0.012 - Vec3{0, 0.012, 0} : Vec3{0, -0.002, 0.004};
         cam.fovDeg = 30;
         cam.distance = 0.12;
         cam.dir = Vec3{0, 0, 1};
@@ -115,8 +120,15 @@ int main(int argc, char** argv) {
         renderYarnPng(name, m, cam, 640, 640);
         ++shot;
     };
+    std::string lastPhase;
     sim.onFrame = [&] {
+        if (std::getenv("SIM_PHASESHOT") && sim.phase != lastPhase && sim.frame > std::atoi(std::getenv("SIM_PHASESHOT"))) {
+            snap("phase");
+            std::printf("  phase shot %d at frame %d: %s\n", shot - 1, sim.frame, sim.phase.c_str());
+        }
+        lastPhase = sim.phase;
         const Real g = sim.minGap(), e = sim.maxStrain(), p = sim.hookPenetration();
+        if (g < worstGap && g < 1.9e-3) std::printf("  closer gap %.2f mm at frame %d (%s)\n", g * 1e3, sim.frame, sim.phase.c_str());
         worstGap = std::min(worstGap, g);
         if (e > worstStrain) {
             worstStrain = e;
@@ -213,7 +225,7 @@ int main(int argc, char** argv) {
     };
     snap("start");
     if (std::getenv("SIM_DEBUG")) for (int i = 136; i <= 150; ++i) std::printf("  p%d (%.1f %.1f %.1f) w %.3g\n", i, sim.rs.x[i].x * 1e3, sim.rs.x[i].y * 1e3, sim.rs.x[i].z * 1e3, sim.rs.w[i]);
-    makeSlipKnot(sim);
+    if (!rig) makeSlipKnot(sim);
     auto loopSize = [&] {
         const Vec3 ax = sim.hook.axis();
         Real mx = 0;
@@ -226,7 +238,14 @@ int main(int argc, char** argv) {
         }
         return mx;
     };
-    std::printf("loop reaches %.1f mm from the axis\n", loopSize() * 1e3);
+    if (std::getenv("SIM_LOOPDBG")) {
+        for (int i = 0; i < sim.rs.particleCount(); ++i) {
+            const Vec3 l = rotate(conj(sim.hook.q), sim.rs.x[i] - sim.hook.tip);
+            const Real rr = std::hypot(l.x, l.y);
+            if (rr < 0.01 && l.z > -0.005 && l.z < 0.06) std::printf("  p%d z %.1f r %.1f ang %.0f\n", i, l.z * 1e3, rr * 1e3, std::atan2(l.y, l.x) * 180 / kPi);
+        }
+    }
+    std::printf("loop reaches %.1f mm from the axis; the yarn closes %d degrees round the shaft when pulled\n", loopSize() * 1e3, carriedRound(sim));
     if (std::getenv("SIM_SNUG")) {
         const bool tail = std::string(std::getenv("SIM_SNUG")) == "tail";
         const Vec3 t0 = sim.tail.target;
@@ -239,8 +258,61 @@ int main(int argc, char** argv) {
         sim.settle(30);
         std::printf("after pulling the %s: loop reaches %.1f mm\n", tail ? "tail" : "working yarn", loopSize() * 1e3);
     }
+    if (std::getenv("SIM_PULLTEST")) {
+        // the pull-through tried from one start: SIM_PULLTEST="NAME=v1,v2;NAME2=..." sweeps environment knobs of finishChain
+        for (int k = 0; k < (std::getenv("SIM_PRECHAINS") ? std::atoi(std::getenv("SIM_PRECHAINS")) : 0); ++k) makeChain(sim);
+        sim.onFrame = nullptr;
+        std::vector<std::pair<std::string, std::vector<std::string>>> axes;
+        std::string spec = std::getenv("SIM_PULLTEST");
+        size_t pos = 0;
+        while (pos < spec.size()) {
+            size_t e = spec.find(';', pos);
+            if (e == std::string::npos) e = spec.size();
+            const std::string part = spec.substr(pos, e - pos);
+            const size_t eq = part.find('=');
+            if (eq != std::string::npos) {
+                std::vector<std::string> vals;
+                size_t q = eq + 1;
+                while (q <= part.size()) {
+                    size_t c2 = part.find(',', q);
+                    if (c2 == std::string::npos) c2 = part.size();
+                    vals.push_back(part.substr(q, c2 - q));
+                    q = c2 + 1;
+                }
+                axes.push_back({part.substr(0, eq), vals});
+            }
+            pos = e + 1;
+        }
+        std::vector<int> idx(axes.size(), 0);
+        while (true) {
+            std::string label;
+            for (size_t k = 0; k < axes.size(); ++k) {
+                setenv(axes[k].first.c_str(), axes[k].second[idx[k]].c_str(), 1);
+                label += axes[k].first + "=" + axes[k].second[idx[k]] + " ";
+            }
+            YarnSim t = sim;
+            const ChainStart c0 = prepareChain(t);
+            finishChain(t, c0);
+            const ChainResult r = judgeChain(t, c0);
+            std::printf("%s-> carried %.0f, old on %d, yarn %.1f mm (was %.1f)%s\n", label.c_str(), r.link, r.oldOn, r.length * 1e3, c0.length * 1e3, r.made ? "  MADE" : "");
+            std::fflush(stdout);
+            size_t k = 0;
+            for (; k < axes.size(); ++k) {
+                if (++idx[k] < (int)axes[k].second.size()) break;
+                idx[k] = 0;
+            }
+            if (k == axes.size()) break;
+        }
+        return 0;
+    }
     for (int c = 0; c < chains; ++c) {
-        makeChain(sim);
+        const ChainStart cs = prepareChain(sim);
+        if (cs.ok) finishChain(sim, cs);
+        const ChainResult r = judgeChain(sim, cs);
+        std::printf("chain %d: carried %.0f, old on %d, loop %d..%d (old %d..%d), yarn %.1f mm (was %.1f)%s, tip at (%.0f %.0f %.0f) mm\n", c + 1, r.link, r.oldOn, r.loopFrom, r.loopTo, cs.oldLoop.empty() ? -1 : cs.oldLoop.front(), cs.oldLoop.empty() ? -1 : cs.oldLoop.back(), r.length * 1e3, cs.length * 1e3,
+                    r.made ? "  MADE" : "", sim.hook.tip.x * 1e3, sim.hook.tip.y * 1e3, sim.hook.tip.z * 1e3);
+        if (std::getenv("SIM_CHAINSHOT")) { char tag[16]; std::snprintf(tag, sizeof tag, "ch%d", c + 1); snap(tag); }
+        continue;
         std::printf("chain %d: loops on hook %d (up) %d (front)\n", c + 1, sim.loopsOnHook(Vec3{0, 1, 0}), sim.loopsOnHook(Vec3{0, 0, 1}));
     }
     snap("end");

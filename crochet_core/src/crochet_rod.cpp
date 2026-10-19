@@ -839,6 +839,35 @@ void RodSystem::solveStatics(const std::vector<StaticCapsule>& cur, const std::v
     }
 }
 
+// Every ring: the closest point of the yarn near its segment is moved onto the ring's point (the yarn runs through it).
+void RodSystem::solveRings(Real frac) {
+    const int S = segmentCount();
+    for (SlideRing& r : rings) {
+        if (!r.started_) { r.from_ = r.at; r.started_ = true; }
+        const Vec3 at = r.from_ + (r.at - r.from_) * frac;
+        int best = -1;
+        Real bd = 1e300, bs = 0;
+        for (int k = -4; k <= 4; ++k) {
+            const int sg = r.seg + k;
+            if (sg < 0 || sg >= S || segChain[sg] != segChain[std::clamp(r.seg, 0, S - 1)]) continue;
+            const Vec3 a = x[segA[sg]], b = x[segB[sg]], ab = b - a;
+            const Real t = std::clamp(dot(at - a, ab) / std::max(1e-18, dot(ab, ab)), 0.0, 1.0);
+            const Real d = length2(a + ab * t - at);
+            if (d < bd) { bd = d; best = sg; bs = t; }
+        }
+        if (best < 0) continue;
+        r.seg = best;
+        const int ia = segA[best], ib = segB[best];
+        const Vec3 c = x[ia] + (x[ib] - x[ia]) * bs;
+        const Vec3 d = at - c;
+        const Real wa = (1 - bs) * w[ia], wb = bs * w[ib];
+        const Real den = (1 - bs) * wa + bs * wb;
+        if (den <= 0) continue;
+        x[ia] += d * (wa / den);
+        x[ib] += d * (wb / den);
+    }
+}
+
 // The shape memory: a soft spring of stiffness shapeStiffness pulls every free particle back to its anchor (XPBD, one constraint per particle).
 void RodSystem::solveAnchors(Real h2inv) {
     const Real alpha = h2inv / params.shapeStiffness;
@@ -936,12 +965,14 @@ void RodSystem::step(Real dt) {
             if (params.contact) solveContacts(h);
             if (params.floorOn) solveFloor(h);
             if (!statics.empty()) solveStatics(staticsNow, staticsBefore);
+            if (!rings.empty()) solveRings(frac);
         }
         // 3. velocities
         for (int i = 0; i < n; ++i) v[i] = w[i] > 0 ? (x[i] - xPrev[i]) / h : Vec3{};
         for (int s = 0; s < S; ++s) omega[s] = wq[s] > 0 ? rotationVector(q[s] * conj(qPrev[s])) / h : Vec3{};
     }
     staticsPrev_ = statics;
+    for (SlideRing& r : rings) r.from_ = r.at;
 }
 
 int RodSystem::relax(Real dt, Real tol, int maxSteps) {

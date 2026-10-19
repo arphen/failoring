@@ -72,6 +72,15 @@ struct StaticCapsule {
     Real squash = 1.0;   // the yarn's radius against this capsule, as a fraction of its own (wool squashes in a hook's throat)
 };
 
+// A ring the yarn runs through: the yarn passes through `at` (it may slide along itself through it, but not leave it). `seg` is the segment
+// last found there (the search looks a few segments either side). Moved between steps, it moves smoothly over the substeps.
+struct SlideRing {
+    Vec3 at{};
+    int seg = 0;
+    Vec3 from_{};
+    bool started_ = false;
+};
+
 struct RodChain {
     int firstParticle = 0, particles = 0, firstSegment = 0, segments = 0, firstJoint = 0, joints = 0;
     bool closed = false;
@@ -105,6 +114,7 @@ public:
     std::vector<Vec3> restDarboux;     // rotation vector of the relative rotation at rest, in the first segment's frame (rad)
     std::vector<RodChain> chains;
     std::vector<StaticCapsule> statics;
+    std::vector<SlideRing> rings;
 
     // Adds a chain through `pts` (>= 2 points; >= 3 when closed). The frames are parallel transported along it. `restFromShape`: the
     // bend of the given shape is the rest bend (a ring that stays a ring); otherwise the rest is straight. Returns the chain index.
@@ -178,6 +188,7 @@ private:
     void solveContacts(Real h);
     void solveFloor(Real h);
     void solveStatics(const std::vector<StaticCapsule>& cur, const std::vector<StaticCapsule>& before);
+    void solveRings(Real frac);
     std::vector<StaticCapsule> staticsPrev_;   // where the statics were at the end of the last step
     void solveAnchors(Real h2inv);
     bool skipPair(int a, int b) const;

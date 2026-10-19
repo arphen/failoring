@@ -42,6 +42,7 @@ struct YarnSimParams {
                                // round the hook fast enough to run through its throat: the hook cuts it instead
     Real friction = 0.35;      // yarn on yarn
     Real hookFriction = 0.25;  // wool on an aluminium hook
+    int substeps = 12, iterations = 4;   // fewer and strands squeezed between the hook and other yarn pass through it
 };
 
 class YarnSim {
@@ -70,6 +71,24 @@ public:
         Vec3 at{};
     };
     std::vector<Grip> grips;
+    // The throat's grip: wool squashes round the barb and does not drop out of the throat while the hook draws it, though it slides through
+    // freely. While `catchK` > 0 the yarn within `catchReach` of the middle of the throat is pulled toward it, square to its own direction (N/m).
+    Real catchK = 0.0, catchReach = 3.5e-3;
+    int catchFrom = 0;   // only yarn from this particle on (the yarn just laid over the hook, not the loop it is drawn through)
+    // The left index finger: when `fingerOn`, the working yarn runs from the work over a finger (a capsule across the yarn at `hand`, radius
+    // `fingerR`) and on to the spool, `spoolOff` from the finger: the yarn near the work is always taut over the finger, slack stays away from the
+    // hook. Moving `hand` moves the finger and the spool together.
+    bool fingerOn = false;
+    Vec3 hand{};
+    Vec3 fingerAxis{1, 0, 0};
+    Real fingerR = 6e-3, fingerLen = 0.03;
+    Vec3 spoolOff{0, -0.02, -0.02};
+    Real spoolRadial = 0.02;   // > 0: the spool is this far from the finger straight away from the hook's axis (spoolOff is not used)
+    void putFinger(int particle, const Vec3& side);   // a finger under the yarn at `particle`, on its `side` (the yarn then runs over it)
+    // The throat holds the yarn in it (a ring at the middle of the throat that the yarn runs through) while `throatRing` is set
+    void setThroatRing(bool on, int fromParticle = 0);
+    bool throatRingOn() const { return throatRing_ >= 0; }
+    bool fingerEyelet = true;   // the finger is an eyelet the yarn slides through (true) or a capsule it lies over (false)
     // Fingers and other fixed things the yarn runs past (it slides along them): capsules added to the hook's.
     std::vector<StaticCapsule> fixtures;
     int grab(const Vec3& at, Real radius);   // returns the grip's index
@@ -96,12 +115,23 @@ public:
     // How many times the yarn goes round the hook's shaft: the signed count of its crossings of the half plane that runs from the hook's axis out
     // along `out` (squared to the axis). 1 (or -1) with a loop on the hook, 0 without. `out` must point where the yarn's ends do not go.
     int loopsOnHook(const Vec3& out) const;
+    // The linking number of the yarn with the hook's axis, both closed far away: 1 (or -1) with one loop on the hook.
+    Real hookLinking() const;
     std::vector<Vec3> yarn() const { return rs.x; }
 
 private:
     void controlEnd(End& e);
+public:
+    Vec3 throatPoint() const;   // the middle of the throat, where a caught yarn lies
+private:
     void feedHand(End& e);
     int pulled_ = -1;   // the particle the hand pulls on
+    std::vector<int> caught_;   // the particles the throat's grip pulls on
+    std::vector<int> reeled_;   // the particles the hand draws in
+    int throatRing_ = -1, fingerRing_ = -1;   // their indices in rs.rings
+public:
+    Real reelSlack = 0.6, reelForce = 0.0;   // the hand takes in yarn lying within reelSlack of its length from it, drawing it with reelForce x tension (off)
+private:
 };
 
 // The slip knot, made the way a crocheter makes it: the yarn laid in a ring with the working yarn behind it, the hook in through the ring, catching
@@ -110,6 +140,36 @@ void makeSlipKnot(YarnSim& sim);
 // One chain stitch, from a loop on the hook (the hook lying tip to the left): the left hand holds the work just below the hook and carries the
 // working yarn over its index finger; the hook picks the yarn up (yarn over), turns its throat down and draws it back through the loop on the hook.
 void makeChain(YarnSim& sim);
+// The chain in two halves (so the pull-through can be tried from the same start): up to the yarn over, then the pull through and the new loop seated.
+struct ChainStart {
+    bool ok = false;
+    int hold = -1;
+    Vec3 tip0{};
+    Real along = 0;
+    std::vector<int> oldLoop;   // the particles of the loop that was on the hook
+    Real length = 0;            // the yarn between the tail and the hand (m) when the stitch began
+};
+ChainStart prepareChain(YarnSim& sim);
+void finishChain(YarnSim& sim, const ChainStart& c);
+// Was a chain made: a loop is round the hook (in a copy, with the work held and the working yarn pulled firmly, the yarn closes round the shaft),
+// the old loop is off it, and more yarn has been drawn from the hand into the work than before the stitch (a stitch that unravelled gives it back).
+struct ChainResult {
+    Real link = 0;   // degrees of the shaft the yarn closes round when the working yarn is pulled firmly (a loop on the hook: ~360)
+    int loops = 0;   // loopsOnHook seen from above: exactly one loop
+    int oldOn = 0;   // particles of the old loop still round the hook
+    int loopFrom = -1, loopTo = -1;   // the loop on the hook (see hookLoop)
+    Real length = 0;
+    bool made = false;
+};
+ChainResult judgeChain(const YarnSim& sim, const ChainStart& c);
+int carriedRound(const YarnSim& sim);   // 360 with a loop on the hook, else 0
+// The loop on the hook: the shortest stretch of yarn, from particle `from` to `to` where the yarn touches itself, that the hook's axis passes through
+// (linking number 1 with the axis closed far away). False when there is none.
+bool hookLoop(const YarnSim& sim, int* from, int* to);
+
+// A test rig for stitches: the hook lying tip to the left at `tip`, a loop snug on its shaft, its front leg running down to the work (the tail end,
+// held), its back leg up behind to the index finger and over it to the spool. Builds `sim` (finger on, hook posed).
+void buildLoopRig(YarnSim& sim, const Vec3& tip);
 
 // The yarn laid out for the slip knot (tail first): exposed so a caller can set the simulation up and drive its own frames.
 std::vector<Vec3> slipKnotLayout(Real radius);
