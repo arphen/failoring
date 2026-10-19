@@ -89,6 +89,7 @@ public:
     void setThroatRing(bool on, int fromParticle = 0);
     bool throatRingOn() const { return throatRing_ >= 0; }
     bool fingerEyelet = true;
+    Real throatX = 0.05;   // where the throat holds a caught yarn, out from the axis toward the throat's mouth (shaft radii)
     Real throatStiffness = 0.5;   // the throat's hold is soft (contact can push back on it), the finger's is firm
     bool homeSet = false;   // where the hook works from, stitch after stitch (set by the first chain)
     Vec3 home{};   // the finger is an eyelet the yarn slides through (true) or a capsule it lies over (false)
@@ -110,6 +111,7 @@ public:
     void relaxStraight(Real f, int fromJoint = 0);   // the curl the yarn was laid with, times f (it lets go of it), from a joint on
     std::function<void()> onFrame;   // called after every frame (a recorder, a renderer)
     std::string phase;               // what the hands are doing now, in words (a script sets it)
+    std::string stageLog;            // stitch procedures append "stage:loops on the hook" as they go (a diagnostic)
 
     // measures
     Real maxStrain() const;

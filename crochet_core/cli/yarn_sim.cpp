@@ -89,6 +89,7 @@ int main(int argc, char** argv) {
     sim.params.massScale = massScale;
     sim.params.damping = damp;
     if (std::getenv("SIM_REEL")) std::sscanf(std::getenv("SIM_REEL"), "%lf,%lf", &sim.reelSlack, &sim.reelForce);
+    if (std::getenv("SIM_TX")) sim.throatX = std::atof(std::getenv("SIM_TX"));
     if (std::getenv("SIM_THK")) sim.throatStiffness = std::atof(std::getenv("SIM_THK"));
     if (std::getenv("SIM_SUB")) sim.params.substeps = std::atoi(std::getenv("SIM_SUB"));
     if (std::getenv("SIM_IT")) sim.params.iterations = std::atoi(std::getenv("SIM_IT"));
@@ -298,10 +299,11 @@ int main(int argc, char** argv) {
                 label += axes[k].first + "=" + axes[k].second[idx[k]] + " ";
             }
             YarnSim t = sim;
+            t.stageLog.clear();
             const ChainStart c0 = prepareChain(t);
             finishChain(t, c0);
             const ChainResult r = judgeChain(t, c0);
-            std::printf("%s-> %d loops, from yarn %d, winds %.2f%s\n", label.c_str(), r.loops, r.loopFrom, r.newWind, r.made ? "  MADE" : "");
+            std::printf("%s-> %d loops%s   [%s]\n", label.c_str(), r.loops, r.made ? "  MADE" : "", t.stageLog.c_str());
             std::fflush(stdout);
             size_t k = 0;
             for (; k < axes.size(); ++k) {
