@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "failoring/crochet/rod.hpp"
+#include "failoring/crochet/yarn_render.hpp"
 
 namespace fl {
 
@@ -27,7 +28,15 @@ struct HookShape {
     Real R = 2.5e-3;        // shaft radius (a 5 mm hook)
     Real length = 0.075;    // tip to the end of what is simulated of the shaft
     Real squash = 0.6;      // the yarn's radius against the hook, as a fraction of its own: wool squashes into the throat
+    bool sdf = false;       // the hook as a smooth body (a round-ended shaft, a channel cut for the throat, a lip over it) instead of capsules
+    // the throat (shaft radii): a round channel along the hook on the throat side whose floor is at the axis, from grooveA to grooveB behind the
+    // tip; the lip reaches back over its front part to lipEnd, its underside lipGap above the floor
+    Real grooveA = 1.7, grooveB = 4.4, lipEnd = 2.5, lipGap = 0.55;
 };
+// The hook's signed distance (m) at a point of its own frame (z from the tip toward the handle, the throat opening toward +x), and its gradient.
+Real hookSdf(const Vec3& p, const HookShape& s, Vec3* grad);
+// The hook as a mesh (for drawing): the head marched from hookSdf at `cell` m, the shaft a tube; in world space.
+YarnMesh hookMesh(const HookPose& p, const HookShape& s, Real cell = 0.15e-3);
 // The hook as capsules (head, barb, neck, taper, shaft) in world space.
 std::vector<StaticCapsule> hookCapsules(const HookPose& p, const HookShape& s);
 

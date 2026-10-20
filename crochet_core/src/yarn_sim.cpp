@@ -89,6 +89,126 @@ HookPose lerpPose(const HookPose& a, const HookPose& b, Real t) {
     return p;
 }
 
+namespace {
+Real segDist(const Vec3& p, const Vec3& a, const Vec3& b) {
+    const Vec3 ab = b - a;
+    const Real t = std::clamp(dot(p - a, ab) / std::max(1e-18, dot(ab, ab)), 0.0, 1.0);
+    return length(p - (a + ab * t));
+}
+Real smin(Real a, Real b, Real k) {
+    const Real h = std::clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
+    return b + (a - b) * h - k * h * (1 - h);
+}
+Real smax(Real a, Real b, Real k) { return -smin(-a, -b, k); }
+Real hookSdfRaw(const Vec3& p, const HookShape& s) {
+    const Real R = s.R;
+    const Real body = segDist(p, Vec3{0, 0, R}, Vec3{0, 0, s.length}) - R;   // round-ended shaft
+    // the throat: a notch across the whole width on the throat side (+x) down to the axis, from grooveA to grooveB behind the tip. Its front face
+    // leans back over the notch (the head overhangs it: the barb), its back face is a ramp up to the shaft.
+    const Real lean = s.lipEnd - s.grooveA;   // how far the head overhangs at the shaft's surface (shaft radii)
+    const Real fa = std::sqrt(1 + lean * lean), ba = std::sqrt(2.0);
+    const Real dFloor = -p.x;                                                   // above the floor (x > 0)
+    const Real dFront = ((s.grooveA * R + lean * p.x) - p.z) / fa;              // behind the leaning front face
+    const Real dBack = (p.z - (s.grooveB * R - p.x)) / ba;                      // before the ramp
+    const Real notch = std::max(dFloor, std::max(dFront, dBack));
+    return smax(body, -notch, 0.20 * R);   // edges rounded (a sharp barb would cut the yarn)
+}
+}  // namespace
+
+Real hookSdf(const Vec3& p, const HookShape& s, Vec3* grad) {
+    const Real d = hookSdfRaw(p, s);
+    if (grad) {
+        const Real h = 2e-5;
+        Vec3 g{hookSdfRaw(p + Vec3{h, 0, 0}, s) - hookSdfRaw(p - Vec3{h, 0, 0}, s), hookSdfRaw(p + Vec3{0, h, 0}, s) - hookSdfRaw(p - Vec3{0, h, 0}, s),
+               hookSdfRaw(p + Vec3{0, 0, h}, s) - hookSdfRaw(p - Vec3{0, 0, h}, s)};
+        const Real gl = length(g);
+        *grad = gl > 1e-12 ? g / gl : Vec3{1, 0, 0};
+    }
+    return d;
+}
+
+YarnMesh hookMesh(const HookPose& pose, const HookShape& s, Real cell) {
+    YarnMesh m;
+    const Vec3 col{0.74, 0.76, 0.80};
+    const Real R = s.R;
+    const Real z1 = (s.grooveB + 2.0) * R;   // marched up to here, a tube after
+    const int nx = (int)std::ceil(2.6 * R / cell), nz = (int)std::ceil((z1 + 1.3 * R) / cell);
+    const Real x0 = -1.3 * R, y0 = -1.3 * R, zs = -1.3 * R;
+    auto P = [&](int i, int j, int k) { return Vec3{x0 + i * cell, y0 + j * cell, zs + k * cell}; };
+    std::vector<Real> F((size_t)(nx + 1) * (nx + 1) * (nz + 1));
+    auto idx = [&](int i, int j, int k) { return ((size_t)k * (nx + 1) + j) * (nx + 1) + i; };
+    for (int k = 0; k <= nz; ++k)
+        for (int j = 0; j <= nx; ++j)
+            for (int i = 0; i <= nx; ++i) {
+                Vec3 q = P(i, j, k);
+                Real d = hookSdf(q, s, nullptr);
+                if (q.z > z1) d = std::max(d, z1 - q.z);   // closed where the tube takes over (hidden inside it)
+                F[idx(i, j, k)] = d;
+            }
+    // marching tetrahedra: each cube into 6 tetrahedra
+    static const int tets[6][4] = {{0, 5, 1, 6}, {0, 1, 2, 6}, {0, 2, 3, 6}, {0, 3, 7, 6}, {0, 7, 4, 6}, {0, 4, 5, 6}};
+    static const int cornerOff[8][3] = {{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}, {0, 0, 1}, {1, 0, 1}, {1, 1, 1}, {0, 1, 1}};
+    auto emit = [&](const Vec3& a, const Vec3& b, const Vec3& c) {
+        const int base = (int)m.pos.size();
+        for (const Vec3& v : {a, b, c}) {
+            Vec3 g;
+            hookSdf(v, s, &g);
+            m.pos.push_back(pose.tip + rotate(pose.q, v));
+            m.nrm.push_back(rotate(pose.q, g));
+            m.col.push_back(col);
+        }
+        // wind so the face normal agrees with the gradient (outward)
+        const Vec3 fn = cross(b - a, c - a);
+        Vec3 g;
+        hookSdf((a + b + c) / 3.0, s, &g);
+        if (dot(fn, g) >= 0) m.tri.push_back({base, base + 1, base + 2});
+        else m.tri.push_back({base, base + 2, base + 1});
+    };
+    for (int k = 0; k < nz; ++k)
+        for (int j = 0; j < nx; ++j)
+            for (int i = 0; i < nx; ++i) {
+                Vec3 cp[8];
+                Real cv[8];
+                bool any = false, anyIn = false, anyOut = false;
+                for (int c = 0; c < 8; ++c) {
+                    const int ii = i + cornerOff[c][0], jj = j + cornerOff[c][1], kk = k + cornerOff[c][2];
+                    cp[c] = P(ii, jj, kk);
+                    cv[c] = F[idx(ii, jj, kk)];
+                    if (cv[c] < 0) anyIn = true; else anyOut = true;
+                }
+                any = anyIn && anyOut;
+                if (!any) continue;
+                for (const auto& t : tets) {
+                    std::vector<Vec3> pts;
+                    int in[4], nIn = 0, out[4], nOut = 0;
+                    for (int v = 0; v < 4; ++v) (cv[t[v]] < 0 ? in[nIn++] : out[nOut++]) = t[v];
+                    if (nIn == 0 || nOut == 0) continue;
+                    auto cut = [&](int a, int b) { const Real u = cv[a] / (cv[a] - cv[b]); return cp[a] + (cp[b] - cp[a]) * u; };
+                    if (nIn == 1) emit(cut(in[0], out[0]), cut(in[0], out[1]), cut(in[0], out[2]));
+                    else if (nIn == 3) emit(cut(out[0], in[0]), cut(out[0], in[1]), cut(out[0], in[2]));
+                    else {
+                        const Vec3 a = cut(in[0], out[0]), b = cut(in[0], out[1]), c2 = cut(in[1], out[0]), d = cut(in[1], out[1]);
+                        emit(a, b, d);
+                        emit(a, d, c2);
+                    }
+                }
+            }
+    // the shaft beyond: a tube
+    YarnMeshOptions o;
+    o.plyContrast = 0.0;
+    o.sides = 24;
+    o.subdiv = 1;
+    std::vector<Vec3> sp;
+    for (int k = 0; k <= 6; ++k) sp.push_back(pose.tip + rotate(pose.q, Vec3{0, 0, (z1 - 0.5 * cell) + (s.length - z1) * k / 6.0}));
+    const YarnMesh tube = buildTubeMesh(sp, R, col, o);
+    const int off = (int)m.pos.size();
+    m.pos.insert(m.pos.end(), tube.pos.begin(), tube.pos.end());
+    m.nrm.insert(m.nrm.end(), tube.nrm.begin(), tube.nrm.end());
+    m.col.insert(m.col.end(), tube.col.begin(), tube.col.end());
+    for (const auto& t : tube.tri) m.tri.push_back({t[0] + off, t[1] + off, t[2] + off});
+    return m;
+}
+
 // The head of a hook, in its own frame (z from the tip toward the handle, the throat opening toward +x): a rounded head that leans out over the
 // throat side (the barb: its back faces in toward the throat, so a yarn pulled against it is pushed deeper, not off), a neck cut away on the throat
 // side (the throat), a taper back up to the full shaft. Smooth, no creases or slots: a rigid yarn wedged in a slot stretches instead of squashing.
@@ -195,7 +315,11 @@ void YarnSim::feedHand(End& e) {
     }
 }
 
-Vec3 YarnSim::throatPoint() const { return hook.tip + rotate(hook.q, Vec3{throatX * shape.R, 0, 2.8 * shape.R}); }
+Vec3 YarnSim::throatPoint() const {
+    if (shape.sdf)   // on the channel's floor, under the lip
+        return hook.tip + rotate(hook.q, Vec3{params.radius * shape.squash, 0, 0.5 * (shape.grooveA + shape.lipEnd) * shape.R});
+    return hook.tip + rotate(hook.q, Vec3{throatX * shape.R, 0, 2.8 * shape.R});
+}
 
 void YarnSim::putFinger(int particle, const Vec3& side) {
     const Vec3 t = normalized(rs.x[std::min(particle + 1, rs.particleCount() - 1)] - rs.x[std::max(particle - 1, 0)]);
@@ -263,7 +387,23 @@ void YarnSim::release(int g) {
 
 void YarnSim::step(const HookPose& pose) {
     hook = pose;
-    rs.statics = hookCapsules(hook, shape);
+    if (shape.sdf) {
+        rs.statics.clear();
+        if (rs.bodies.empty()) {
+            SdfBody b;
+            const HookShape sh = shape;
+            b.f = [sh](const Vec3& p, Vec3* g) { return hookSdf(p, sh, g); };
+            b.squash = shape.squash;
+            b.friction = params.hookFriction;
+            b.reach = shape.length + 0.005;
+            rs.bodies.push_back(b);
+        }
+        rs.bodies[0].q = hook.q;
+        rs.bodies[0].t = hook.tip;
+        rs.bodies[0].friction = params.hookFriction;
+    } else {
+        rs.statics = hookCapsules(hook, shape);
+    }
     rs.statics.insert(rs.statics.end(), fixtures.begin(), fixtures.end());
     if (fingerOn && fingerEyelet) {
         ball.target = hand;   // the yarn is fed over the fingertip: the finger is where it comes from
@@ -425,6 +565,14 @@ std::vector<YarnSim::HookRun> YarnSim::hookRuns(Real reach, Real minTurns) const
 
 Real YarnSim::hookPenetration() const {
     Real worst = 0;
+    if (shape.sdf) {
+        for (int s2 = 0; s2 < rs.segmentCount(); ++s2)
+            for (int k = 0; k <= 2; ++k) {
+                const Vec3 P = rs.x[rs.segA[s2]] + (rs.x[rs.segB[s2]] - rs.x[rs.segA[s2]]) * (0.5 * k);
+                worst = std::max(worst, params.radius * shape.squash - hookSdf(rotate(conj(hook.q), P - hook.tip), shape, nullptr));
+            }
+        return worst;
+    }
     for (const StaticCapsule& c : rs.statics)
         for (int s = 0; s < rs.segmentCount(); ++s) {
             const SegSegResult r = closestSegmentSegment(rs.x[rs.segA[s]], rs.x[rs.segB[s]], c.a, c.b);

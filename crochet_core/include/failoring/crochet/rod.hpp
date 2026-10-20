@@ -10,6 +10,7 @@
 // helix is drawn on top by the renderer). What the rod carries is the twist added to or removed from the yarn, which is what makes
 // stitches lean. Forming a loop twists the yarn; `cumulativeTwist` reads that twist back.
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 #include "failoring/math.hpp"
@@ -72,6 +73,17 @@ struct StaticCapsule {
     Real squash = 1.0;   // the yarn's radius against this capsule, as a fraction of its own (wool squashes in a hook's throat)
 };
 
+// A rigid body given by a signed distance function in its own frame (negative inside), placed by a rotation and a translation; moved between
+// steps it moves smoothly over the substeps. The yarn is kept out of it along the whole of every segment (sampled), with Coulomb friction
+// relative to the body's own motion. `squash`: the yarn's radius against it as a fraction of its own.
+struct SdfBody {
+    std::function<Real(const Vec3&, Vec3*)> f;   // distance and (unit) gradient at a point of its frame
+    Quat q, qPrev;
+    Vec3 t{}, tPrev{};
+    Real squash = 1.0, friction = 0.0, reach = 0.02;   // reach: a bounding radius round t (segments farther away are skipped)
+    bool started = false;
+};
+
 // A ring the yarn runs through: the yarn passes through `at` (it may slide along itself through it, but not leave it). `seg` is the segment
 // last found there (the search looks a few segments either side). Moved between steps, it moves smoothly over the substeps.
 struct SlideRing {
@@ -116,6 +128,7 @@ public:
     std::vector<RodChain> chains;
     std::vector<StaticCapsule> statics;
     std::vector<SlideRing> rings;
+    std::vector<SdfBody> bodies;
 
     // Adds a chain through `pts` (>= 2 points; >= 3 when closed). The frames are parallel transported along it. `restFromShape`: the
     // bend of the given shape is the rest bend (a ring that stays a ring); otherwise the rest is straight. Returns the chain index.
@@ -190,6 +203,7 @@ private:
     void solveFloor(Real h);
     void solveStatics(const std::vector<StaticCapsule>& cur, const std::vector<StaticCapsule>& before);
     void solveRings(Real frac);
+    void solveBodies(Real frac0, Real frac1);
     std::vector<StaticCapsule> staticsPrev_;   // where the statics were at the end of the last step
     void solveAnchors(Real h2inv);
     bool skipPair(int a, int b) const;

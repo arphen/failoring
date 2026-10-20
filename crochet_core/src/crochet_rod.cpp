@@ -839,6 +839,56 @@ void RodSystem::solveStatics(const std::vector<StaticCapsule>& cur, const std::v
     }
 }
 
+namespace {
+Quat nlerpQ(const Quat& a, Quat b, Real t) {
+    if (a.w * b.w + a.x * b.x + a.y * b.y + a.z * b.z < 0) b = {-b.w, -b.x, -b.y, -b.z};
+    return normalized(Quat{a.w + (b.w - a.w) * t, a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t});
+}
+}  // namespace
+
+// Every SDF body: points along every segment near it are pushed out to the yarn's (squashed) radius; friction against the body's motion this substep.
+void RodSystem::solveBodies(Real frac0, Real frac1) {
+    const int S = segmentCount();
+    for (SdfBody& b : bodies) {
+        if (!b.started) { b.qPrev = b.q; b.tPrev = b.t; b.started = true; }
+        const Quat q1 = nlerpQ(b.qPrev, b.q, frac1), q0 = nlerpQ(b.qPrev, b.q, frac0);
+        const Vec3 t1 = b.tPrev + (b.t - b.tPrev) * frac1, t0 = b.tPrev + (b.t - b.tPrev) * frac0;
+        const Quat q1c = conj(q1);
+        for (int s = 0; s < S; ++s) {
+            const int ia = segA[s], ib = segB[s];
+            if (w[ia] <= 0 && w[ib] <= 0) continue;
+            const Real rEff = radius[s] * params.radiusScale * b.squash;
+            if (length(x[ia] - t1) > b.reach + rEff + 0.003 && length(x[ib] - t1) > b.reach + rEff + 0.003) continue;
+            for (int k = 0; k <= 2; ++k) {
+                const Real u = 0.5 * k;
+                const Vec3 P = x[ia] + (x[ib] - x[ia]) * u;
+                const Vec3 L = rotate(q1c, P - t1);
+                Vec3 gl;
+                const Real d = b.f(L, &gl) - rEff;
+                if (d >= 0) continue;
+                const Vec3 n = rotate(q1, gl);
+                const Real wa = (1 - u) * w[ia], wb = u * w[ib];
+                const Real w1 = (1 - u) * wa + u * wb;
+                if (w1 <= 0) continue;
+                const Real pen = -d;
+                x[ia] += n * (wa * pen / w1);
+                x[ib] += n * (wb * pen / w1);
+                if (b.friction <= 0) continue;
+                const Vec3 Pn = x[ia] + (x[ib] - x[ia]) * u;
+                const Vec3 Pp = xPrev[ia] + (xPrev[ib] - xPrev[ia]) * u;
+                const Vec3 bodyMove = (rotate(q1, L) + t1) - (rotate(q0, L) + t0);   // how the body point under the yarn moved this substep
+                Vec3 rel = (Pn - Pp) - bodyMove;
+                rel -= n * dot(rel, n);
+                const Real tl = length(rel);
+                if (tl < 1e-15) continue;
+                const Vec3 corr = tl <= b.friction * pen ? rel * -1.0 : rel * (-b.friction * pen / tl);
+                x[ia] += corr * (wa / w1);
+                x[ib] += corr * (wb / w1);
+            }
+        }
+    }
+}
+
 // Every ring: the closest point of the yarn near its segment is moved onto the ring's point (the yarn runs through it).
 void RodSystem::solveRings(Real frac) {
     const int S = segmentCount();
@@ -963,6 +1013,7 @@ void RodSystem::step(Real dt) {
             }
             if (params.shapeStiffness > 0) solveAnchors(h2inv);
             if (!rings.empty()) solveRings(frac);   // before contact: a ring never drags yarn through yarn
+            if (!bodies.empty()) solveBodies((Real)sstep / sub, frac);
             if (params.contact) solveContacts(h);
             if (params.floorOn) solveFloor(h);
             if (!statics.empty()) solveStatics(staticsNow, staticsBefore);
@@ -973,6 +1024,7 @@ void RodSystem::step(Real dt) {
     }
     staticsPrev_ = statics;
     for (SlideRing& r : rings) r.from_ = r.at;
+    for (SdfBody& b : bodies) { b.qPrev = b.q; b.tPrev = b.t; }
 }
 
 int RodSystem::relax(Real dt, Real tol, int maxSteps) {

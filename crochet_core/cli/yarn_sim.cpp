@@ -18,6 +18,22 @@ YarnMesh sceneMesh(const YarnSim& sim) {
     YarnMeshOptions mo;
     mo.colour = Vec3{0.55, 0.62, 0.85};
     YarnMesh m = buildYarnMesh(sim.rs, mo);
+    if (sim.shape.sdf) {
+        static HookPose cachedPose;
+        static YarnMesh cached;
+        static bool have = false;
+        if (!have || length(cachedPose.tip - sim.hook.tip) > 1e-9 || std::fabs(cachedPose.q.w - sim.hook.q.w) > 1e-12 ||
+            std::fabs(cachedPose.q.x - sim.hook.q.x) > 1e-12 || std::fabs(cachedPose.q.y - sim.hook.q.y) > 1e-12) {
+            cached = hookMesh(sim.hook, sim.shape, 0.2e-3);
+            cachedPose = sim.hook;
+            have = true;
+        }
+        const int off = (int)m.pos.size();
+        m.pos.insert(m.pos.end(), cached.pos.begin(), cached.pos.end());
+        m.nrm.insert(m.nrm.end(), cached.nrm.begin(), cached.nrm.end());
+        m.col.insert(m.col.end(), cached.col.begin(), cached.col.end());
+        for (const auto& t : cached.tri) m.tri.push_back({t[0] + off, t[1] + off, t[2] + off});
+    }
     YarnMeshOptions ho;
     ho.plyContrast = 0.0;
     ho.sides = 16;
@@ -55,6 +71,24 @@ int main(int argc, char** argv) {
         else if (k == "--damp") damp = std::atof(argv[i + 1]);
     }
     YarnSim sim;
+    if (std::getenv("SIM_HOOKSHOT")) {   // the hook alone, close up: from the throat side, from the side, from above, at a slant
+        const HookPose hp = hookPose(Vec3{}, Vec3{-1, 0, 0}, Vec3{0, 1, 0});
+        const YarnMesh hm = hookMesh(hp, sim.shape, 0.1e-3);
+        YarnCamera cam;
+        cam.target = Vec3{0.007, 0, 0};
+        cam.fovDeg = 30;
+        cam.distance = 0.03;
+        const Vec3 dirs[4] = {Vec3{0, 1, 0}, Vec3{0, 0, 1}, normalized(Vec3{-0.4, 0.6, 0.7}), normalized(Vec3{0.5, 0.5, 0.7})};
+        for (int v = 0; v < 4; ++v) {
+            cam.dir = dirs[v];
+            cam.up = v == 0 ? Vec3{0, 0, -1} : Vec3{0, 1, 0};
+            char name[256];
+            std::snprintf(name, sizeof name, "%s_hook%d.png", out.c_str(), v);
+            renderYarnPng(name, hm, cam, 600, 600);
+        }
+        std::printf("%zu triangles\n", hm.tri.size());
+        return 0;
+    }
     if (std::getenv("SIM_CARRY")) {
         // the hook catches a straight yarn held at both ends (fed from both, loosely) and pulls a bight 25 mm
         sim.params.radius = rad * 1e-3;
@@ -91,6 +125,7 @@ int main(int argc, char** argv) {
     if (std::getenv("SIM_REEL")) std::sscanf(std::getenv("SIM_REEL"), "%lf,%lf", &sim.reelSlack, &sim.reelForce);
     if (std::getenv("SIM_TX")) sim.throatX = std::atof(std::getenv("SIM_TX"));
     if (std::getenv("SIM_THK")) sim.throatStiffness = std::atof(std::getenv("SIM_THK"));
+    if (std::getenv("SIM_HMU")) sim.params.hookFriction = std::atof(std::getenv("SIM_HMU"));
     if (std::getenv("SIM_SUB")) sim.params.substeps = std::atoi(std::getenv("SIM_SUB"));
     if (std::getenv("SIM_IT")) sim.params.iterations = std::atoi(std::getenv("SIM_IT"));
     if (std::getenv("SIM_MU")) sim.params.friction = std::atof(std::getenv("SIM_MU"));
