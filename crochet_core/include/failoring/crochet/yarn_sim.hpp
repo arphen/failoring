@@ -175,7 +175,8 @@ void finishChain(YarnSim& sim, const ChainStart& c);
 // the old loop is off it, and more yarn has been drawn from the hand into the work than before the stitch (a stitch that unravelled gives it back).
 struct ChainResult {
     Real link = 0;   // degrees of the shaft the yarn closes round when the working yarn is pulled firmly (a loop on the hook: ~360)
-    int loops = 0;   // loopsOnHook seen from above: exactly one loop
+    int loops = 0;   // the linking stretch: exactly one loop
+    int frontLoops = 0;   // loopsOnHook(front), which also counts the chain's legs beside the hook
     int oldOn = 0;   // particles of the old loop still round the hook
     Real oldWind = 0, newWind = 0;    // how far the old loop's yarn and the yarn after it wind round the hook (turns)
     Real length = 0;
@@ -183,6 +184,10 @@ struct ChainResult {
 };
 ChainResult judgeChain(const YarnSim& sim, const ChainStart& c);
 int carriedRound(const YarnSim& sim);   // 360 with a loop on the hook, else 0
+// The loop on the hook: the shortest stretch of yarn, from particle `from` to `to` where the yarn touches itself, that the hook's axis passes
+// through (linking number 1 with the axis closed far away). False when there is none. Use this for the stitch, not loopsOnHook(front), which
+// also counts the chain's legs hanging beside the hook.
+bool hookLoop(const YarnSim& sim, int* from, int* to);
 
 // A test rig for stitches: the hook lying tip to the left at `tip`, a loop snug on its shaft, its front leg running down to the work (the tail end,
 // held), its back leg up behind to the index finger and over it to the spool. Builds `sim` (finger on, hook posed).

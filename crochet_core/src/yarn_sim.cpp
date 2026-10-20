@@ -820,13 +820,18 @@ ChainStart prepareChain(YarnSim& sim) {
     const Real m = kMm, R = sim.shape.R;
     const Vec3 ax = sim.hook.axis();            // tip -> handle (the hook lies tip to the left)
     const Vec3 up{0, 1, 0}, front{0, 0, 1};
+    const bool carried = sim.homeSet;           // a stitch carried from an earlier chain, not the first loop laid by the rig or the knot
     const Real reach = envOr("CH_REACH", 9) * m;
     // the loop on the hook
     int lo = -1, hi = -1;
     if (!loopRange(sim, reach, envOr("CH_TURNS", 0.6), &lo, &hi) &&
         !(sim.loopsOnHook(front) != 0 && loopRange(sim, 1.6 * reach, 0.4, &lo, &hi))) {
-        std::printf("chain: no loop on the hook (%d by the half plane)\n", sim.loopsOnHook(front));
-        return c;
+        // A loose stitch from the last chain may not close on itself tightly enough for loopRange, but the linking stretch still
+        // identifies it; use that rather than treating the hook as empty (the half-plane count has already seen a loop).
+        if (!hookLoop(sim, &lo, &hi)) {
+            std::printf("chain: no loop on the hook (%d by the half plane)\n", sim.loopsOnHook(front));
+            return c;
+        }
     }
     c.oldLo = lo;
     c.oldHi = hi;
@@ -966,7 +971,23 @@ ChainStart prepareChain(YarnSim& sim) {
         // the hook moved back until the yarn lies in the throat; then rolled toward the crocheter over the top: the yarn goes round the neck
         const Vec3 back = front * -1.0;
         const Real yoL = envOr("YO_L", -5);
-        moveHandTo(sim, c.tip0 - ax * (yoL * m) + up * (envOr("YO_U", 10) * m) + back * (envOr("YO_B", 20) * m), 0.6);
+        Vec3 handAt;
+        if (carried) {
+            // After a chain the old loop is a stitch near the tip, not the clean loop the rig lays: the yarn must leave its back end and
+            // cross the shaft at the throat. Put the finger close in on the far side of the shaft from that end, so the yarn crosses the
+            // shaft however the hook has rolled, instead of running past it on the same side.
+            const Vec3 hx = rotate(sim.hook.q, Vec3{1, 0, 0}), hy = rotate(sim.hook.q, Vec3{0, 1, 0});
+            const Vec3 l = rotate(conj(sim.hook.q), sim.rs.x[c.oldHi] - sim.hook.tip);
+            const Real lr = std::hypot(l.x, l.y);
+            const Real ang = lr > 1e-9 ? std::atan2(-l.y, -l.x) : kPi / 2;
+            handAt = c.tip0 - ax * (envOr("YO_L2", -5) * m) + (hx * std::cos(ang) + hy * std::sin(ang)) * (envOr("YO_RADL", 10) * m);
+            if (envOr("SIM_STAGES", 0) > 0)
+                std::printf("  yarn over: the old loop's back end is %.1f mm out at %.0f deg; the finger goes to %.0f deg, %.1f mm out\n",
+                            lr * 1e3, std::atan2(l.y, l.x) * 180 / kPi, ang * 180 / kPi, envOr("YO_RADL", 10));
+        } else {
+            handAt = c.tip0 - ax * (yoL * m) + up * (envOr("YO_U", 10) * m) + back * (envOr("YO_B", 20) * m);
+        }
+        moveHandTo(sim, handAt, 0.6);
         // the finger moved along the hook until the yarn crosses behind the hook level with the throat
         const Real aT = dot(sim.throatPoint() - sim.hook.tip, ax);
         for (int it = 0; it < (int)envOr("YO_ITERS", 16); ++it) {
@@ -1155,6 +1176,33 @@ void finishChain(YarnSim& sim, const ChainStart& c) {
     stage("released");
 }
 
+bool hookLoop(const YarnSim& sim, int* from, int* to) {
+    // the hook's axis, closed far away
+    const Vec3 ax = sim.hook.axis();
+    Vec3 u = Vec3{0, 0, 1} - ax * ax.z;
+    if (length(u) < 1e-6) u = Vec3{0, 1, 0} - ax * ax.y;
+    u = normalized(u);
+    const std::vector<Vec3> H{sim.hook.tip - ax * 0.05, sim.hook.tip + ax * 0.08, sim.hook.tip + ax * 0.08 + u * 1.0, sim.hook.tip - ax * 0.05 + u * 1.0};
+    // stretches of yarn closed where the yarn touches itself
+    const int n = sim.rs.particleCount();
+    const Real touch2 = std::pow(5.0 * sim.params.radius, 2);   // (a loose crossing counts)
+    int bestSpan = 1 << 30;
+    bool found = false;
+    for (int i = 0; i < n; ++i)
+        for (int j = i + 12; j < n; ++j) {
+            if (j - i >= bestSpan) break;
+            if (length2(sim.rs.x[i] - sim.rs.x[j]) > touch2) continue;
+            const std::vector<Vec3> P(sim.rs.x.begin() + i, sim.rs.x.begin() + j + 1);
+            if (std::fabs(std::fabs(linkingNumber(P, H)) - 1.0) < 0.25) {
+                bestSpan = j - i;
+                if (from) *from = i;
+                if (to) *to = j;
+                found = true;
+            }
+        }
+    return found;
+}
+
 int carriedRound(const YarnSim& sim0) {
     // copies of the work, its ends and the hand held where they are, the throat letting go; in each the hook moves 12 mm square to its axis in one
     // of 8 directions: a loop round the hook goes along every way, yarn only lying over or in it is left behind one way at least
@@ -1186,7 +1234,12 @@ int carriedRound(const YarnSim& sim0) {
 
 ChainResult judgeChain(const YarnSim& sim, const ChainStart& c) {
     ChainResult r;
-    r.loops = sim.loopsOnHook(Vec3{0, 0, 1});
+    const int front = sim.loopsOnHook(Vec3{0, 0, 1});
+    int lo = -1, hi = -1;
+    // The half-plane count also sees the chain's legs hanging beside the hook; the linking stretch is the stitch itself. Fall back to the
+    // half-plane count when no stretch closes on itself (the loop is too loose for the linking test).
+    r.frontLoops = front;
+    r.loops = hookLoop(sim, &lo, &hi) ? (front < 0 ? -1 : 1) : front;
     Real len = 0;
     for (int s = 0; s + 1 < sim.rs.segmentCount(); ++s) len += sim.rs.restLen[s];
     r.length = len;

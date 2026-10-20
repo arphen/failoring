@@ -380,6 +380,9 @@ int main(int argc, char** argv) {
             }
             YarnSim t = sim;
             t.stageLog.clear();
+            // Hook friction is normally read once from the command line; the sweep axis may set it too, so the child has to take it
+            // into the copy. The solver copies params.hookFriction onto the hook body at every step.
+            if (const char* hmu = std::getenv("SIM_HMU")) t.params.hookFriction = std::atof(hmu);
             const ChainStart c0 = prepareChain(t);
             finishChain(t, c0);
             const ChainResult r = judgeChain(t, c0);
@@ -454,8 +457,10 @@ int main(int argc, char** argv) {
         const ChainStart cs = prepareChain(sim);
         if (cs.ok) finishChain(sim, cs);
         const ChainResult r = judgeChain(sim, cs);
-        std::printf("chain %d: %d loops on the hook (after the yarn over %d), yarn %.1f mm (was %.1f)%s\n", c + 1, r.loops, cs.loopsAfterYo, r.length * 1e3,
-                    cs.length * 1e3, r.made ? "  MADE" : "");
+        std::string frontNote;
+        if (r.frontLoops != r.loops) frontNote = " (front count " + std::to_string(r.frontLoops) + ")";
+        std::printf("chain %d: %d loops%s on the hook (after the yarn over %d), yarn %.1f mm (was %.1f)%s\n", c + 1, r.loops, frontNote.c_str(),
+                    cs.loopsAfterYo, r.length * 1e3, cs.length * 1e3, r.made ? "  MADE" : "");
         if (std::getenv("SIM_CHAINSHOT")) { char tag[16]; std::snprintf(tag, sizeof tag, "ch%d", c + 1); snap(tag); }
         continue;
         std::printf("chain %d: loops on hook %d (up) %d (front)\n", c + 1, sim.loopsOnHook(Vec3{0, 1, 0}), sim.loopsOnHook(Vec3{0, 0, 1}));
