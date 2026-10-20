@@ -74,6 +74,7 @@ turn back, snug, release). `judgeChain` decides "made".
 - `RodSystem::bodies` / `SdfBody` / `solveBodies`: SDF collider sampled along each segment (3 points), Coulomb friction relative to the body's
   motion, smooth motion over substeps.
 - `hookMesh`: marching tetrahedra for drawing (CLI `SIM_HOOKSHOT=1 ./yarn_sim --out x` renders the hook alone).
+- Switch it on without editing code: `SIM_SDF=1 ./yarn_sim ...` (CLI). In code: `sim.shape.sdf = true`.
 - With `sdf = true` the slip knot and the carry test **fail**: the yarn does not stay in the new throat. The slip-knot script was tuned for
   the capsule hook. Next: make the carry test pass with the SDF hook (barb depth/lean `grooveA/grooveB/lipEnd`, `squash`, hook friction,
   throat point under the barb), then re-tune `makeSlipKnot`, then the chain.
