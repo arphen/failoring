@@ -2,6 +2,7 @@
 // as a loop round the hook's shaft with the yarn never passing through itself or through the hook.
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <vector>
 
 #include "check.hpp"
@@ -60,10 +61,44 @@ void testSlipKnot() {
     CHECKP(sim.maxStrain() < 0.15, "at rest the yarn is not stretched (%.0f%%)", sim.maxStrain() * 100);
 }
 
+void testChains() {
+    // The five-chain slip-knot run starts with these settings; three chains is the part kept in the test for runtime.
+    setenv("HOLD_BELOW", "12", 1);
+    setenv("YO_L", "-15", 1);
+    setenv("YO_MODE", "2", 1);
+    setenv("YO_ROLLMAX", "1.2", 1);
+    YarnSim sim;
+    sim.params.damping = 15;
+    sim.build(slipKnotLayout(sim.params.radius));
+    makeSlipKnot(sim);
+    Real worstGap = 1e9, worstPen = 0;
+    sim.onFrame = [&] {
+        worstGap = std::min(worstGap, sim.minGap());
+        worstPen = std::max(worstPen, sim.hookPenetration());
+    };
+    for (int k = 0; k < 3; ++k) {
+        const ChainStart c = prepareChain(sim);
+        CHECK_MSG(c.ok, "chain %d prepared", k + 1);
+        if (!c.ok) return;
+        finishChain(sim, c);
+        const ChainResult r = judgeChain(sim, c);
+        CHECK_MSG(r.made, "chain %d made (linked %d, front %d, yarn %.0f -> %.0f mm)", k + 1, r.loops, r.frontLoops, c.length * 1e3,
+                  r.length * 1e3);
+        CHECK_MSG(r.loops == 1, "chain %d ends with one linked loop (%d)", k + 1, r.loops);
+        CHECK_MSG(r.length > c.length + 0.004, "chain %d draws yarn from the hand", k + 1);
+    }
+    const Real r = sim.params.radius;
+    std::printf("chain contact: closest %.2f mm (yarn %.2f mm), hook %.2f mm in\n", worstGap * 1e3, 2 * r * 1e3, worstPen * 1e3);
+    CHECKP(worstGap > 0.95 * 2 * r, "the yarn never passes through itself during the chains (closest %.2f mm, yarn %.2f mm)", worstGap * 1e3,
+            2 * r * 1e3);
+    CHECKP(worstPen < 0.4e-3, "nor through the hook during the chains (at most %.2f mm in)", worstPen * 1e3);
+}
+
 }  // namespace
 
 int main() {
     testCarry();
     testSlipKnot();
+    testChains();
     FINISH();
 }

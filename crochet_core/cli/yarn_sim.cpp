@@ -165,6 +165,7 @@ int main(int argc, char** argv) {
     if (std::getenv("SIM_IT")) sim.params.iterations = std::atoi(std::getenv("SIM_IT"));
     if (std::getenv("SIM_MU")) sim.params.friction = std::atof(std::getenv("SIM_MU"));
     const bool rig = std::getenv("SIM_RIG") != nullptr;
+    sim.rig = rig;
     if (rig) buildLoopRig(sim, Vec3{-0.02, 0, 0.02});
     else sim.build(slipKnotLayout(sim.params.radius));
     std::printf("%d particles\n", sim.rs.particleCount());
@@ -177,6 +178,23 @@ int main(int argc, char** argv) {
         cam.target = std::getenv("SIM_FOLLOW") ? sim.hook.tip + sim.hook.axis() * 0.012 - Vec3{0, 0.012, 0} : Vec3{0, -0.002, 0.004};
         cam.fovDeg = 30;
         cam.distance = 0.12;
+        if (std::getenv("SIM_SHOTDIST")) cam.distance = std::atof(std::getenv("SIM_SHOTDIST"));
+        if (std::getenv("SIM_SHOTTARGET")) {
+            double x = 0, y = 0, z = 0;
+            if (std::sscanf(std::getenv("SIM_SHOTTARGET"), "%lf,%lf,%lf", &x, &y, &z) == 3) cam.target = Vec3{x, y, z};
+        }
+        if (std::getenv("SIM_SHOTYARN")) {   // frame the whole work, not the hook at the origin
+            Vec3 lo{1e9, 1e9, 1e9}, hi{-1e9, -1e9, -1e9};
+            for (const Vec3& p : sim.rs.x) {
+                lo = Vec3{std::min(lo.x, p.x), std::min(lo.y, p.y), std::min(lo.z, p.z)};
+                hi = Vec3{std::max(hi.x, p.x), std::max(hi.y, p.y), std::max(hi.z, p.z)};
+            }
+            if (sim.rs.particleCount() > 0) {
+                cam.target = (lo + hi) * 0.5;
+                const Real ext = std::max({hi.x - lo.x, hi.y - lo.y, hi.z - lo.z});
+                cam.distance = std::max(cam.distance, ext / (2 * std::tan(cam.fovDeg * kPi / 360)) * 1.15);
+            }
+        }
         cam.dir = Vec3{0, 0, 1};
         char name[256];
         std::snprintf(name, sizeof name, "%s_%03d_%s_front.png", out.c_str(), shot, tag);

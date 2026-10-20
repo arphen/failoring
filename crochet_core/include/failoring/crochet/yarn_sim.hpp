@@ -56,6 +56,7 @@ public:
     YarnSimParams params;
     RodSystem rs;
     HookShape shape;
+    bool rig = false;   // the loop was laid by the stitch rig rather than the slip knot; the two need different finish pulls
     HookPose hook;
     int frame = 0;
 
@@ -98,6 +99,7 @@ public:
     Real throatX = 0.30;   // where the throat holds a caught yarn, out from the axis toward the throat's mouth (shaft radii)
     Real throatStiffness = 0.5;   // the throat's hold is soft (contact can push back on it), the finger's is firm
     bool homeSet = false;   // where the hook works from, stitch after stitch (set by the first chain)
+    int chains = 0;         // completed chains; the left hand goes a little farther below the growing work for the fifth
     Vec3 home{};   // the finger is an eyelet the yarn slides through (true) or a capsule it lies over (false)
     // Fingers and other fixed things the yarn runs past (it slides along them): capsules added to the hook's.
     std::vector<StaticCapsule> fixtures;
@@ -179,6 +181,7 @@ struct ChainResult {
     int frontLoops = 0;   // loopsOnHook(front), which also counts the chain's legs beside the hook
     int oldOn = 0;   // particles of the old loop still round the hook
     Real oldWind = 0, newWind = 0;    // how far the old loop's yarn and the yarn after it wind round the hook (turns)
+    Real linkMeanR = 0, linkMaxR = 0;  // distance of the final linking stretch from the hook's axis (m)
     Real length = 0;
     bool made = false;
 };

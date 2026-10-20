@@ -821,6 +821,9 @@ ChainStart prepareChain(YarnSim& sim) {
     const Vec3 ax = sim.hook.axis();            // tip -> handle (the hook lies tip to the left)
     const Vec3 up{0, 1, 0}, front{0, 0, 1};
     const bool carried = sim.homeSet;           // a stitch carried from an earlier chain, not the first loop laid by the rig or the knot
+    const bool late = sim.chains >= 4;           // the work has grown: hold it a little farther below the hook for the fifth chain
+    const Real holdBelow = envOr("HOLD_BELOW", 10) + (late ? envOr("HOLD_LATE", 2) : 0);
+    const Real holdT = envOr("HOLD_T", 0.5) + (late ? envOr("HOLD_T_LATE", 0.05) : 0);
     const Real reach = envOr("CH_REACH", 9) * m;
     // the loop on the hook
     int lo = -1, hi = -1;
@@ -860,9 +863,9 @@ ChainStart prepareChain(YarnSim& sim) {
         Vec3 lc{};
         for (int i = lo; i <= hi; ++i) lc += sim.rs.x[i];
         lc = lc / (Real)(hi - lo + 1);
-        const Vec3 hTo = lc - up * (R + envOr("HOLD_BELOW", 10) * m);
+        const Vec3 hTo = lc - up * (R + holdBelow * m);
         const Vec3 hFrom = sim.grips[c.hold].at;
-        const int hn = (int)(envOr("HOLD_T", 0.5) / sim.params.dt);
+        const int hn = (int)(holdT / sim.params.dt);
         for (int k = 1; k <= hn; ++k) {
             const Real t = (Real)k / hn;
             sim.grips[c.hold].at = hFrom + (hTo - hFrom) * (t * t * (3 - 2 * t));
@@ -1139,13 +1142,19 @@ void finishChain(YarnSim& sim, const ChainStart& c) {
     sim.phase = "Pull through: the hook draws the yarn through the loop on the hook";
     {
         const Real step = envOr("PU_V", 12) * m * sim.params.dt;
+        const Real reach = envOr("CH_REACH", 9) * m;
         const int loopsBefore = sim.loopsOnHook(front);
         int clear = 0;
         for (Real moved = 0; moved < 0.05 && clear < (int)envOr("PU_EXTRA", 6); moved += step) {
             sim.hand += ax * (step * envOr("PU_FOLLOW", 1.0));
             sim.step(hookPose(sim.hook.tip + ax * step, -ax, thrDown));
             if (sim.onFrame) sim.onFrame();
-            clear = std::abs(sim.loopsOnHook(front)) <= std::abs(loopsBefore) - 1 ? clear + 1 : 0;   // the old loop is off
+            // The rig's clean first loop comes off when the half-plane count drops. From the slip knot the half-plane count also drops when a
+            // chain leg leaves, so there the old loop is off only when its own yarn no longer winds round the shaft.
+            if (sim.rig)
+                clear = std::abs(sim.loopsOnHook(front)) <= std::abs(loopsBefore) - 1 ? clear + 1 : 0;
+            else
+                clear = std::fabs(sim.windingNear(c.oldLo, c.oldHi, reach)) < envOr("PU_OLDWIND", 0.5) ? clear + 1 : 0;
         }
     }
     stage("pulled");
@@ -1174,6 +1183,7 @@ void finishChain(YarnSim& sim, const ChainStart& c) {
     sim.release(c.hold);
     sim.settle(20);
     stage("released");
+    ++sim.chains;
 }
 
 bool hookLoop(const YarnSim& sim, int* from, int* to) {
@@ -1244,11 +1254,37 @@ ChainResult judgeChain(const YarnSim& sim, const ChainStart& c) {
     Real len = 0;
     for (int s = 0; s + 1 < sim.rs.segmentCount(); ++s) len += sim.rs.restLen[s];
     r.length = len;
-    // The yarn over has to add one crossing to the half-plane count, whatever the chain's legs were doing before it. The old check
-    // compared the count after the yarn over with twice the final stitch count, which fails a carried stitch that starts at two crossings
-    // (its stitch plus a leg) and ends at three. A reverse final loop is not accepted either.
+    // The linking stretch decides whether the final loop is the old loop or a new one. The half-plane counts before and after the yarn over
+    // are diagnostics only: a chain leg can leave while a new loop is made, or the count can rise while the old loop stays. A stitch is one
+    // linking loop whose stretch is mostly new yarn, with more yarn drawn from the hand.
+    int overlap = 0;
+    if (linked && c.oldLo >= 0 && c.oldHi >= c.oldLo) {
+        const int a = std::max(lo, c.oldLo), b = std::min(hi, c.oldHi);
+        if (b >= a) overlap = b - a + 1;
+    }
+    const int span = linked ? hi - lo + 1 : 0;
+    const Real oldFraction = span > 0 ? (Real)overlap / span : 0;
+    r.oldOn = overlap;
+    if (linked) {
+        Real sum = 0;
+        for (int i = lo; i <= hi; ++i) {
+            const Vec3 l = rotate(conj(sim.hook.q), sim.rs.x[i] - sim.hook.tip);
+            const Real rad = std::hypot(l.x, l.y);
+            sum += rad;
+            r.linkMaxR = std::max(r.linkMaxR, rad);
+        }
+        r.linkMeanR = sum / span;
+    }
+    const bool newLoop = linked && oldFraction < 0.5;
     const int added = c.loopsAfterYo - c.loopsBefore;
-    r.made = c.ok && r.loops == 1 && added == 1 && len > c.length + 0.004;
+    // The old loop has to be off the hook: a final linking stretch mostly inside the old loop's particles is the old loop, not a new stitch,
+    // even when the half-plane count rose during the yarn over.
+    r.made = c.ok && r.loops == 1 && newLoop && len > c.length + 0.004;
+    if (envOr("SIM_CHAINDBG", 0) > 0)
+        std::printf("  judge: old %d..%d, final %d..%d (span %d, overlap %d, old %.0f%%, r mean/max %.1f/%.1f mm), front %d, after %d, "
+                    "added %d, linked %d, new %d\n",
+                    c.oldLo, c.oldHi, lo, hi, span, overlap, oldFraction * 100, r.linkMeanR * 1e3, r.linkMaxR * 1e3, r.frontLoops,
+                    c.loopsAfterYo, added, linked ? 1 : 0, newLoop ? 1 : 0);
     return r;
 }
 

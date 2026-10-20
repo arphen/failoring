@@ -56,28 +56,33 @@ turn back, snug, release). `judgeChain` decides "made".
 - **Stage loop count** = `sim.loopsOnHook(front)`: signed crossings of the half-plane from the hook's axis toward the crocheter (`+z`);
   it also counts the chain's legs hanging beside the hook. For a first chain the expected sequence is `1` → `2` after the yarn over → `1`
   after the pull → `1` at the end; a carried chain can start at 2 or 3 crossings. The "made" judge uses the linking stretch below and
-  requires the yarn over to add one crossing.
+  requires the yarn over to add one crossing (or, for a carried stitch, to lose none and end with the one clean loop).
 - Every trial logs a stage string, e.g. `[p1 p1 p1 p1 yo:2t caug:2t turn:2t pull:1t turn:1t snug:1t rele:1]` (`t` = the throat holds yarn).
-- **SDF hook (default).** The open-groove SDF hook carries the yarn and the slip knot; `test_crochet_yarn_sim` passes. The first chain from
-  `buildLoopRig` is made for `HOLD_T=0.50..0.53` at damping 15 (4/4), also with `SIM_SEAT=9`.
-- **Four chains from the slip knot.** The first is made at `HOLD_BELOW=12, YO_L=-15` (one point; `SIM_SEAT` 5, 7 and 9 all make it). The
-  second is made across a range of the local hand placement: `YO_RADL` 6–12 mm, `YO_L2` −10…+5 mm. After a chain the finger goes close in
-  on the far side of the shaft from the old loop's back end, so the yarn crosses the shaft at the throat whatever way the hook has rolled;
-  the defaults are 10 mm and −5 mm. Chains 3 and 4 then follow with `PU_HOLDREL=1`: after the pull, the throat keeps holding the yarn for
-  0.3 s before the turn-back, so the carried loop settles before the hook turns. `PU_HOLDREL` is now 1 by default.
-- **The stitch judge is the linking stretch plus one added crossing.** `loopsOnHook(front)` also sees the chain's legs hanging beside the
-  hook; `hookLoop` (linking number 1 with the hook's axis) is the stitch. The yarn over must add one crossing to the front count, and the
-  final stitch must be one positive linked loop. A chain line prints `(front count N)` when the counts disagree. A loose stitch that
-  `loopRange` cannot close on itself is found by `hookLoop` before prepare gives up.
-- **Chain 5 is not made.** Chain 4 leaves its old loop 44 mm back along the shaft (the earlier chains leave theirs at 5–16 mm). Chain 5 then
-  starts at three front crossings, and the yarn over changes that to 1–3, so it adds no crossing; the final linked loop is still 1 and the
-  yarn length grows, but the strict judge refuses it. Hand positions `YO_L2` −20…+5 mm and `YO_RADL` 6–16 mm did not add a crossing.
-  Catch radius, roll direction, roll length and hook friction 0.05–0.5 were tried earlier; they do not fix the far-back loop either.
-- **Rig chains stop at 1.** The rig's first chain is 4/4, but its chain 2 stops at `yo:1` with the default local hand; following the old
-  loop's back end along the shaft did not add a crossing, and `PU_BACK=0` made it worse (chain 2 fell to 0 loops). The rig and the slip
-  knot leave different first-chain loops; the slip-knot path is the one that now reaches four.
-- **Five in a row.** Four from the slip knot; not five. The rig path is still one. A half-back head (flat only on the throat side) passes
-  carry/slip but loses the first chain's yarn over (`yo:1` vs 2), so the full-width flat back is kept for now.
+- **SDF hook (default).** The open-groove SDF hook carries the yarn and the slip knot. Under the strict stitch judge the rig's first chain
+  is linked and new only at `HOLD_T=0.50` and `0.51` (2/4); at `0.52` and `0.53` the half-plane count is one but `hookLoop` cannot close a
+  stretch, so those are not counted as stitches. The older 4/4 result used the half-plane fallback.
+- **The stitch judge is one new linked loop.** `loopsOnHook(front)` also sees the chain's legs hanging beside the hook; `hookLoop` (linking
+  number 1 with the hook's axis) is the stitch. The final linking stretch must overlap the old loop's particles by less than half its
+  length, and more yarn must be drawn from the hand. The crossing count after the yarn over is printed as a diagnostic but no longer decides
+  the stitch: a leg can leave while a new loop is made, and the half-plane count can rise while the old loop stays. A chain line prints
+  `(front count N)` when the counts disagree. A loose stitch that `loopRange` cannot close on itself is found by `hookLoop` before prepare
+  gives up.
+- **Slip knot: five chains at one setting.** `HOLD_BELOW=12 HOLD_LATE=1 HOLD_T_LATE=0.05 YO_L=-15 YO_MODE=2 YO_ROLLMAX=1.2`, `--damp 15`
+  (also `--chains 5`) makes five linked, mostly-new loops. The late rule holds the work 1 mm farther below and 0.05 s longer for chain 5
+  (13 mm, 0.55 s). The slip-knot finish pulls until the old loop's own yarn no longer winds round the shaft; the rig keeps the half-plane
+  pull (below). Only this late setting has been run, so this is one point, not yet a range. The render (`SIM_SHOTYARN=1`) shows
+  five loops piling around the hook, not a row of V stitches: the loop count is not yet a readable crochet chain.
+- **Rig: four of five.** `SIM_RIG=1 PU_HOLDREL=0 HOLD_BELOW=9 YO_L=-5 YO_MODE=2 YO_ROLLMAX=1.2`, `--damp 15` makes chains 1, 3, 4 and 5;
+  chain 5 uses the late rule (11 mm, 0.55 s). Chain 2 ends with a linked stretch that is 61–65% the old loop's particles, so the old loop is
+  not off and it is not counted. The rig's finish keeps the half-plane pull; the slip knot's old-winding pull breaks the rig's chain 5. The
+  fifth chain is therefore made; the missing stitch is chain 2.
+- **Contact.** The three-chain slip test reaches a closest self-gap of 2.20 mm (yarn 2.20 mm) and 0.01 mm hook penetration; it passes.
+  The five-chain runs are not clean: slip has a 2.15 mm gap and 1.38 mm hook penetration; the rig has 1.92 mm and 2.35 mm. The goal is no
+  strand through itself or the hook; the five-chain runs still violate it. The 5-chain render shows the strands crossing and piling,
+  consistent with the penetration numbers.
+- **First chain / five-in-a-row.** Five from the slip knot at one setting; four from the rig. Neither is five across a range, and the rig's
+  first chain is linked only 2/4. A half-back head (flat only on the throat side) passes carry/slip but loses the first chain's yarn over
+  (`yo:1` vs 2), so the full-width flat back is kept for now.
 - **Key finding: the simulation is chaotic at damping 20–40.** Changing an irrelevant timing (`HOLD_T` 0.50 → 0.52) flips made/failed. At
   damping 60 results are repeatable, but the hook no longer catches the yarn. This, not the choice of motions, is the main problem.
 - The yarn over is the fragile step. What is known:
@@ -123,8 +128,11 @@ turn back, snug, release). `judgeChain` decides "made".
 7. **Single crochet** into the 2nd chain from the hook (insert, yarn over, pull up a loop → 2 loops, yarn over, pull through both → 1),
    following `docs/YARN_SC_SWATCH_SPEC.md`. Same loop-count stages.
 
-**Status after the SDF hook:** steps 1 and 2 are done; step 3 has a 4/4 result only at damping 15; step 4 has four chains from the slip
-knot and one from the rig, but not five; chain 5 is blocked by chain 4's far-back loop; step 5 is not added.
+**Status after the SDF hook:** steps 1 and 2 are done. Step 3 is still open: the half-plane first-chain result is 4/4 only at damping 15, and
+under the strict new-loop judge it is 2/4 even there. Step 4 has five slip-knot chains at one late-hand setting and four rig chains (chain 2
+keeps its old loop). Step 5 has `testChains` for three slip chains; it passes loops, self-gap (2.20 mm) and hook clearance (0.01 mm). The five-chain runs still
+press into the hook (slip 1.38 mm, rig 2.35 mm), beyond what the three-chain test covers. The renders show loops piling around the hook
+rather than a crochet chain, so this is not complete.
 
 ## 8. Tools in the CLI (`build/yarn_sim`)
 
@@ -135,8 +143,14 @@ knot and one from the rig, but not five; chain 5 is blocked by chain 4's far-bac
   stay in the serial order. `SIM_PULLTEST_VERBOSE=1` keeps each child's stage prints instead of sending them to `/dev/null`. A `SIM_HMU`
   sweep is applied to each child copy; other solver parameters are read only at startup.
 - `SIM_STAGES=1` prints loop counts at every stage; `SIM_ROLLDBG=1` during the roll; `YO_DUMP=1` the yarn's path in the hook's frame.
+  `SIM_CHAINDBG=1` prints the old and final linking stretches and their overlap for every judge.
+- The fifth-chain hand: `HOLD_LATE` mm (default 2) and `HOLD_T_LATE` s (default 0.05) are added after four completed chains. The slip-knot
+  five-chain run uses `HOLD_LATE=1`; the rig uses the default 2.
+- Finish: the slip knot pulls until the old loop's own yarn no longer winds (`PU_OLDWIND`, default 0.5 turns); the rig keeps the half-plane
+  pull (`sim.rig`). `PU_HOLDREL=1` keeps the throat holding 0.3 s before the turn-back.
 - Pictures: `--every N` (snapshots), `SIM_FOLLOW=1` (camera follows the hook), `SIM_CHAINSHOT=1` (after each chain),
   `SIM_PHASESHOT=f` (at every phase change after frame f), `--close a-b/step` with `SIM_CFIX=1 SIM_CDIST=0.06` (close-ups).
+  `SIM_SHOTYARN=1` frames all the yarn (not the origin); `SIM_SHOTDIST` and `SIM_SHOTTARGET=x,y,z` override the camera.
   Contact sheets: `python3 <scratch>/sheet.py dir kind` (or any PIL montage).
 - Knobs are read with `envOr("NAME", default)` in `yarn_sim.cpp`. When a value proves itself, make it the default and remove the knob.
 
