@@ -99,19 +99,27 @@ Real smin(Real a, Real b, Real k) {
     const Real h = std::clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
     return b + (a - b) * h - k * h * (1 - h);
 }
-Real smax(Real a, Real b, Real k) { return -smin(-a, -b, k); }
+Real capsuleDist(const Vec3& p, const Vec3& a, const Vec3& b, Real r) { return segDist(p, a, b) - r; }
+// The hook, in its own frame (z from the tip toward the handle, the throat opening toward +x): a smooth union (min, rounded at the joins) of
+// its real parts rather than a cylinder with a slot cut into it. A slot cut with max() is only sign-correct where it is cut: just outside the
+// un-cut cylinder it still returns the cylinder's distance, so a yarn wider than the blend is pushed out of a mouth that is really open. A union
+// of primitives is a true distance field and can be used with contact radii.
 Real hookSdfRaw(const Vec3& p, const HookShape& s) {
     const Real R = s.R;
-    const Real body = segDist(p, Vec3{0, 0, R}, Vec3{0, 0, s.length}) - R;   // round-ended shaft
-    // the throat: a notch across the whole width on the throat side (+x) down to the axis, from grooveA to grooveB behind the tip. Its front face
-    // leans back over the notch (the head overhangs it: the barb), its back face is a ramp up to the shaft.
-    const Real lean = s.lipEnd - s.grooveA;   // how far the head overhangs at the shaft's surface (shaft radii)
-    const Real fa = std::sqrt(1 + lean * lean), ba = std::sqrt(2.0);
-    const Real dFloor = -p.x;                                                   // above the floor (x > 0)
-    const Real dFront = ((s.grooveA * R + lean * p.x) - p.z) / fa;              // behind the leaning front face
-    const Real dBack = (p.z - (s.grooveB * R - p.x)) / ba;                      // before the ramp
-    const Real notch = std::max(dFloor, std::max(dFront, dBack));
-    return smax(body, -notch, 0.20 * R);   // edges rounded (a sharp barb would cut the yarn)
+    auto W = [&](Real x, Real z) { return Vec3{x * R, 0, z * R}; };
+    const Real lean = s.lipEnd - s.grooveA;          // the barb's overhang past the throat's front (shaft radii)
+    // shaft: a capsule along the axis beyond the taper
+    Real d = capsuleDist(p, W(0, s.grooveB + 1.0), W(0, s.length / R), R);
+    // taper: three capsules of growing radius, so it reads as a cone from the neck up to the shaft
+    d = smin(d, capsuleDist(p, W(-0.10, s.grooveB + 0.7), W(0, s.grooveB + 1.2), 0.85 * R), 0.10 * R);
+    d = smin(d, capsuleDist(p, W(-0.20, s.grooveB + 0.3), W(-0.12, s.grooveB + 0.8), 0.65 * R), 0.10 * R);
+    d = smin(d, capsuleDist(p, W(-0.35, s.grooveB), W(-0.28, s.grooveB + 0.4), 0.48 * R), 0.10 * R);
+    // neck: the spine of the hook, on the far side of the throat from the mouth
+    d = smin(d, capsuleDist(p, W(-0.55, s.grooveA - 0.50), W(-0.55, s.grooveB), 0.30 * R), 0.12 * R);
+    // head: one smooth beak leaning out over the mouth, from the tip to the barb at its back. Its back stops a yarn in the cradle from sliding
+    // toward the tip; the lean is what holds the yarn in.
+    d = smin(d, capsuleDist(p, W(0.0, 0.85), W(0.45 + 0.20 * lean / 0.8, s.grooveA + 0.30), 0.85 * R), 0.15 * R);
+    return d;
 }
 }  // namespace
 
@@ -132,8 +140,9 @@ YarnMesh hookMesh(const HookPose& pose, const HookShape& s, Real cell) {
     const Vec3 col{0.74, 0.76, 0.80};
     const Real R = s.R;
     const Real z1 = (s.grooveB + 2.0) * R;   // marched up to here, a tube after
-    const int nx = (int)std::ceil(2.6 * R / cell), nz = (int)std::ceil((z1 + 1.3 * R) / cell);
-    const Real x0 = -1.3 * R, y0 = -1.3 * R, zs = -1.3 * R;
+    const Real xb = 1.75 + 0.25 * std::max(0.0, (s.lipEnd - s.grooveA) - 0.8) / 0.8;   // the barb leans out past the shaft
+    const int nx = (int)std::ceil(2.0 * xb * R / cell), nz = (int)std::ceil((z1 + 1.3 * R) / cell);
+    const Real x0 = -xb * R, y0 = -xb * R, zs = -1.3 * R;
     auto P = [&](int i, int j, int k) { return Vec3{x0 + i * cell, y0 + j * cell, zs + k * cell}; };
     std::vector<Real> F((size_t)(nx + 1) * (nx + 1) * (nz + 1));
     auto idx = [&](int i, int j, int k) { return ((size_t)k * (nx + 1) + j) * (nx + 1) + i; };
@@ -316,8 +325,7 @@ void YarnSim::feedHand(End& e) {
 }
 
 Vec3 YarnSim::throatPoint() const {
-    if (shape.sdf)   // on the channel's floor, under the lip
-        return hook.tip + rotate(hook.q, Vec3{params.radius * shape.squash, 0, 0.5 * (shape.grooveA + shape.lipEnd) * shape.R});
+    // the middle of the cradle: just behind the head, beside the neck (both shapes put it in the same place)
     return hook.tip + rotate(hook.q, Vec3{throatX * shape.R, 0, 2.8 * shape.R});
 }
 

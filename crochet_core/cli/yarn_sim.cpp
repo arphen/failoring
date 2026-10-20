@@ -71,6 +71,13 @@ int main(int argc, char** argv) {
         else if (k == "--damp") damp = std::atof(argv[i + 1]);
     }
     YarnSim sim;
+    // The hook's shape, for trying it: the SDF hook and the barbs of its throat. SIM_SDF=1 is the smooth barbed hook; the defaults are the tuned
+    // capsule hook's dimensions where they matter.
+    if (std::getenv("SIM_SDF")) sim.shape.sdf = std::atof(std::getenv("SIM_SDF")) > 0;
+    if (std::getenv("SIM_GROOVEA")) sim.shape.grooveA = std::atof(std::getenv("SIM_GROOVEA"));
+    if (std::getenv("SIM_GROOVEB")) sim.shape.grooveB = std::atof(std::getenv("SIM_GROOVEB"));
+    if (std::getenv("SIM_LIPEND")) sim.shape.lipEnd = std::atof(std::getenv("SIM_LIPEND"));
+    if (std::getenv("SIM_SQUASH")) sim.shape.squash = std::atof(std::getenv("SIM_SQUASH"));
     if (std::getenv("SIM_HOOKSHOT")) {   // the hook alone, close up: from the throat side, from the side, from above, at a slant
         const HookPose hp = hookPose(Vec3{}, Vec3{-1, 0, 0}, Vec3{0, 1, 0});
         const YarnMesh hm = hookMesh(hp, sim.shape, 0.1e-3);
@@ -99,23 +106,52 @@ int main(int argc, char** argv) {
         for (int i = 0; i <= 10; ++i) line.push_back(Vec3{0, -lo + (lo + 0.03) * i / 10.0, 0});
         sim.build(line);
         const Real R = sim.shape.R, m = 1e-3;
-        const Real deep = -sim.params.radius - 3.4 * R + 0.0;
+        const Real deep = -(std::getenv("SIM_DEEP") ? std::atof(std::getenv("SIM_DEEP")) : 3.84) * R;
         sim.hook = hookPose(Vec3{6 * m, 0, deep}, Vec3{0, 0, -1}, Vec3{-1, 0, 0});
-        sim.moveHook(hookPose(Vec3{0.4 * m, 0, deep}, Vec3{0, 0, -1}, Vec3{-1, 0, 0}), 0.8);
+        const Real endX = (std::getenv("SIM_CARRY_X") ? std::atof(std::getenv("SIM_CARRY_X")) : 0.4) * m;
+        sim.moveHook(hookPose(Vec3{endX, 0, deep}, Vec3{0, 0, -1}, Vec3{-1, 0, 0}), 0.8);
+        if (std::getenv("SIM_CARRY_SETTLE")) sim.settle(std::atoi(std::getenv("SIM_CARRY_SETTLE")));
         const int mid = (int)(lo / sim.params.segment);
         auto report = [&](const char* w) {
+            const Vec3 T = sim.throatPoint();
             const Vec3 l = rotate(conj(sim.hook.q), sim.rs.x[mid] - sim.hook.tip) / R;
             int best = -1; Real bd = 1e9;
             for (int i = 0; i < sim.rs.particleCount(); ++i) {
-                const Real d = length(sim.rs.x[i] - (sim.hook.tip + sim.hook.axis() * (2.8 * R)));
+                const Real d = length(sim.rs.x[i] - T);
                 if (d < bd) { bd = d; best = i; }
             }
-            std::printf("%s: nearest to throat %.2f mm (p%d), p30 local (%.2f %.2f %.2f), strain %.3f\n", w, bd * 1e3, best, l.x, l.y, l.z, sim.maxStrain());
+            const Vec3 bl = rotate(conj(sim.hook.q), sim.rs.x[best] - sim.hook.tip) / R;
+            std::printf("%s: nearest to throat %.2f mm (p%d) local (%.2f %.2f %.2f) R, p30 local (%.2f %.2f %.2f), strain %.3f, in hook %.2f mm\n", w, bd * 1e3,
+                        best, bl.x, bl.y, bl.z, l.x, l.y, l.z, sim.maxStrain(), sim.hookPenetration() * 1e3);
+            for (int i = std::max(0, mid - 10); i <= std::min(sim.rs.particleCount() - 1, mid + 10); i += 2) {
+                const Vec3 q = rotate(conj(sim.hook.q), sim.rs.x[i] - sim.hook.tip) / R;
+                const Real d = hookSdf(q * R, sim.shape, nullptr) / R;
+                std::printf("    p%d world x %.2f mm local (%.2f %.2f) R sdf %.2f R\n", i, sim.rs.x[i].x * 1e3, q.x, q.z, d);
+            }
+        };
+        // pictures of the carry: the hook side-on from the mouth's side (the yarn across it), and from along the yarn (both arms of the bight)
+        auto snap = [&](const char* tag) {
+            const YarnMesh m = sceneMesh(sim);
+            YarnCamera cam;
+            cam.target = sim.hook.tip + Vec3{0, 0, 0.007};
+            cam.fovDeg = 30;
+            cam.distance = 0.06;
+            char name[256];
+            cam.dir = normalized(Vec3{-0.92, -0.2, 0.35});
+            cam.up = Vec3{0, 0, 1};
+            std::snprintf(name, sizeof name, "%s_%s_mouth.png", out.c_str(), tag);
+            renderYarnPng(name, m, cam, 640, 640);
+            cam.dir = normalized(Vec3{0.25, -0.9, 0.35});
+            cam.up = Vec3{0, 0, 1};
+            std::snprintf(name, sizeof name, "%s_%s_along.png", out.c_str(), tag);
+            renderYarnPng(name, m, cam, 640, 640);
         };
         report("caught");
+        snap("caught");
         sim.onFrame = [&] { if (sim.frame % 15 == 0) report("  pull"); };
-        sim.moveHook(hookPose(Vec3{0.4 * m, 0, deep + 0.025}, Vec3{0, 0, -1}, Vec3{-1, 0, 0}), 1.5);
+        sim.moveHook(hookPose(Vec3{endX, 0, deep + 0.025}, Vec3{0, 0, -1}, Vec3{-1, 0, 0}), 1.5);
         report("pulled");
+        snap("pulled");
         return 0;
     }
     sim.params.radius = rad * 1e-3;

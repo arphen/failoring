@@ -28,10 +28,12 @@ struct HookShape {
     Real R = 2.5e-3;        // shaft radius (a 5 mm hook)
     Real length = 0.075;    // tip to the end of what is simulated of the shaft
     Real squash = 0.6;      // the yarn's radius against the hook, as a fraction of its own: wool squashes into the throat
-    bool sdf = false;       // the hook as a smooth body (a round-ended shaft, a channel cut for the throat, a lip over it) instead of capsules
-    // the throat (shaft radii): a round channel along the hook on the throat side whose floor is at the axis, from grooveA to grooveB behind the
-    // tip; the lip reaches back over its front part to lipEnd, its underside lipGap above the floor
-    Real grooveA = 1.7, grooveB = 4.4, lipEnd = 2.5, lipGap = 0.55;
+    bool sdf = true;        // the hook as one smooth body (a round head with a barb, a neck, a taper and the shaft) instead of capsules
+    // The throat is the cradle beside the neck, its mouth on the +x side: a smooth union of a head (the barb, at the tip), a neck (the spine,
+    // away from the mouth), a taper and the shaft. `grooveA` is the throat's front (the head's back), `grooveB` its back (where the taper
+    // reaches the full shaft), both in shaft radii behind the tip; `lipEnd` is how far the barb's outer face overhangs the mouth beyond
+    // grooveA (shaft radii): the undercut that holds a caught yarn.
+    Real grooveA = 1.7, grooveB = 4.4, lipEnd = 2.5;
 };
 // The hook's signed distance (m) at a point of its own frame (z from the tip toward the handle, the throat opening toward +x), and its gradient.
 Real hookSdf(const Vec3& p, const HookShape& s, Vec3* grad);

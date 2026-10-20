@@ -34,7 +34,7 @@ void testCarry() {
     sim.onFrame = [&] { worst = std::max(worst, sim.maxStrain()); };
     sim.moveHook(hookPose(Vec3{0.4 * m, 0, deep + 0.025}, Vec3{0, 0, -1}, Vec3{-1, 0, 0}), 1.5);
     Real near = 1e9;
-    const Vec3 throat = sim.hook.tip + sim.hook.axis() * (2.8 * R);
+    const Vec3 throat = sim.throatPoint();
     for (const Vec3& p : sim.rs.x) near = std::min(near, length(p - throat));
     CHECKP(near < 1.5 * m, "the hook drawn back 25 mm carries the yarn in its throat (%.2f mm from it)", near * 1e3);
     CHECKP(worst < 0.15, "the yarn runs through the throat as it is carried, stretching at most %.0f%%", worst * 100);
