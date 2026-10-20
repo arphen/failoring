@@ -116,6 +116,8 @@ not from the slip knot, and not five in a row; step 5 is not added.
 - `--chains N` runs N chains after the slip knot; `SIM_RIG=1` starts from the clean loop rig instead.
 - `SIM_PULLTEST="NAME=v1,v2;NAME2=..."` sweeps environment knobs over a whole chain (prepare + finish) from one saved start; prints the result
   and the stage log per combination. `SIM_PRECHAINS=n` runs n chains first (sweep knobs apply only to the trial).
+- `SIM_JOBS=8` runs the combinations in parallel as child processes from that same saved start (default 1, capped at 16); the result lines
+  stay in the serial order. `SIM_PULLTEST_VERBOSE=1` keeps each child's stage prints instead of sending them to `/dev/null`.
 - `SIM_STAGES=1` prints loop counts at every stage; `SIM_ROLLDBG=1` during the roll; `YO_DUMP=1` the yarn's path in the hook's frame.
 - Pictures: `--every N` (snapshots), `SIM_FOLLOW=1` (camera follows the hook), `SIM_CHAINSHOT=1` (after each chain),
   `SIM_PHASESHOT=f` (at every phase change after frame f), `--close a-b/step` with `SIM_CFIX=1 SIM_CDIST=0.06` (close-ups).

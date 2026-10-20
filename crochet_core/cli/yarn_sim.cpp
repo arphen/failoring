@@ -1,11 +1,14 @@
 // yarn_sim: the process simulator (docs/YARN_MODE_PLAN.md section 14) run from the command line: the slip knot made by the hook, with a picture
 // every few frames and the measures (the smallest gap between strands, the stretch, how far the yarn is inside the hook).
 //   yarn_sim [--out prefix] [--every n] [--rad mm]
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include "failoring/crochet/yarn_render.hpp"
 #include "failoring/crochet/yarn_sim.hpp"
@@ -359,25 +362,91 @@ int main(int argc, char** argv) {
             pos = e + 1;
         }
         std::vector<int> idx(axes.size(), 0);
+        std::vector<std::vector<int>> combos;
         while (true) {
-            std::string label;
-            for (size_t k = 0; k < axes.size(); ++k) {
-                setenv(axes[k].first.c_str(), axes[k].second[idx[k]].c_str(), 1);
-                label += axes[k].first + "=" + axes[k].second[idx[k]] + " ";
-            }
-            YarnSim t = sim;
-            t.stageLog.clear();
-            const ChainStart c0 = prepareChain(t);
-            finishChain(t, c0);
-            const ChainResult r = judgeChain(t, c0);
-            std::printf("%s-> %d loops%s   [%s]\n", label.c_str(), r.loops, r.made ? "  MADE" : "", t.stageLog.c_str());
-            std::fflush(stdout);
+            combos.push_back(idx);
             size_t k = 0;
             for (; k < axes.size(); ++k) {
                 if (++idx[k] < (int)axes[k].second.size()) break;
                 idx[k] = 0;
             }
             if (k == axes.size()) break;
+        }
+        auto runOne = [&](const std::vector<int>& pick, std::string* out) {
+            std::string label;
+            for (size_t k = 0; k < axes.size(); ++k) {
+                setenv(axes[k].first.c_str(), axes[k].second[pick[k]].c_str(), 1);
+                label += axes[k].first + "=" + axes[k].second[pick[k]] + " ";
+            }
+            YarnSim t = sim;
+            t.stageLog.clear();
+            const ChainStart c0 = prepareChain(t);
+            finishChain(t, c0);
+            const ChainResult r = judgeChain(t, c0);
+            char line[1024];
+            std::snprintf(line, sizeof line, "%s-> %d loops%s   [%s]\n", label.c_str(), r.loops, r.made ? "  MADE" : "", t.stageLog.c_str());
+            *out = line;
+        };
+        // Each combination is independent from the same saved start. Run them as separate processes (fork) so the
+        // machine's cores are used without making the solver itself threaded; the child's environment is its own, so
+        // setenv is safe. The default is one at a time, as before.
+        const int jobs = std::max(1, std::min(16, (int)(std::getenv("SIM_JOBS") ? std::atoi(std::getenv("SIM_JOBS")) : 1)));
+#if defined(__unix__) || defined(__APPLE__)
+        if (jobs > 1) {
+            std::fflush(stdout);   // do not duplicate buffered output in every child
+            for (size_t base = 0; base < combos.size(); base += (size_t)jobs) {
+                const size_t end = std::min(combos.size(), base + (size_t)jobs);
+                std::vector<int> fds;
+                std::vector<pid_t> pids;
+                for (size_t j = base; j < end; ++j) {
+                    int fd[2];
+                    if (pipe(fd) != 0) {
+                        std::printf("SIM_PULLTEST: pipe failed\n");
+                        continue;
+                    }
+                    const pid_t pid = fork();
+                    if (pid == 0) {
+                        close(fd[0]);
+                        if (!std::getenv("SIM_PULLTEST_VERBOSE")) (void)std::freopen("/dev/null", "w", stdout);
+                        std::string line;
+                        runOne(combos[j], &line);
+                        (void)write(fd[1], line.data(), line.size());
+                        close(fd[1]);
+                        _exit(0);
+                    }
+                    if (pid < 0) {
+                        close(fd[0]);
+                        close(fd[1]);
+                        std::printf("SIM_PULLTEST: fork failed\n");
+                        continue;
+                    }
+                    close(fd[1]);
+                    fds.push_back(fd[0]);
+                    pids.push_back(pid);
+                }
+                for (size_t k = 0; k < fds.size(); ++k) {
+                    std::string out;
+                    char buf[1024];
+                    ssize_t n = 0;
+                    while ((n = read(fds[k], buf, sizeof buf)) > 0) out.append(buf, (size_t)n);
+                    close(fds[k]);
+                    int status = 0;
+                    waitpid(pids[k], &status, 0);
+                    if (out.empty()) std::printf("SIM_PULLTEST: a child failed\n");
+                    else std::fputs(out.c_str(), stdout);
+                }
+                std::fflush(stdout);
+            }
+            return 0;
+        }
+#else
+        (void)jobs;
+#endif
+        for (const auto& pick : combos) {
+            std::string line;
+            runOne(pick, &line);
+            std::fputs(line.c_str(), stdout);
+            std::fflush(stdout);
         }
         return 0;
     }
