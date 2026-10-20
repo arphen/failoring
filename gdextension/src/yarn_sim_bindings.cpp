@@ -50,6 +50,7 @@ int YarnSimSession::record(const String& procedure) {
     radius_ = sim.params.radius;
     if (procedure != String("slip_knot")) return 0;
     sim.build(fl::slipKnotLayout(sim.params.radius));
+    shape_ = sim.shape;
     sim.onFrame = [&] {
         Frame f;
         f.yarn = sim.rs.x;
@@ -74,6 +75,8 @@ Dictionary YarnSimSession::get_yarn_mesh(int i, int sides, int subdiv) const {
 
 Dictionary YarnSimSession::get_hook_mesh(int i) const {
     if (i < 0 || i >= (int)frames_.size()) return Dictionary();
+    if (shape_.sdf)
+        return toDict(fl::hookMesh(frames_[i].pose, shape_, 0.2e-3));   // 0.2 mm cells: fine in a 0.12 m view, and quick as the hook moves
     fl::YarnMesh m;
     fl::YarnMeshOptions o;
     o.plyContrast = 0.0;

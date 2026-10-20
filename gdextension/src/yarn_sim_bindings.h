@@ -23,7 +23,8 @@ public:
     int get_frame_count() const { return (int)frames_.size(); }
     // The yarn in frame `i` as a mesh {positions, normals, colors, indices} (metres; the slip knot is made in the x-y plane, z toward the crocheter).
     Dictionary get_yarn_mesh(int i, int sides, int subdiv) const;
-    // The hook in frame `i`, drawn from the very capsules the yarn collides with: the same dictionary.
+    // The hook in frame `i`: the smooth SDF body the yarn collides with (marched from the same shape), or its capsules when the shape is the
+    // capsule hook.
     Dictionary get_hook_mesh(int i) const;
     // {phase (words), tip, axis (tip -> handle), throat, loops_on_hook, min_gap (m), radius (m)}
     Dictionary get_frame_info(int i) const;
@@ -42,6 +43,7 @@ private:
     };
     std::vector<Frame> frames_;
     double radius_ = 0.0011;
+    fl::HookShape shape_;
 };
 
 }  // namespace godot
