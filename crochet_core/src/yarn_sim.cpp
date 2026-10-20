@@ -99,6 +99,7 @@ Real smin(Real a, Real b, Real k) {
     const Real h = std::clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
     return b + (a - b) * h - k * h * (1 - h);
 }
+Real smax(Real a, Real b, Real k) { return -smin(-a, -b, k); }
 Real capsuleDist(const Vec3& p, const Vec3& a, const Vec3& b, Real r) { return segDist(p, a, b) - r; }
 // The hook, in its own frame (z from the tip toward the handle, the throat opening toward +x): a smooth union (min, rounded at the joins) of
 // its real parts rather than a cylinder with a slot cut into it. A slot cut with max() is only sign-correct where it is cut: just outside the
@@ -107,18 +108,24 @@ Real capsuleDist(const Vec3& p, const Vec3& a, const Vec3& b, Real r) { return s
 Real hookSdfRaw(const Vec3& p, const HookShape& s) {
     const Real R = s.R;
     auto W = [&](Real x, Real z) { return Vec3{x * R, 0, z * R}; };
-    const Real lean = s.lipEnd - s.grooveA;          // the barb's overhang past the throat's front (shaft radii)
     // shaft: a capsule along the axis beyond the taper
-    Real d = capsuleDist(p, W(0, s.grooveB + 1.0), W(0, s.length / R), R);
+    Real d = capsuleDist(p, W(0, 5.2), W(0, s.length / R), R);
     // taper: three capsules of growing radius, so it reads as a cone from the neck up to the shaft
-    d = smin(d, capsuleDist(p, W(-0.10, s.grooveB + 0.7), W(0, s.grooveB + 1.2), 0.85 * R), 0.10 * R);
-    d = smin(d, capsuleDist(p, W(-0.20, s.grooveB + 0.3), W(-0.12, s.grooveB + 0.8), 0.65 * R), 0.10 * R);
-    d = smin(d, capsuleDist(p, W(-0.35, s.grooveB), W(-0.28, s.grooveB + 0.4), 0.48 * R), 0.10 * R);
-    // neck: the spine of the hook, on the far side of the throat from the mouth
-    d = smin(d, capsuleDist(p, W(-0.55, s.grooveA - 0.50), W(-0.55, s.grooveB), 0.30 * R), 0.12 * R);
-    // head: one smooth beak leaning out over the mouth, from the tip to the barb at its back. Its back stops a yarn in the cradle from sliding
-    // toward the tip; the lean is what holds the yarn in.
-    d = smin(d, capsuleDist(p, W(0.0, 0.85), W(0.45 + 0.20 * lean / 0.8, s.grooveA + 0.30), 0.85 * R), 0.15 * R);
+    d = smin(d, capsuleDist(p, W(-0.10, 4.9), W(0, 5.4), 0.85 * R), 0.10 * R);
+    d = smin(d, capsuleDist(p, W(-0.22, 4.5), W(-0.12, 5.0), 0.65 * R), 0.10 * R);
+    d = smin(d, capsuleDist(p, W(-0.36, 4.2), W(-0.28, 4.6), 0.48 * R), 0.10 * R);
+    // neck: the spine of the hook, on the far side of the throat from the mouth; it leaves the groove open toward +x
+    d = smin(d, capsuleDist(p, W(-0.50, 2.05), W(-0.50, 4.2), 0.50 * R), 0.12 * R);
+    // head: a dome on the axis from the tip to a flat back at the front of the groove (the back edge is the barb: a wall a yarn drawn
+    // toward the tip is stopped by, while the mouth beside it stays open so the yarn can be laid in from the throat's side)
+    Real head = capsuleDist(p, W(0.0, 0.35), W(0.0, 1.0), 0.62 * R);
+    head = smin(head, capsuleDist(p, W(0.0, 0.9), W(0.0, 1.5), 0.92 * R), 0.12 * R);
+    head = smin(head, capsuleDist(p, W(0.0, 1.4), W(0.0, 1.8), 1.00 * R), 0.10 * R);
+    head = smax(head, p.z - 2.05 * R, 0.08 * R);
+    // barb: a raised lip along the back edge on the mouth side. The neck pushes the yarn toward the mouth; without the lip it slips out round
+    // the head's edge (the hook passes it by), with it the yarn is held between the neck and the lip, in front of the head's back.
+    head = smin(head, capsuleDist(p, Vec3{0.85 * R, -1.0 * R, 2.0 * R}, Vec3{0.85 * R, 1.0 * R, 2.0 * R}, 0.20 * R), 0.10 * R);
+    d = smin(d, head, 0.15 * R);
     return d;
 }
 }  // namespace
@@ -139,8 +146,8 @@ YarnMesh hookMesh(const HookPose& pose, const HookShape& s, Real cell) {
     YarnMesh m;
     const Vec3 col{0.74, 0.76, 0.80};
     const Real R = s.R;
-    const Real z1 = (s.grooveB + 2.0) * R;   // marched up to here, a tube after
-    const Real xb = 1.75 + 0.25 * std::max(0.0, (s.lipEnd - s.grooveA) - 0.8) / 0.8;   // the barb leans out past the shaft
+    const Real z1 = 6.4 * R;   // marched up to here, a tube after
+    const Real xb = 1.75;      // the box the head and barb are marched in, past the barb's outer face
     const int nx = (int)std::ceil(2.0 * xb * R / cell), nz = (int)std::ceil((z1 + 1.3 * R) / cell);
     const Real x0 = -xb * R, y0 = -xb * R, zs = -1.3 * R;
     auto P = [&](int i, int j, int k) { return Vec3{x0 + i * cell, y0 + j * cell, zs + k * cell}; };
@@ -325,8 +332,8 @@ void YarnSim::feedHand(End& e) {
 }
 
 Vec3 YarnSim::throatPoint() const {
-    // the middle of the cradle: just behind the head, beside the neck (both shapes put it in the same place)
-    return hook.tip + rotate(hook.q, Vec3{throatX * shape.R, 0, 2.8 * shape.R});
+    // the middle of the cradle: in the open groove behind the head, beside the neck
+    return hook.tip + rotate(hook.q, Vec3{throatX * shape.R, 0, 2.5 * shape.R});
 }
 
 void YarnSim::putFinger(int particle, const Vec3& side) {
@@ -360,12 +367,15 @@ void dropRing(RodSystem& rs, int& idx, int& other) {
 }  // namespace
 
 void YarnSim::setThroatRing(bool on, int fromParticle) {
-    dropRing(rs, throatRing_, fingerRing_);
-    if (!on) return;
+    if (!on) {
+        dropRing(rs, throatRing_, fingerRing_);
+        return;
+    }
     const Vec3 T = throatPoint();
     Real d2 = 0;
     const int best = nearestSegment(rs, T, fromParticle, &d2);
-    if (best < 0 || d2 > 25e-6) return;   // nothing within 5 mm of the throat
+    if (best < 0 || d2 > 25e-6) return;   // nothing within 5 mm of the throat: keep the ring that is already there
+    dropRing(rs, throatRing_, fingerRing_);
     SlideRing ring;
     ring.at = T;
     ring.seg = best;
@@ -441,7 +451,7 @@ void YarnSim::step(const HookPose& pose) {
     caught_.clear();
     if (catchK > 0) {
         // the middle of the throat: just behind the head, in the groove (the yarn's squashed radius out from the neck)
-        const Vec3 T = hook.tip + rotate(hook.q, Vec3{0.05 * shape.R, 0, 2.8 * shape.R});
+        const Vec3 T = throatPoint();
         const int n = rs.particleCount();
         for (int i = std::max(1, catchFrom); i + 1 < n; ++i) {
             if (i == ball.particle || i == pulled_ || rs.w[i] <= 0) continue;
@@ -813,7 +823,8 @@ ChainStart prepareChain(YarnSim& sim) {
     const Real reach = envOr("CH_REACH", 9) * m;
     // the loop on the hook
     int lo = -1, hi = -1;
-    if (!loopRange(sim, reach, envOr("CH_TURNS", 0.6), &lo, &hi) && !(sim.loopsOnHook(front) != 0 && loopRange(sim, 1.6 * reach, 0.4, &lo, &hi))) {
+    if (!loopRange(sim, reach, envOr("CH_TURNS", 0.6), &lo, &hi) &&
+        !(sim.loopsOnHook(front) != 0 && loopRange(sim, 1.6 * reach, 0.4, &lo, &hi))) {
         std::printf("chain: no loop on the hook (%d by the half plane)\n", sim.loopsOnHook(front));
         return c;
     }
@@ -902,20 +913,60 @@ ChainStart prepareChain(YarnSim& sim) {
         c.oldHi = hi;
     }
     c.loopsAtStart = sim.loopsOnHook(front);
-    std::printf("chain: the loop on the hook is yarn %d..%d; %d loops (front)\n", c.oldLo, c.oldHi, c.loopsAtStart);
+    // where the old loop sits on the shaft: the HOLD_T variants must leave it in the same place for the yarn over to be repeatable
+    Real loAx = 1e9, hiAx = -1e9, loRad = 0;
+    for (int i = c.oldLo; i <= c.oldHi; ++i) {
+        const Vec3 l = rotate(conj(sim.hook.q), sim.rs.x[i] - sim.hook.tip);
+        loAx = std::min(loAx, l.z);
+        hiAx = std::max(hiAx, l.z);
+        loRad = std::max(loRad, std::hypot(l.x, l.y));
+    }
+    std::printf("chain: the loop on the hook is yarn %d..%d at %.1f..%.1f mm on the shaft (%.1f mm out); %d loops from the front\n", c.oldLo,
+                c.oldHi, loAx * 1e3, hiAx * 1e3, loRad * 1e3, c.loopsAtStart);
     sim.stageLog += std::string("p") + std::to_string(sim.loopsOnHook(front)) + " ";
     if (envOr("SIM_STAGES", 0) > 0) std::printf("  prep %s: %d loops (front)\n", "snug", sim.loopsOnHook(front));
     c.tip0 = sim.hook.tip;
+    // The roll: the throat holds the yarn at the neck while the hook turns toward the crocheter (over the top) one full turn round the neck
+    // (one loop more on the hook), and a little past it so the loop holds; then the hook comes back to where it was.
+    auto wind = [&]() -> Real {
+        sim.setThroatRing(true, c.oldHi + 2);
+        const Real dA = 2 * kPi / (envOr("YO_ROLLT", 1.2) / sim.params.dt);
+        Vec3 th = sim.hook.throat();
+        const Real rollSense = envOr("YO_ROLL", -1);   // +1: back, up, front, down
+        Real rolled = 0;
+        while (rolled < envOr("YO_ROLLMAX", 1.2) * 2 * kPi) {
+            th = rotate(quatFromAxisAngle(ax, -rollSense * dA), th);   // about the tip->handle axis; seen from the tip this goes back, up, front
+            rolled += dA;
+            sim.step(hookPose(sim.hook.tip, -ax, th));
+            if (sim.onFrame) sim.onFrame();
+            const int nowLoops = sim.loopsOnHook(front);
+            if (envOr("SIM_ROLLDBG", 0) > 0 && (int)(rolled / dA) % 10 == 0)
+                std::printf("    roll %.0f deg: %d loops (front) %d (up) %d (back), throat %s\n", rolled * 180 / kPi, nowLoops, sim.loopsOnHook(up),
+                            sim.loopsOnHook(front * -1.0), sim.throatRingOn() ? "holds" : "empty");
+            if (nowLoops * (c.loopsAtStart >= 0 ? 1 : -1) == std::abs(c.loopsAtStart) + 1) {   // one loop more, wound the same way
+                for (int k = 0; k < (int)(envOr("YO_OVER", 0.1) * 2 * kPi / dA); ++k) {   // and a little further, so it holds
+                    th = rotate(quatFromAxisAngle(ax, -rollSense * dA), th);
+                    sim.step(hookPose(sim.hook.tip, -ax, th));
+                    if (sim.onFrame) sim.onFrame();
+                }
+                break;
+            }
+        }
+        sim.moveHook(hookPose(c.tip0, -ax, th), envOr("YO_RETURN", 0.6));
+        return rolled;
+    };
     // yarn over: the finger takes the working yarn round the neck just at the throat, starting behind and above, until the yarn after the loop
     // winds a full turn
     sim.phase = "Yarn over: the finger takes the yarn round the hook, into its throat";
     const Real sense = envOr("YO_SENSE", -1);
     Real turned = 0, wNew = 0;
-    if (envOr("YO_MODE", 2) == 2) {
+    const int yoMode = (int)envOr("YO_MODE", 2);
+    if (yoMode == 2) {
         // the finger behind the hook, to the left and above: the yarn runs from the work back past the hook to it. The throat turned back toward it,
         // the hook moved back until the yarn lies in the throat; then rolled toward the crocheter over the top: the yarn goes round the neck
         const Vec3 back = front * -1.0;
-        moveHandTo(sim, c.tip0 - ax * (envOr("YO_L", 20) * m) + up * (envOr("YO_U", 10) * m) + back * (envOr("YO_B", 20) * m), 0.6);
+        const Real yoL = envOr("YO_L", -5);
+        moveHandTo(sim, c.tip0 - ax * (yoL * m) + up * (envOr("YO_U", 10) * m) + back * (envOr("YO_B", 20) * m), 0.6);
         // the finger moved along the hook until the yarn crosses behind the hook level with the throat
         const Real aT = dot(sim.throatPoint() - sim.hook.tip, ax);
         for (int it = 0; it < (int)envOr("YO_ITERS", 16); ++it) {
@@ -931,48 +982,31 @@ ChainStart prepareChain(YarnSim& sim) {
             moveHandTo(sim, sim.hand - ax * ((aC - aT) * envOr("YO_GAIN", 0.7)), 0.35);
         }
         const Vec3 thrBack = normalized(back + up * envOr("YO_TU", 0.3));
-        sim.moveHook(hookPose(c.tip0, -ax, thrBack), 0.4);
+        const HookPose aimPose = hookPose(c.tip0, -ax, thrBack);
+        sim.moveHook(aimPose, 0.4);
         const Real step = envOr("YO_CSTEP", 0.1) * m;
         bool in = false;
         Real closest = 1e9;
         Real moved = 0;
+        int bi = -1;
+        Vec3 bl{};
         for (; moved < envOr("YO_REACH", 35) * m && !in; moved += step) {
             sim.step(hookPose(sim.hook.tip + thrBack * step, -ax, thrBack));
             if (sim.onFrame) sim.onFrame();
             const Vec3 T = sim.throatPoint();
             for (int i = c.oldHi + 2; i < sim.rs.particleCount(); ++i) {
                 const Real d = length(sim.rs.x[i] - T);
-                closest = std::min(closest, d);
+                if (d < closest) { closest = d; bi = i; bl = rotate(conj(sim.hook.q), sim.rs.x[i] - sim.hook.tip); }
                 if (d < envOr("YO_CATCHR", 1.6) * m) { in = true; break; }
             }
         }
-        if (envOr("SIM_STAGES", 0) > 0) std::printf("  yarn over: the hook moved %.1f mm back; the yarn came within %.2f mm of the throat\n", moved * 1e3, closest * 1e3);
-        sim.setThroatRing(true, c.oldHi + 2);
-        // rolled toward the crocheter (over the top), the yarn held in the throat, until it winds a full turn round the neck
-        const Real dA = 2 * kPi / (envOr("YO_ROLLT", 1.2) / sim.params.dt);
-        Vec3 th = sim.hook.throat();
-        const Real rollSense = envOr("YO_ROLL", -1);   // +1: back, up, front, down
-        while (turned < 1.75 * 2 * kPi) {
-            th = rotate(quatFromAxisAngle(ax, -rollSense * dA), th);   // about the tip->handle axis; seen from the tip this goes back, up, front
-            turned += dA;
-            sim.step(hookPose(sim.hook.tip, -ax, th));
-            if (sim.onFrame) sim.onFrame();
-            const int nowLoops = sim.loopsOnHook(front);
-            if (envOr("SIM_ROLLDBG", 0) > 0 && (int)(turned / dA) % 10 == 0)
-                std::printf("    roll %.0f deg: %d loops (front) %d (up) %d (back), throat %s\n", turned * 180 / kPi, nowLoops, sim.loopsOnHook(up),
-                            sim.loopsOnHook(front * -1.0), sim.throatRingOn() ? "holds" : "empty");
-            if (nowLoops * (c.loopsAtStart >= 0 ? 1 : -1) == std::abs(c.loopsAtStart) + 1) {   // one loop more, wound the same way
-                for (int k = 0; k < (int)(envOr("YO_OVER", 0.1) * 2 * kPi / dA); ++k) {   // and a little further, so it holds
-                    th = rotate(quatFromAxisAngle(ax, -rollSense * dA), th);
-                    sim.step(hookPose(sim.hook.tip, -ax, th));
-                    if (sim.onFrame) sim.onFrame();
-                }
-                break;
-            }
+        if (envOr("SIM_STAGES", 0) > 0) {
+            std::printf("  yarn over: the hook moved %.1f mm back; the yarn came within %.2f mm of the throat", moved * 1e3, closest * 1e3);
+            if (bi >= 0) std::printf(" (p%d, local %.1f %.1f %.1f R, %d after the loop)", bi, bl.x / R, bl.y / R, bl.z / R, bi - c.oldHi);
+            std::printf("\n");
         }
-        wNew = sim.windingNear(c.oldHi + 2, sim.rs.particleCount() - 1, reach);
-        sim.moveHook(hookPose(c.tip0, -ax, th), envOr("YO_RETURN", 0.6));
-    } else if (envOr("YO_MODE", 2) == 4) {
+        turned = wind();
+    } else if (yoMode == 4) {
         // the finger holds the yarn well away, behind and above the hook, to the left; the yarn runs from the loop to it. The hook scoops round
         // that yarn: its tip circles it (the throat toward the crocheter) until the yarn winds a full turn round the neck
         const Vec3 back = front * -1.0;
@@ -1047,11 +1081,15 @@ ChainStart prepareChain(YarnSim& sim) {
         }
     }
     sim.setThroatRing(true, c.oldHi + 2);
-    c.loopsBefore = sim.loopsOnHook(front);
+    c.loopsBefore = c.loopsAtStart;
     c.loopsAfterYo = sim.loopsOnHook(front);
     sim.stageLog += "yo:" + std::to_string(c.loopsAfterYo) + (sim.throatRingOn() ? "t " : " ");
-    std::printf("yarn over: the working yarn winds %.2f after %.0f degrees; %s; %d loops on the hook (were %d)\n", wNew, turned * 180 / kPi,
-                sim.throatRingOn() ? "caught in the throat" : "NOT caught", c.loopsAfterYo, c.loopsAtStart);
+    if (yoMode == 2)
+        std::printf("yarn over: the hook rolled %.0f degrees; %s; %d loops on the hook (were %d)\n", turned * 180 / kPi,
+                    sim.throatRingOn() ? "caught in the throat" : "NOT caught", c.loopsAfterYo, c.loopsAtStart);
+    else
+        std::printf("yarn over: the working yarn winds %.2f after %.0f degrees; %s; %d loops on the hook (were %d)\n", wNew, turned * 180 / kPi,
+                    sim.throatRingOn() ? "caught in the throat" : "NOT caught", c.loopsAfterYo, c.loopsAtStart);
     c.ok = true;
     return c;
 }
@@ -1060,7 +1098,6 @@ void finishChain(YarnSim& sim, const ChainStart& c) {
     const Real m = kMm;
     const Vec3 ax = sim.hook.axis();
     const Vec3 up{0, 1, 0}, front{0, 0, 1};
-    const Real reach = envOr("CH_REACH", 9) * m;
     auto stage = [&](const char* what) {
         sim.stageLog += std::string(what).substr(0, 4) + ":" + std::to_string(sim.loopsOnHook(front)) + (sim.throatRingOn() ? "t " : " ");
         if (envOr("SIM_STAGES", 0) <= 0) return;
@@ -1116,33 +1153,6 @@ void finishChain(YarnSim& sim, const ChainStart& c) {
     sim.release(c.hold);
     sim.settle(20);
     stage("released");
-}
-
-bool hookLoop(const YarnSim& sim, int* from, int* to) {
-    // the hook's axis, closed far away
-    const Vec3 ax = sim.hook.axis();
-    Vec3 u = Vec3{0, 0, 1} - ax * ax.z;
-    if (length(u) < 1e-6) u = Vec3{0, 1, 0} - ax * ax.y;
-    u = normalized(u);
-    const std::vector<Vec3> H{sim.hook.tip - ax * 0.05, sim.hook.tip + ax * 0.08, sim.hook.tip + ax * 0.08 + u * 1.0, sim.hook.tip - ax * 0.05 + u * 1.0};
-    // stretches of yarn closed where the yarn touches itself
-    const int n = sim.rs.particleCount();
-    const Real touch2 = std::pow(5.0 * sim.params.radius, 2);   // (a loose crossing counts)
-    int bestSpan = 1 << 30;
-    bool found = false;
-    for (int i = 0; i < n; ++i)
-        for (int j = i + 12; j < n; ++j) {
-            if (j - i >= bestSpan) break;
-            if (length2(sim.rs.x[i] - sim.rs.x[j]) > touch2) continue;
-            const std::vector<Vec3> P(sim.rs.x.begin() + i, sim.rs.x.begin() + j + 1);
-            if (std::fabs(std::fabs(linkingNumber(P, H)) - 1.0) < 0.25) {
-                bestSpan = j - i;
-                if (from) *from = i;
-                if (to) *to = j;
-                found = true;
-            }
-        }
-    return found;
 }
 
 int carriedRound(const YarnSim& sim0) {

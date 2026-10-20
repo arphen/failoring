@@ -29,11 +29,6 @@ struct HookShape {
     Real length = 0.075;    // tip to the end of what is simulated of the shaft
     Real squash = 0.6;      // the yarn's radius against the hook, as a fraction of its own: wool squashes into the throat
     bool sdf = true;        // the hook as one smooth body (a round head with a barb, a neck, a taper and the shaft) instead of capsules
-    // The throat is the cradle beside the neck, its mouth on the +x side: a smooth union of a head (the barb, at the tip), a neck (the spine,
-    // away from the mouth), a taper and the shaft. `grooveA` is the throat's front (the head's back), `grooveB` its back (where the taper
-    // reaches the full shaft), both in shaft radii behind the tip; `lipEnd` is how far the barb's outer face overhangs the mouth beyond
-    // grooveA (shaft radii): the undercut that holds a caught yarn.
-    Real grooveA = 1.7, grooveB = 4.4, lipEnd = 2.5;
 };
 // The hook's signed distance (m) at a point of its own frame (z from the tip toward the handle, the throat opening toward +x), and its gradient.
 Real hookSdf(const Vec3& p, const HookShape& s, Vec3* grad);
@@ -100,7 +95,7 @@ public:
     void setThroatRing(bool on, int fromParticle = 0);
     bool throatRingOn() const { return throatRing_ >= 0; }
     bool fingerEyelet = true;
-    Real throatX = 0.05;   // where the throat holds a caught yarn, out from the axis toward the throat's mouth (shaft radii)
+    Real throatX = 0.30;   // where the throat holds a caught yarn, out from the axis toward the throat's mouth (shaft radii)
     Real throatStiffness = 0.5;   // the throat's hold is soft (contact can push back on it), the finger's is firm
     bool homeSet = false;   // where the hook works from, stitch after stitch (set by the first chain)
     Vec3 home{};   // the finger is an eyelet the yarn slides through (true) or a capsule it lies over (false)
@@ -182,16 +177,12 @@ struct ChainResult {
     Real link = 0;   // degrees of the shaft the yarn closes round when the working yarn is pulled firmly (a loop on the hook: ~360)
     int loops = 0;   // loopsOnHook seen from above: exactly one loop
     int oldOn = 0;   // particles of the old loop still round the hook
-    int loopFrom = -1, loopTo = -1;   // the loop on the hook (see hookLoop)
     Real oldWind = 0, newWind = 0;    // how far the old loop's yarn and the yarn after it wind round the hook (turns)
     Real length = 0;
     bool made = false;
 };
 ChainResult judgeChain(const YarnSim& sim, const ChainStart& c);
 int carriedRound(const YarnSim& sim);   // 360 with a loop on the hook, else 0
-// The loop on the hook: the shortest stretch of yarn, from particle `from` to `to` where the yarn touches itself, that the hook's axis passes through
-// (linking number 1 with the axis closed far away). False when there is none.
-bool hookLoop(const YarnSim& sim, int* from, int* to);
 
 // A test rig for stitches: the hook lying tip to the left at `tip`, a loop snug on its shaft, its front leg running down to the work (the tail end,
 // held), its back leg up behind to the index finger and over it to the spool. Builds `sim` (finger on, hook posed).

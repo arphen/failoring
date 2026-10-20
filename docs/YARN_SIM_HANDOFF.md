@@ -56,7 +56,13 @@ turn back, snug, release). `judgeChain` decides "made".
 - **Loop count** = `sim.loopsOnHook(front)`: signed crossings of the half-plane from the hook's axis toward the crocheter (`+z`). Expected
   sequence for a chain: `1` → `2` after the yarn over → `1` after the pull → `1` at the end, with more yarn drawn from the hand.
 - Every trial logs a stage string, e.g. `[p1 p1 p1 p1 yo:2t caug:2t turn:2t pull:1t turn:1t snug:1t rele:1]` (`t` = the throat holds yarn).
-- The first chain from the slip knot is made in many settings; the second and later ones are not reliable.
+- **SDF hook (default).** The open-groove SDF hook carries the yarn and the slip knot; `test_crochet_yarn_sim` passes. The first chain from
+  `buildLoopRig` is made for `HOLD_T=0.50..0.53` at damping 15 (4/4), also with `SIM_SEAT=9`. It is not yet repeatable from the slip knot:
+  the slip-knot loop sits ~12–15 mm out from the shaft (the rig's is ~8 mm), the yarn over adds no loop, and the pull leaves 0–2. A
+  `HOLD_BELOW` sweep (2, 5, 9, 14, 20) did not make it; 14 was closest (`yo:1`, final 2).
+- **Five in a row.** Only the first is made. After it, the new loop is drawn against the head's flat back; the next yarn over does not add a
+  loop. A half-back head (flat only on the throat side) passes carry/slip but loses the first chain's yarn over (`yo:1` vs 2), so the
+  full-width flat back is kept for now.
 - **Key finding: the simulation is chaotic at damping 20–40.** Changing an irrelevant timing (`HOLD_T` 0.50 → 0.52) flips made/failed. At
   damping 60 results are repeatable, but the hook no longer catches the yarn. This, not the choice of motions, is the main problem.
 - The yarn over is the fragile step. What is known:
@@ -67,17 +73,20 @@ turn back, snug, release). `judgeChain` decides "made".
   - Pushing the hook tip-first to seat a loop spears the chain hanging below; slide the work along the hook instead (`SEAT_HAND=1`).
   - The finger must travel with the hook during the pull (`PU_FOLLOW`), and the throat must turn back the way it came (`PU_BACK=2`).
 
-## 6. In progress when handed over: a real hook
+## 6. The SDF hook
 
-`HookShape::sdf` (default **false**, so the passing slip knot keeps the capsule hook):
-- `hookSdf`: round-ended shaft with a notch across the throat side down to the axis, its front face leaning back over the notch (the barb).
+`HookShape::sdf` is **true** by default. The hook is one smooth body:
+- `hookSdf`: a round head from the tip to a flat back at `z=2.05R`, a full-width barb along that back edge (`x=0.85R`, `y=±1R`, `z=2R`,
+  radius `0.20R`), a neck on the far side (`x=-0.50R`, from `z=2.05R` to `4.2R`), a three-capsule taper and the shaft. The groove is open
+  toward `+x`; the yarn is laid in from the mouth and held between the neck and the barb.
 - `RodSystem::bodies` / `SdfBody` / `solveBodies`: SDF collider sampled along each segment (3 points), Coulomb friction relative to the body's
   motion, smooth motion over substeps.
 - `hookMesh`: marching tetrahedra for drawing (CLI `SIM_HOOKSHOT=1 ./yarn_sim --out x` renders the hook alone).
-- Switch it on without editing code: `SIM_SDF=1 ./yarn_sim ...` (CLI). In code: `sim.shape.sdf = true`.
-- With `sdf = true` the slip knot and the carry test **fail**: the yarn does not stay in the new throat. The slip-knot script was tuned for
-  the capsule hook. Next: make the carry test pass with the SDF hook (barb depth/lean `grooveA/grooveB/lipEnd`, `squash`, hook friction,
-  throat point under the barb), then re-tune `makeSlipKnot`, then the chain.
+- `SIM_SDF=0 ./yarn_sim ...` switches back to the capsule hook for comparison; in code, `sim.shape.sdf = false`.
+- The carry test and the slip knot pass with `sdf=true`; `test_crochet_yarn_sim` reports the yarn staying in the throat over the 25 mm pull
+  and the slip knot leaving one loop round the shaft.
+- The flat back that catches the first yarn over also keeps an old loop from sliding off after a stitch. A half-back head (rounded on the far
+  side) lets the loop go but loses the first yarn over, so the full-width back is kept until the chain motions can work around it (section 5).
 
 ## 7. Plan, step by step
 
@@ -98,6 +107,9 @@ turn back, snug, release). `judgeChain` decides "made".
    Keep `yarn_view_check.gd` at 0 failed.
 7. **Single crochet** into the 2nd chain from the hook (insert, yarn over, pull up a loop → 2 loops, yarn over, pull through both → 1),
    following `docs/YARN_SC_SWATCH_SPEC.md`. Same loop-count stages.
+
+**Status after the SDF hook:** steps 1 and 2 are done; step 3 has a 4/4 result only at damping 15; step 4 has the first chain from the rig,
+not from the slip knot, and not five in a row; step 5 is not added.
 
 ## 8. Tools in the CLI (`build/yarn_sim`)
 

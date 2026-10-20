@@ -71,12 +71,8 @@ int main(int argc, char** argv) {
         else if (k == "--damp") damp = std::atof(argv[i + 1]);
     }
     YarnSim sim;
-    // The hook's shape, for trying it: the SDF hook and the barbs of its throat. SIM_SDF=1 is the smooth barbed hook; the defaults are the tuned
-    // capsule hook's dimensions where they matter.
+    // The hook's shape: SIM_SDF=1 is the smooth barbed hook; the capsule hook is kept for comparing with the old tests.
     if (std::getenv("SIM_SDF")) sim.shape.sdf = std::atof(std::getenv("SIM_SDF")) > 0;
-    if (std::getenv("SIM_GROOVEA")) sim.shape.grooveA = std::atof(std::getenv("SIM_GROOVEA"));
-    if (std::getenv("SIM_GROOVEB")) sim.shape.grooveB = std::atof(std::getenv("SIM_GROOVEB"));
-    if (std::getenv("SIM_LIPEND")) sim.shape.lipEnd = std::atof(std::getenv("SIM_LIPEND"));
     if (std::getenv("SIM_SQUASH")) sim.shape.squash = std::atof(std::getenv("SIM_SQUASH"));
     if (std::getenv("SIM_HOOKSHOT")) {   // the hook alone, close up: from the throat side, from the side, from above, at a slant
         const HookPose hp = hookPose(Vec3{}, Vec3{-1, 0, 0}, Vec3{0, 1, 0});
