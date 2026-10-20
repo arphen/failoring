@@ -54,25 +54,30 @@ Code: `prepareChain` (find the loop, left hand grips the work below it, seat, sn
 turn back, snug, release). `judgeChain` decides "made".
 
 - **Stage loop count** = `sim.loopsOnHook(front)`: signed crossings of the half-plane from the hook's axis toward the crocheter (`+z`);
-  it also counts the chain's legs hanging beside the hook. Expected sequence for a chain: `1` → `2` after the yarn over → `1` after the
-  pull → `1` at the end, with more yarn drawn from the hand. The "made" judge uses the linking stretch below.
+  it also counts the chain's legs hanging beside the hook. For a first chain the expected sequence is `1` → `2` after the yarn over → `1`
+  after the pull → `1` at the end; a carried chain can start at 2 or 3 crossings. The "made" judge uses the linking stretch below and
+  requires the yarn over to add one crossing.
 - Every trial logs a stage string, e.g. `[p1 p1 p1 p1 yo:2t caug:2t turn:2t pull:1t turn:1t snug:1t rele:1]` (`t` = the throat holds yarn).
 - **SDF hook (default).** The open-groove SDF hook carries the yarn and the slip knot; `test_crochet_yarn_sim` passes. The first chain from
   `buildLoopRig` is made for `HOLD_T=0.50..0.53` at damping 15 (4/4), also with `SIM_SEAT=9`.
-- **Two chains from the slip knot.** The first is made at `HOLD_BELOW=12, YO_L=-15` (one point; `SIM_SEAT` 5, 7 and 9 all make it). The
+- **Four chains from the slip knot.** The first is made at `HOLD_BELOW=12, YO_L=-15` (one point; `SIM_SEAT` 5, 7 and 9 all make it). The
   second is made across a range of the local hand placement: `YO_RADL` 6–12 mm, `YO_L2` −10…+5 mm. After a chain the finger goes close in
   on the far side of the shaft from the old loop's back end, so the yarn crosses the shaft at the throat whatever way the hook has rolled;
-  the defaults are 10 mm and −5 mm.
-- **The stitch judge is the linking stretch.** `loopsOnHook(front)` also sees the chain's legs hanging beside the hook; `hookLoop` (linking
-  number 1 with the hook's axis) is the stitch. A chain line prints `(front count N)` when the two disagree. A loose stitch that
+  the defaults are 10 mm and −5 mm. Chains 3 and 4 then follow with `PU_HOLDREL=1`: after the pull, the throat keeps holding the yarn for
+  0.3 s before the turn-back, so the carried loop settles before the hook turns. `PU_HOLDREL` is now 1 by default.
+- **The stitch judge is the linking stretch plus one added crossing.** `loopsOnHook(front)` also sees the chain's legs hanging beside the
+  hook; `hookLoop` (linking number 1 with the hook's axis) is the stitch. The yarn over must add one crossing to the front count, and the
+  final stitch must be one positive linked loop. A chain line prints `(front count N)` when the counts disagree. A loose stitch that
   `loopRange` cannot close on itself is found by `hookLoop` before prepare gives up.
-- **Chain 3 is not made.** With the default finish the old loop ends in front of the tip; with `PU_BACK=0` it stays on the shaft at
-  7–14 mm, but the yarn over adds no loop (`yo:1`). The working yarn crosses the throat level but comes within 2.0 mm of the throat point;
-  raising `YO_CATCHR` to 2.2 makes the throat hold it, yet the roll still does not add a loop. Longer rolls, the opposite roll and hook
-  friction 0.05–0.5 did not fix it. One trial at catch 2.2, roll 2.4 turns, roll +1 printed `MADE`, but it ended with three half-plane
-  loops; that point is not trusted.
-- **Five in a row.** The first two; chain 3 blocks. A half-back head (flat only on the throat side) passes carry/slip but loses the first
-  chain's yarn over (`yo:1` vs 2), so the full-width flat back is kept for now.
+- **Chain 5 is not made.** Chain 4 leaves its old loop 44 mm back along the shaft (the earlier chains leave theirs at 5–16 mm). Chain 5 then
+  starts at three front crossings, and the yarn over changes that to 1–3, so it adds no crossing; the final linked loop is still 1 and the
+  yarn length grows, but the strict judge refuses it. Hand positions `YO_L2` −20…+5 mm and `YO_RADL` 6–16 mm did not add a crossing.
+  Catch radius, roll direction, roll length and hook friction 0.05–0.5 were tried earlier; they do not fix the far-back loop either.
+- **Rig chains stop at 1.** The rig's first chain is 4/4, but its chain 2 stops at `yo:1` with the default local hand; following the old
+  loop's back end along the shaft did not add a crossing, and `PU_BACK=0` made it worse (chain 2 fell to 0 loops). The rig and the slip
+  knot leave different first-chain loops; the slip-knot path is the one that now reaches four.
+- **Five in a row.** Four from the slip knot; not five. The rig path is still one. A half-back head (flat only on the throat side) passes
+  carry/slip but loses the first chain's yarn over (`yo:1` vs 2), so the full-width flat back is kept for now.
 - **Key finding: the simulation is chaotic at damping 20–40.** Changing an irrelevant timing (`HOLD_T` 0.50 → 0.52) flips made/failed. At
   damping 60 results are repeatable, but the hook no longer catches the yarn. This, not the choice of motions, is the main problem.
 - The yarn over is the fragile step. What is known:
@@ -118,8 +123,8 @@ turn back, snug, release). `judgeChain` decides "made".
 7. **Single crochet** into the 2nd chain from the hook (insert, yarn over, pull up a loop → 2 loops, yarn over, pull through both → 1),
    following `docs/YARN_SC_SWATCH_SPEC.md`. Same loop-count stages.
 
-**Status after the SDF hook:** steps 1 and 2 are done; step 3 has a 4/4 result only at damping 15; step 4 has the first chain from the rig
-and two chains from the slip knot, but not three in a row; step 5 is not added.
+**Status after the SDF hook:** steps 1 and 2 are done; step 3 has a 4/4 result only at damping 15; step 4 has four chains from the slip
+knot and one from the rig, but not five; chain 5 is blocked by chain 4's far-back loop; step 5 is not added.
 
 ## 8. Tools in the CLI (`build/yarn_sim`)
 

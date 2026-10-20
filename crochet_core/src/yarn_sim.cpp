@@ -1162,7 +1162,7 @@ void finishChain(YarnSim& sim, const ChainStart& c) {
             sim.moveHook(hookPose(sim.hook.tip, -ax, normalized(front - up * 0.3)), bt);
             sim.moveHook(hookPose(sim.hook.tip, -ax, normalized(up + front * 0.5)), bt);
         }
-        if (envOr("PU_HOLDREL", 0) > 0) sim.settle((int)(0.3 / sim.params.dt));
+        if (envOr("PU_HOLDREL", 1) > 0) sim.settle((int)(0.3 / sim.params.dt));
     }
     stage("turned back");
     if (envOr("PU_RELEASE_LATE", 1) <= 0) sim.setThroatRing(false);
@@ -1238,12 +1238,17 @@ ChainResult judgeChain(const YarnSim& sim, const ChainStart& c) {
     int lo = -1, hi = -1;
     // The half-plane count also sees the chain's legs hanging beside the hook; the linking stretch is the stitch itself. Fall back to the
     // half-plane count when no stretch closes on itself (the loop is too loose for the linking test).
+    const bool linked = hookLoop(sim, &lo, &hi);
     r.frontLoops = front;
-    r.loops = hookLoop(sim, &lo, &hi) ? (front < 0 ? -1 : 1) : front;
+    r.loops = linked ? (front < 0 ? -1 : 1) : front;
     Real len = 0;
     for (int s = 0; s + 1 < sim.rs.segmentCount(); ++s) len += sim.rs.restLen[s];
     r.length = len;
-    r.made = c.ok && std::abs(r.loops) == 1 && c.loopsAfterYo == 2 * r.loops && len > c.length + 0.004;
+    // The yarn over has to add one crossing to the half-plane count, whatever the chain's legs were doing before it. The old check
+    // compared the count after the yarn over with twice the final stitch count, which fails a carried stitch that starts at two crossings
+    // (its stitch plus a leg) and ends at three. A reverse final loop is not accepted either.
+    const int added = c.loopsAfterYo - c.loopsBefore;
+    r.made = c.ok && r.loops == 1 && added == 1 && len > c.length + 0.004;
     return r;
 }
 
