@@ -181,11 +181,11 @@ struct ChainResult {
     Real link = 0;   // degrees of the shaft the yarn closes round when the working yarn is pulled firmly (a loop on the hook: ~360)
     int loops = 0;   // the linking stretch: exactly one loop, whichever way it winds (the sign is in frontLoops)
     int frontLoops = 0;   // loopsOnHook(front), which also counts the chain's legs beside the hook; its sign is diagnostic
-    int oldOn = 0;   // particles of the old loop still round the hook
+    int oldOn = 0;   // particles shared by the final linking stretch and the old loop
     bool newYarn = false;   // the linking stretch reaches into the yarn drawn after the old loop (not an earlier work loop)
     bool sequential = false;  // the linking stretch ends at or after the last valid chain's end, so the stitches form one row
     int linkLo = -1, linkHi = -1;   // the final linking stretch's particles
-    Real oldWind = 0, newWind = 0;    // how far the old loop's yarn and the yarn after it wind round the hook (turns)
+    Real oldWind = 0;   // how far the old loop's own yarn outside the final stretch still winds round the hook (turns)
     Real linkMeanR = 0, linkMaxR = 0;  // distance of the final linking stretch from the hook's axis (m)
     Real length = 0;
     bool made = false;

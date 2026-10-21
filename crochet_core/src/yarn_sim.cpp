@@ -1296,6 +1296,18 @@ ChainResult judgeChain(const YarnSim& sim, const ChainStart& c) {
         r.linkMeanR = sum / span;
     }
     const bool newLoop = linked && oldFraction < 0.5;
+    // Measure the old loop's own yarn outside the final stretch: if it still winds round the shaft, the old loop is a separate bight that
+    // the next chain can pick instead of the working loop. It reads near zero in the rig, so the false fifth's bight is the lower work.
+    Real oldWind = 0;
+    if (c.oldLo >= 0) {
+        if (linked) {
+            if (c.oldLo < lo) oldWind += sim.windingNear(c.oldLo, lo - 1, sim.shape.R + 3.0 * sim.params.radius);
+            if (c.oldHi > hi) oldWind += sim.windingNear(hi + 1, c.oldHi, sim.shape.R + 3.0 * sim.params.radius);
+        } else {
+            oldWind = sim.windingNear(c.oldLo, c.oldHi, sim.shape.R + 3.0 * sim.params.radius);
+        }
+    }
+    r.oldWind = oldWind / (2 * kPi);
     // A linking stretch entirely before the old loop's last particle is an earlier part of the work, not the yarn just drawn through.
     const bool newYarn = linked && c.oldHi >= 0 && hi > c.oldHi + 1;
     r.newYarn = newYarn;
@@ -1312,9 +1324,9 @@ ChainResult judgeChain(const YarnSim& sim, const ChainStart& c) {
     r.made = c.ok && r.loops == 1 && newLoop && newYarn && r.sequential && len > c.length + 0.004;
     if (envOr("SIM_CHAINDBG", 0) > 0)
         std::printf("  judge: old %d..%d, final %d..%d (span %d, overlap %d, old %.0f%%, r mean/max %.1f/%.1f mm), front %d, after %d, "
-                    "added %d, linked %d, new %d, newyarn %d, seq %d (prev %d)\n",
+                    "added %d, linked %d, new %d, newyarn %d, seq %d (prev %d), oldwind %.2f\n",
                     c.oldLo, c.oldHi, lo, hi, span, overlap, oldFraction * 100, r.linkMeanR * 1e3, r.linkMaxR * 1e3, r.frontLoops,
-                    c.loopsAfterYo, added, linked ? 1 : 0, newLoop ? 1 : 0, newYarn ? 1 : 0, r.sequential ? 1 : 0, c.prevHi);
+                    c.loopsAfterYo, added, linked ? 1 : 0, newLoop ? 1 : 0, newYarn ? 1 : 0, r.sequential ? 1 : 0, c.prevHi, r.oldWind);
     return r;
 }
 
