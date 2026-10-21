@@ -1151,11 +1151,28 @@ void finishChain(YarnSim& sim, const ChainStart& c) {
             if (sim.onFrame) sim.onFrame();
             // The rig's clean first loop comes off when the half-plane count drops. From the slip knot the half-plane count also drops when a
             // chain leg leaves, so there the old loop is off only when its own yarn no longer winds round the shaft.
-            if (sim.rig)
+            const bool halfPlane = sim.rig || sim.chains < (int)envOr("PU_HALF_CHAINS", 0);
+            if (halfPlane)
                 clear = std::abs(sim.loopsOnHook(front)) <= std::abs(loopsBefore) - 1 ? clear + 1 : 0;
             else
                 clear = std::fabs(sim.windingNear(c.oldLo, c.oldHi, reach)) < envOr("PU_OLDWIND", 0.5) ? clear + 1 : 0;
         }
+        // The winding and half-plane signals can both say "off" while the final linked stretch is still the old loop (a leg left, or the
+        // loop is open but still links the axis). If so, keep drawing the hook through until the judge's own stretch is no longer the old loop.
+        auto oldStill = [&] {
+            int l = -1, h = -1;
+            if (!hookLoop(sim, &l, &h) || c.oldLo < 0) return false;
+            const int a = std::max(l, c.oldLo), b = std::min(h, c.oldHi);
+            const int ov = b >= a ? b - a + 1 : 0;
+            const int span = h - l + 1;
+            return span > 0 && (2 * ov >= span || h <= c.oldHi + 1);
+        };
+        if (envOr("PU_FIX", 0) > 0)
+            for (Real moved = 0; moved < envOr("PU_FIXMAX", 40) * m && oldStill(); moved += step) {
+                sim.hand += ax * (step * envOr("PU_FOLLOW", 1.0));
+                sim.step(hookPose(sim.hook.tip + ax * step, -ax, thrDown));
+                if (sim.onFrame) sim.onFrame();
+            }
     }
     stage("pulled");
     // the throat lets go; the yarn drawn snug at the finger; the work let go
@@ -1276,15 +1293,18 @@ ChainResult judgeChain(const YarnSim& sim, const ChainStart& c) {
         r.linkMeanR = sum / span;
     }
     const bool newLoop = linked && oldFraction < 0.5;
+    // A linking stretch entirely before the old loop's last particle is an earlier part of the work, not the yarn just drawn through.
+    const bool newYarn = linked && c.oldHi >= 0 && hi > c.oldHi + 1;
+    r.newYarn = newYarn;
     const int added = c.loopsAfterYo - c.loopsBefore;
     // The old loop has to be off the hook: a final linking stretch mostly inside the old loop's particles is the old loop, not a new stitch,
-    // even when the half-plane count rose during the yarn over.
-    r.made = c.ok && r.loops == 1 && newLoop && len > c.length + 0.004;
+    // even when the half-plane count rose during the yarn over. The stretch must also reach the yarn drawn after the old loop.
+    r.made = c.ok && r.loops == 1 && newLoop && newYarn && len > c.length + 0.004;
     if (envOr("SIM_CHAINDBG", 0) > 0)
         std::printf("  judge: old %d..%d, final %d..%d (span %d, overlap %d, old %.0f%%, r mean/max %.1f/%.1f mm), front %d, after %d, "
-                    "added %d, linked %d, new %d\n",
+                    "added %d, linked %d, new %d, newyarn %d\n",
                     c.oldLo, c.oldHi, lo, hi, span, overlap, oldFraction * 100, r.linkMeanR * 1e3, r.linkMaxR * 1e3, r.frontLoops,
-                    c.loopsAfterYo, added, linked ? 1 : 0, newLoop ? 1 : 0);
+                    c.loopsAfterYo, added, linked ? 1 : 0, newLoop ? 1 : 0, newYarn ? 1 : 0);
     return r;
 }
 

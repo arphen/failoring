@@ -67,6 +67,9 @@ void testChains() {
     setenv("YO_L", "-15", 1);
     setenv("YO_MODE", "2", 1);
     setenv("YO_ROLLMAX", "1.2", 1);
+    // Let the throat ring go before the snug. With the late release the second chain's final linked stretch stays on an earlier work loop
+    // (old 0% only because it is not the immediate old loop); the early release leaves the new yarn as the linked stretch.
+    setenv("PU_RELEASE_LATE", "0", 1);
     YarnSim sim;
     sim.params.damping = 15;
     sim.build(slipKnotLayout(sim.params.radius));
@@ -85,6 +88,8 @@ void testChains() {
         CHECK_MSG(r.made, "chain %d made (linked %d, front %d, yarn %.0f -> %.0f mm)", k + 1, r.loops, r.frontLoops, c.length * 1e3,
                   r.length * 1e3);
         CHECK_MSG(r.loops == 1, "chain %d ends with one linked loop (%d)", k + 1, r.loops);
+        CHECK_MSG(r.newYarn, "chain %d's linked stretch includes the yarn drawn after the old loop", k + 1);
+        CHECKP(r.linkMeanR > 0, "chain %d linked stretch radius mean/max %.1f/%.1f mm", k + 1, r.linkMeanR * 1e3, r.linkMaxR * 1e3);
         CHECK_MSG(r.length > c.length + 0.004, "chain %d draws yarn from the hand", k + 1);
     }
     const Real r = sim.params.radius;

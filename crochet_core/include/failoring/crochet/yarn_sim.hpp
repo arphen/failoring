@@ -180,6 +180,7 @@ struct ChainResult {
     int loops = 0;   // the linking stretch: exactly one loop
     int frontLoops = 0;   // loopsOnHook(front), which also counts the chain's legs beside the hook
     int oldOn = 0;   // particles of the old loop still round the hook
+    bool newYarn = false;   // the linking stretch reaches into the yarn drawn after the old loop (not an earlier work loop)
     Real oldWind = 0, newWind = 0;    // how far the old loop's yarn and the yarn after it wind round the hook (turns)
     Real linkMeanR = 0, linkMaxR = 0;  // distance of the final linking stretch from the hook's axis (m)
     Real length = 0;
