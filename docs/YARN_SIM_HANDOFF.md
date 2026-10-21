@@ -99,17 +99,24 @@ turn back, snug, release). `judgeChain` decides "made".
   old-winding pull breaks the rig's chain 5.
 - **Contact.** The three-chain slip test (now with `PU_RELEASE_LATE=0`) reaches a closest self-gap of 2.20 mm (yarn 2.20 mm) and 0.00 mm
   hook penetration; it passes. The five-chain rig run at `HOLD_BELOW=10` reaches 1.68 mm (below the 0.95 × 2.20 mm = 2.09 mm limit) and
-  2.18 mm into the hook; the closest gap is at frame 3670 in chain 4's snug. A three-chain rig run is already at 1.93 mm and 2.18 mm, so the
-  contact is not only the fourth/fifth stitches. At `HOLD_BELOW=9` the five-chain rig run is 1.92 mm and 2.30 mm. The slip five-chain runs were
-  2.15 mm / 1.38 mm late and 2.05 mm / 0.06 mm early. Raising the solver (`SIM_IT=6`, `SIM_SUB=16`) loses the rig's first chain rather than
-  fixing contact, so the solver is not the lever. The goal is no strand through itself or the hook; the five-chain runs still violate it. The
-  5-chain render at `HOLD_BELOW=10` shows a compact knot at the hook, not a row of V stitches, consistent with the contact numbers.
+  2.18 mm into the hook. `SIM_CONTACT=1` locates them: the 1.68 mm gap is at frame 3670 in chain 4's snug; the 2.18 mm hook contact is in
+  chain 3's yarn over (frame 2599 in the three-chain run, segment 297 — the carried finger path pressing the working yarn into the head), not
+  the rig start. The three-chain rig run's 1.93 mm gap is chain 2's pull-through (frame 2187). The loops are held at the flat back/barb and
+  the work slide bunches them; that is why the row is a knot. At `HOLD_BELOW=9` the five-chain rig run is 1.92 mm and 2.30 mm. The slip
+  five-chain runs were 2.15 mm / 1.38 mm late and 2.05 mm / 0.06 mm early.
+  Attempts to move the contact did not keep a clean five: `YO_RADL=14` keeps five made and all snug (4.0, 4.5, 7.5, 6.9, 4.1 mm) but drops the
+  self-gap to 1.07 mm; `16` keeps three (gap 1.88, 0.73 mm in); `12` fails after chain 3. A larger contact radius (`SIM_RSCALE=1.05`) loses the
+  first chain, `1.1` makes one and `1.15` three. A slower pull (`PU_V=8`) makes three (gap 2.07, 1.73 mm in). A longer or shorter snug
+  (`PU_SNUGT=0.7` or `0.3`) loses chains. Raising the solver (`SIM_IT=6`, `SIM_SUB=16`) loses the rig's first chain. So the five is a
+  knife-edge: the count survives the pull distance, but no tested contact lever keeps both the five and a clean gap. The goal is no strand
+  through itself or the hook; the five-chain runs still violate it. The 5-chain render at `HOLD_BELOW=10` shows a compact knot at the hook, not
+  a row of V stitches, consistent with the contact numbers.
 - **First chain / five-in-a-row.** The rig now has five made with new yarn in a row at `HOLD_BELOW=10` with the adaptive pull (above). At that
   setting the first chain is deterministic in repeated runs, and the count survives `PU_FIXMAX` 40, 50 and 60 and `HOLD_LATE` 1 and 2. It does
   not survive the neighbouring `HOLD_BELOW` values 8, 9.5, 11 and 12 (the first chain loses its yarn over or its linked stretch), so the
-  five is a narrow setting, not yet a range across the start height. The slip knot still gives three (late) or four (early) by the strict
-  new-yarn judge. A half-back head (flat only on the throat side) passes carry/slip but loses the first chain's yarn over (`yo:1` vs 2), so the
-  full-width flat back is kept for now.
+  five is a narrow setting, not yet a range across the start height. It also does not survive a larger contact radius or a slower pull (above).
+  The slip knot still gives three (late) or four (early) by the strict new-yarn judge. A half-back head (flat only on the throat side) passes
+  carry/slip but loses the first chain's yarn over (`yo:1` vs 2), so the full-width flat back is kept for now.
 - **Adaptive pull and mixed finish (off by default).** `PU_HALF_CHAINS=2` uses the half-plane finish for the slip knot's first two chains
   (the rest keep old-winding). Without more pull, chain 3 ends on the old loop; with `PU_FIX=1` the finish keeps drawing until the final
   stretch is no longer the old loop, and the half-first-two run gives three made chains, but chain 1 (mean 11.4 mm) and chain 3 (mean
@@ -182,6 +189,8 @@ are not. Step 7 has not started.
   sweep is applied to each child copy; other solver parameters are read only at startup.
 - `SIM_STAGES=1` prints loop counts at every stage; `SIM_ROLLDBG=1` during the roll; `YO_DUMP=1` the yarn's path in the hook's frame.
   `SIM_CHAINDBG=1` prints the old and final linking stretches, their overlap, the `newYarn` flag and the mean/max radius for every judge.
+  `SIM_CONTACT=1` prints the phase, frame, segment and particle indices of each new worst self-gap and hook penetration; `SIM_RSCALE=x` sets
+  the contact radius scale after the build (the drawn radius stays `--rad`; 1.0 is the physical radius).
 - The fifth-chain hand: `HOLD_LATE` mm (default 2) and `HOLD_T_LATE` s (default 0.05) are added after four completed chains. The slip-knot
   five-chain run uses `HOLD_LATE=1`; the rig uses the default 2.
 - Finish: the slip knot pulls until the old loop's own yarn no longer winds (`PU_OLDWIND`, default 0.5 turns); the rig keeps the half-plane

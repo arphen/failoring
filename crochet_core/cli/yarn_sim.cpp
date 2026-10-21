@@ -164,10 +164,12 @@ int main(int argc, char** argv) {
     if (std::getenv("SIM_SUB")) sim.params.substeps = std::atoi(std::getenv("SIM_SUB"));
     if (std::getenv("SIM_IT")) sim.params.iterations = std::atoi(std::getenv("SIM_IT"));
     if (std::getenv("SIM_MU")) sim.params.friction = std::atof(std::getenv("SIM_MU"));
+    // (radiusScale is applied after build: YarnSim::build resets it)
     const bool rig = std::getenv("SIM_RIG") != nullptr;
     sim.rig = rig;
     if (rig) buildLoopRig(sim, Vec3{-0.02, 0, 0.02});
     else sim.build(slipKnotLayout(sim.params.radius));
+    if (std::getenv("SIM_RSCALE")) sim.rs.params.radiusScale = std::atof(std::getenv("SIM_RSCALE"));
     std::printf("%d particles\n", sim.rs.particleCount());
     int shot = 0;
     Real worstGap = 1e9, worstStrain = 0, worstPen = 0;
@@ -224,6 +226,25 @@ int main(int argc, char** argv) {
         }
         lastPhase = sim.phase;
         const Real g = sim.minGap(), e = sim.maxStrain(), p = sim.hookPenetration();
+        const bool contactDbg = std::getenv("SIM_CONTACT") != nullptr;
+        if (contactDbg && g < worstGap) {
+            int ba = -1, bb = -1;
+            Real bd = 1e300;
+            const int S = sim.rs.segmentCount();
+            for (int a = 0; a < S; ++a)
+                for (int b = a + 1; b < S; ++b) {
+                    if (sim.rs.segChain[a] == sim.rs.segChain[b]) {
+                        int d = std::abs(sim.rs.segIndex[a] - sim.rs.segIndex[b]);
+                        const RodChain& ch = sim.rs.chains[sim.rs.segChain[a]];
+                        if (ch.closed) d = std::min(d, ch.segments - d);
+                        if (d <= sim.rs.params.contactSkipSegments + 1) continue;
+                    }
+                    const SegSegResult r = closestSegmentSegment(sim.rs.x[sim.rs.segA[a]], sim.rs.x[sim.rs.segB[a]], sim.rs.x[sim.rs.segA[b]], sim.rs.x[sim.rs.segB[b]]);
+                    if (r.dist2 < bd) { bd = r.dist2; ba = a; bb = b; }
+                }
+            std::printf("  contact gap %.3f mm at frame %d (%s): seg %d p%d..%d and seg %d p%d..%d\n", g * 1e3, sim.frame, sim.phase.c_str(), ba,
+                        sim.rs.segA[ba], sim.rs.segB[ba], bb, sim.rs.segA[bb], sim.rs.segB[bb]);
+        }
         if (g < worstGap && g < 1.9e-3) std::printf("  closer gap %.2f mm at frame %d (%s)\n", g * 1e3, sim.frame, sim.phase.c_str());
         worstGap = std::min(worstGap, g);
         if (e > worstStrain) {
@@ -234,6 +255,18 @@ int main(int argc, char** argv) {
                 if (v > wv) { wv = v; ws = s; }
             }
             if (e > 0.05) std::printf("  worse strain %.3f at frame %d, segment %d\n", e, sim.frame, ws);
+        }
+        if (contactDbg && p > worstPen) {
+            int ws = -1, wk = -1;
+            Real wp = 0;
+            for (int s2 = 0; s2 < sim.rs.segmentCount(); ++s2)
+                for (int k = 0; k <= 2; ++k) {
+                    const Vec3 P = sim.rs.x[sim.rs.segA[s2]] + (sim.rs.x[sim.rs.segB[s2]] - sim.rs.x[sim.rs.segA[s2]]) * (0.5 * k);
+                    const Real v = sim.params.radius * sim.shape.squash - hookSdf(rotate(conj(sim.hook.q), P - sim.hook.tip), sim.shape, nullptr);
+                    if (v > wp) { wp = v; ws = s2; wk = k; }
+                }
+            std::printf("  contact pen %.3f mm at frame %d (%s): seg %d p%d..%d k%d\n", wp * 1e3, sim.frame, sim.phase.c_str(), ws, sim.rs.segA[ws],
+                        sim.rs.segB[ws], wk);
         }
         worstPen = std::max(worstPen, p);
         if (std::getenv("SIM_DEBUG") && sim.frame % 6 == 0) {
