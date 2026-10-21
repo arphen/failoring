@@ -92,7 +92,9 @@ turn back, snug, release). `judgeChain` decides "made".
   (mean 6.0 and 7.3 mm). With `PU_RELEASE_LATE=0` the throat lets go before the snug: the original judge makes five, the new-yarn check
   chains 1–4, but every loop is a large work loop (mean 15.3, 19.0, 21.5, 21.7 mm) and none is snug. The late rule holds the work 1 mm farther below and 0.05 s longer for chain 5 (13
   mm, 0.55 s). Only these two release settings have been run, so neither is a range. The five-attempt render (`SIM_SHOTYARN=1`) still shows
-  loops piling around the hook, not a row of V stitches.
+  loops piling around the hook, not a row of V stitches. The rig's shorter slide does not help the slip: `SIM_SEAT=4` makes only chain 1
+  (final 86..210, mean 17.3 mm) under both releases; chain 2 has no linking stretch (0 loops). The slip keeps the default slide; the seat4
+  five is rig-specific.
 - **Rig: four across the hold range; a narrow five at `HOLD_BELOW=10`.** The default command `SIM_RIG=1 PU_HOLDREL=0 PU_FIX=1
   PU_RELEASE_LATE=0 HOLD_BELOW=10 YO_L=-5 YO_MODE=2 YO_ROLLMAX=1.2 ./yarn_sim --chains 5 --damp 15` (work slide `SIM_SEAT=5`) makes
   chains 1–4, finals 122..141, 164..179, 208..229 and 322..379, means 4.0, 3.1, 4.5 and 4.6 mm (max 7.4 mm), all inside the `R + 3r =
@@ -126,7 +128,7 @@ turn back, snug, release). `judgeChain` decides "made".
   sit on top of each other at the head.
   A slower pull does not keep the five. At seat 4, `PU_V=10` makes chains 1, 3, 4 and 5 (chain 2 has no linking stretch), with a 2.14 mm
   self-gap (passes) but 1.40 mm into the hook; `PU_V=8` makes 1, 2 and 4, with chain 3 on earlier work (`newYarn=0`, seq 0) and chain 5
-  likewise, and a 0.67 mm self-gap. The five needs the default pull speed.
+  likewise, and a 0.67 mm self-gap. `PU_V=11` makes no chain at all (chain 1 has no linking stretch). The five needs the default pull speed.
   Attempts to move the contact did not keep five sequential: `YO_RADL=14` keeps four sequential and all snug (4.0, 4.5, 7.5, 6.9 mm; the
   fifth final 278..313 lies inside the fourth's 257..319 and stops at 313 < 319) but drops the self-gap to 1.07 mm; `16` keeps three (gap
   1.88, 0.73 mm in); `12` fails after chain 3. A larger contact radius (`SIM_RSCALE=1.05`) loses the
