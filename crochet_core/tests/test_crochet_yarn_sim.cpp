@@ -62,6 +62,11 @@ void testSlipKnot() {
 }
 
 void testChains() {
+    // A linked stretch is one loop whichever way it winds (the rig's fifth chain at HOLD_BELOW=10 reads front -1); only the fallback uses
+    // the half-plane count.
+    CHECK(linkedLoopCount(true, -1) == 1);
+    CHECK(linkedLoopCount(true, 2) == 1);
+    CHECK(linkedLoopCount(false, -1) == -1);
     // The five-chain slip-knot run starts with these settings; three chains is the part kept in the test for runtime.
     setenv("HOLD_BELOW", "12", 1);
     setenv("YO_L", "-15", 1);

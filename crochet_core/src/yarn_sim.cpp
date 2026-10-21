@@ -1267,7 +1267,9 @@ ChainResult judgeChain(const YarnSim& sim, const ChainStart& c) {
     // half-plane count when no stretch closes on itself (the loop is too loose for the linking test).
     const bool linked = hookLoop(sim, &lo, &hi);
     r.frontLoops = front;
-    r.loops = linked ? (front < 0 ? -1 : 1) : front;
+    // The linked stretch is one loop. Its front/back sign is a diagnostic in frontLoops: after the turn-back the fifth loop can wind the
+    // other way and still be a loop on the shaft, so the sign must not decide `made`.
+    r.loops = linkedLoopCount(linked, front);
     Real len = 0;
     for (int s = 0; s + 1 < sim.rs.segmentCount(); ++s) len += sim.rs.restLen[s];
     r.length = len;

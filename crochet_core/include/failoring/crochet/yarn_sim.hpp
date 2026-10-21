@@ -177,8 +177,8 @@ void finishChain(YarnSim& sim, const ChainStart& c);
 // the old loop is off it, and more yarn has been drawn from the hand into the work than before the stitch (a stitch that unravelled gives it back).
 struct ChainResult {
     Real link = 0;   // degrees of the shaft the yarn closes round when the working yarn is pulled firmly (a loop on the hook: ~360)
-    int loops = 0;   // the linking stretch: exactly one loop
-    int frontLoops = 0;   // loopsOnHook(front), which also counts the chain's legs beside the hook
+    int loops = 0;   // the linking stretch: exactly one loop, whichever way it winds (the sign is in frontLoops)
+    int frontLoops = 0;   // loopsOnHook(front), which also counts the chain's legs beside the hook; its sign is diagnostic
     int oldOn = 0;   // particles of the old loop still round the hook
     bool newYarn = false;   // the linking stretch reaches into the yarn drawn after the old loop (not an earlier work loop)
     Real oldWind = 0, newWind = 0;    // how far the old loop's yarn and the yarn after it wind round the hook (turns)
@@ -186,6 +186,8 @@ struct ChainResult {
     Real length = 0;
     bool made = false;
 };
+// A linked stretch is one loop whichever way it winds; the half-plane count is only a fallback when no stretch closes.
+inline int linkedLoopCount(bool linked, int frontLoops) { return linked ? 1 : frontLoops; }
 ChainResult judgeChain(const YarnSim& sim, const ChainStart& c);
 int carriedRound(const YarnSim& sim);   // 360 with a loop on the hook, else 0
 // The loop on the hook: the shortest stretch of yarn, from particle `from` to `to` where the yarn touches itself, that the hook's axis passes

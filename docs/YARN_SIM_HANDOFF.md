@@ -58,14 +58,17 @@ turn back, snug, release). `judgeChain` decides "made".
   it also counts the chain's legs hanging beside the hook. For a first chain the usual sequence is `1` → `2` after the yarn over → `1`
   after the pull; a carried chain can start at 2 or 3 crossings. These counts are diagnostics; the "made" judge is the linking stretch below.
 - Every trial logs a stage string, e.g. `[p1 p1 p1 p1 yo:2t caug:2t turn:2t pull:1t turn:1t snug:1t rele:1]` (`t` = the throat holds yarn).
-- **SDF hook (default).** The open-groove SDF hook carries the yarn and the slip knot. Under the strict stitch judge the rig's first chain
-  is linked and new only at `HOLD_T=0.50` and `0.51` (2/4); at `0.52` and `0.53` the half-plane count is one but `hookLoop` cannot close a
-  stretch, so those are not counted as stitches. The older 4/4 result used the half-plane fallback.
+- **SDF hook (default).** The open-groove SDF hook carries the yarn and the slip knot. On the older `HOLD_BELOW=9` first-chain grid, under
+  the strict stitch judge the rig's first chain is linked and new only at `HOLD_T=0.50` and `0.51` (2/4); at `0.52` and `0.53` the half-plane
+  count is one but `hookLoop` cannot close a stretch, so those are not counted as stitches. The older 4/4 result used the half-plane fallback.
+  The five-chain setting below uses `HOLD_BELOW=10`, where the first chain is deterministic and linked.
 - **The stitch judge is one new linked loop.** `loopsOnHook(front)` also sees the chain's legs hanging beside the hook; `hookLoop` (linking
   number 1 with the hook's axis) is the stitch. The final linking stretch must overlap the old loop's particles by less than half its
   length, and more yarn must be drawn from the hand. The crossing count after the yarn over is printed as a diagnostic but no longer decides
   the stitch: a leg can leave while a new loop is made, and the half-plane count can rise while the old loop stays. A chain line prints
-  `(front count N)` when the counts disagree. A loose stitch that `loopRange` cannot close on itself is found by `hookLoop` before prepare
+  `(front count N)` when the counts disagree. A linked stretch counts as one loop whichever way it winds; the sign of the front count is a
+  diagnostic, not a reason to reject the stitch (the rig's fifth chain at `HOLD_BELOW=10` has `front -1` and a linked, snug loop). A loose
+  stitch that `loopRange` cannot close on itself is found by `hookLoop` before prepare
   gives up. An earlier completed chain loop can pass that old-loop test when it is not the *immediate* old loop. `made` therefore also
   requires the linking stretch to reach the yarn drawn after the old loop (`hi > oldHi + 1`; `newYarn` in the result). This rejects a final
   stretch lying entirely in earlier work; it does not prove that the working loop is on the shaft, and whether a working loop that stays
@@ -82,24 +85,31 @@ turn back, snug, release). `judgeChain` decides "made".
   chains 1–4, but every loop is a large work loop (mean 15.3, 19.0, 21.5, 21.7 mm) and none is snug. The late rule holds the work 1 mm farther below and 0.05 s longer for chain 5 (13
   mm, 0.55 s). Only these two release settings have been run, so neither is a range. The five-chain render (`SIM_SHOTYARN=1`) still shows
   loops piling around the hook, not a row of V stitches.
-- **Rig: four linked loops late, three early.** `SIM_RIG=1 PU_HOLDREL=0 HOLD_BELOW=9 YO_L=-5 YO_MODE=2 YO_ROLLMAX=1.2`, `--damp 15`
-  with the default late release passes chains 1, 3, 4 and 5; chain 5 uses the late rule (11 mm, 0.55 s). Chain 2 ends with a linked stretch
-  that is 61–65% the old loop's particles, so the old loop is not off and it is not counted. The linking stretch is snug for chains 1, 3
-  and 4 (mean 3.5, 4.8, 7.1 mm); chain 5 is a large work loop (mean 15.9 mm) and is not a stitch on the shaft. With `PU_RELEASE_LATE=0` the
-  rig keeps only chains 1, 3 and 5 (chain 2 is 56% the old loop, chain 4 exactly 50% and therefore not below the half), and chain 5 is still
-  a large work loop (mean 12.9 mm); chains 1 and 3 are snug (3.1 and 3.6 mm). The rig's finish keeps the half-plane pull; the slip knot's
+- **Rig: five linked loops, all snug, with the adaptive pull at `HOLD_BELOW=10`.** `SIM_RIG=1 PU_HOLDREL=0 PU_FIX=1 PU_RELEASE_LATE=0
+  HOLD_BELOW=10 YO_L=-5 YO_MODE=2 YO_ROLLMAX=1.2 ./yarn_sim --chains 5 --damp 15`: all five are made, all on new yarn, with linked-stretch
+  means 4.0, 3.1, 4.5, 4.6 and 4.5 mm (max 10.6 mm), all inside the `R + 3r = 11.1 mm` snug bound. The fifth winds the other way
+  (`front -1`) but is still one linked loop; the front sign is a diagnostic, not a reason to reject it. Repeated runs are identical.
+  `PU_FIXMAX` 40, 50 and 60 all give the same five; 30 stops chain 2 on the old loop (85%) and changes every later chain. `HOLD_LATE=1` also
+  gives five, but chain 5 is 13.4 mm (not snug); `HOLD_LATE=3` loses chain 5. `HOLD_BELOW=9` gives five but chain 2 is 11.1 mm; 8, 9.5, 11
+  and 12 lose the first chain. So five made is repeatable across the pull distance at `HOLD_BELOW=10`, but the `HOLD_BELOW` range that keeps
+  five is only 9–10.
+  Without the fix, the late-release rig makes four (chain 2 stays on the old loop) and early release makes three (chain 2 at 56%, chain 4 at
+  exactly 50% and therefore not below the half). The fix only changes the final link when it is still the old loop; it does not by itself put
+  the working loop on the shaft, but at `HOLD_BELOW=10` the five turns out snug. The rig's finish keeps the half-plane pull; the slip knot's
   old-winding pull breaks the rig's chain 5.
 - **Contact.** The three-chain slip test (now with `PU_RELEASE_LATE=0`) reaches a closest self-gap of 2.20 mm (yarn 2.20 mm) and 0.00 mm
-  hook penetration; it passes. The five-chain runs are not clean. At the default late release: slip 2.15 mm gap, 1.38 mm into the hook; rig
-  1.92 mm, 2.35 mm. At `PU_RELEASE_LATE=0`: slip 2.05 mm (below the 0.95 × 2.20 mm = 2.09 mm limit), 0.06 mm in; rig 1.68 mm, 2.00 mm. The
-  goal is no strand through itself or the hook; the five-chain runs still violate it. The 5-chain render shows the strands crossing and
-  piling, consistent with the penetration numbers.
-- **First chain / five-in-a-row.** The original new-loop judge gives five from the slip knot at both releases and four from the rig late
-  (three early). The stricter new-yarn check gives slip chains 1, 3, 4 late (3–4 consecutive) and 1–4 early (all four large work loops), and
-  rig chains 1, 3, 4, 5 late (3–5 consecutive, chain 5 loose) and 1, 3, 5 early. By the snug on-shaft check the late slip has only chains 3
-  and 4, the early slip none, the late rig chains 1, 3 and 4, and the early rig chains 1 and 3. Neither path has five across a range, and
-  the rig's first chain is linked only 2/4. A half-back head (flat only on the throat side) passes carry/slip but loses the
-  first chain's yarn over (`yo:1` vs 2), so the full-width flat back is kept for now.
+  hook penetration; it passes. The five-chain rig run at `HOLD_BELOW=10` reaches 1.68 mm (below the 0.95 × 2.20 mm = 2.09 mm limit) and
+  2.18 mm into the hook; the closest gap is at frame 3670 in chain 4's snug. A three-chain rig run is already at 1.93 mm and 2.18 mm, so the
+  contact is not only the fourth/fifth stitches. At `HOLD_BELOW=9` the five-chain rig run is 1.92 mm and 2.30 mm. The slip five-chain runs were
+  2.15 mm / 1.38 mm late and 2.05 mm / 0.06 mm early. Raising the solver (`SIM_IT=6`, `SIM_SUB=16`) loses the rig's first chain rather than
+  fixing contact, so the solver is not the lever. The goal is no strand through itself or the hook; the five-chain runs still violate it. The
+  5-chain render at `HOLD_BELOW=10` shows a compact knot at the hook, not a row of V stitches, consistent with the contact numbers.
+- **First chain / five-in-a-row.** The rig now has five made with new yarn in a row at `HOLD_BELOW=10` with the adaptive pull (above). At that
+  setting the first chain is deterministic in repeated runs, and the count survives `PU_FIXMAX` 40, 50 and 60 and `HOLD_LATE` 1 and 2. It does
+  not survive the neighbouring `HOLD_BELOW` values 8, 9.5, 11 and 12 (the first chain loses its yarn over or its linked stretch), so the
+  five is a narrow setting, not yet a range across the start height. The slip knot still gives three (late) or four (early) by the strict
+  new-yarn judge. A half-back head (flat only on the throat side) passes carry/slip but loses the first chain's yarn over (`yo:1` vs 2), so the
+  full-width flat back is kept for now.
 - **Adaptive pull and mixed finish (off by default).** `PU_HALF_CHAINS=2` uses the half-plane finish for the slip knot's first two chains
   (the rest keep old-winding). Without more pull, chain 3 ends on the old loop; with `PU_FIX=1` the finish keeps drawing until the final
   stretch is no longer the old loop, and the half-first-two run gives three made chains, but chain 1 (mean 11.4 mm) and chain 3 (mean
@@ -152,15 +162,15 @@ turn back, snug, release). `judgeChain` decides "made".
    following `docs/YARN_SC_SWATCH_SPEC.md`. Same loop-count stages.
 
 **Status after the SDF hook:** steps 1 and 2 are done. Step 3 is still open: the half-plane first-chain result is 4/4 only at damping 15, and
-under the strict new-loop judge it is 2/4 even there. Step 4 has five slip-knot loops at the default late release by the original new-loop
-judge (chains 3 and 4 snug) and four rig loops (chains 1, 3 and 4 snug). The strict judge now also rejects a final stretch that lies
-entirely in earlier work; with that check the counts are three from the slip knot late (1, 3, 4), four early (1–4, all large work loops),
-four from the rig late (1, 3, 4, 5; chain 5 large) and three early (1, 3, 5). Whether an earlier work loop is valid evidence remains open.
-Step 5 has `testChains` for three slip chains. With `PU_RELEASE_LATE=0` it passes the strict new-loop/new-yarn judge on all three chains and
-passes self-gap (2.20 mm) and hook clearance (0.00 mm), but all three working loops are large (mean 15.3, 19.0, 21.5 mm), so the test is a
-loop/contact regression, not a picture-valid chain. The five-chain runs still press into the hook (slip 1.38 mm, rig 2.35 mm at late release;
-slip 0.06 mm but self-gap 2.05 mm at early release) and the rig's self-gap falls to 1.68 mm early. The renders show loops piling around the
-hook rather than a crochet chain, so this is not complete. Step 7 has not started.
+under the strict new-loop judge it is 2/4 even there; the rig five-chain setting is deterministic once the start height is fixed, but the
+start height range is narrow (9–10 mm) and the higher-solver variants lose the first chain. Step 4 has a first five-in-a-row: the rig, with
+`PU_FIX=1`, `PU_RELEASE_LATE=0` and `HOLD_BELOW=10`, makes five new linked loops, all snug (4.0, 3.1, 4.5, 4.6, 4.5 mm), across
+`PU_FIXMAX` 40/50/60. The slip knot still gives three (late) or four (early) by the strict new-yarn judge. Whether an earlier work loop is
+valid evidence remains open. Step 5 has `testChains` for three slip chains. With `PU_RELEASE_LATE=0` it passes the strict new-loop/new-yarn
+judge on all three chains and passes self-gap (2.20 mm) and hook clearance (0.00 mm), but all three working loops are large (mean 15.3, 19.0,
+21.5 mm), so the test is a loop/contact regression, not a picture-valid chain. The rig five is not clean either: self-gap 1.68 mm, 2.18 mm into
+the hook, and the render is still a compact knot at the hook rather than a chain of V stitches. The five-count is real; the picture and contact
+are not. Step 7 has not started.
 
 ## 8. Tools in the CLI (`build/yarn_sim`)
 
@@ -178,8 +188,10 @@ hook rather than a crochet chain, so this is not complete. Step 7 has not starte
   pull (`sim.rig`). `PU_HOLDREL=1` keeps the throat holding 0.3 s before the turn-back. `PU_RELEASE_LATE=1` (default) drops the throat ring
   after the snug; `0` drops it before, which changes which stretch is the final link (the three-chain test uses 0). `PU_HALF_CHAINS=N` uses
   the half-plane finish for the slip knot's first N chains (default 0; the rig is always half-plane). `PU_FIX=1` keeps drawing after the main
-  pull while the final stretch is still the old loop, up to `PU_FIXMAX` mm (default 40); off by default, and the result is a large new loop,
-  not a snug stitch.
+  pull while the final stretch is still the old loop, up to `PU_FIXMAX` mm (default 40); it is needed for the rig's five at
+  `HOLD_BELOW=10` (40/50/60 all work; 30 stops chain 2 on the old loop). On the slip knot it still leaves chain 5 on earlier work. The
+  five-chain command is: `SIM_RIG=1 PU_HOLDREL=0 PU_FIX=1 PU_RELEASE_LATE=0 HOLD_BELOW=10 YO_L=-5 YO_MODE=2 YO_ROLLMAX=1.2
+  ./yarn_sim --chains 5 --damp 15`.
 - Pictures: `--every N` (snapshots), `SIM_FOLLOW=1` (camera follows the hook), `SIM_CHAINSHOT=1` (after each chain),
   `SIM_PHASESHOT=f` (at every phase change after frame f), `--close a-b/step` with `SIM_CFIX=1 SIM_CDIST=0.06` (close-ups).
   `SIM_SHOTYARN=1` frames all the yarn (not the origin); `SIM_SHOTDIST` and `SIM_SHOTTARGET=x,y,z` override the camera.
