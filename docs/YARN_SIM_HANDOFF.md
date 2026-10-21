@@ -9,8 +9,9 @@ passing through itself or the hook; the hook moves; the shape is whatever the ph
 **free physics** (option 1) over a design-guided simulation, and wants it to look like the photographs (real hooks, real chains, real sc).
 
 Order of work: chain stitch (repeatable, many in a row) -> single crochet into the chain -> turn -> rows -> wire the editor's stitch buttons to
-the simulator. The slip knot works end to end. The three-chain loop/contact test passes under the strict judge and the row check, but the
-chain row is not yet a crochet chain (the working loops are large; section 5).
+the simulator. The slip knot works end to end. The three-chain loop/contact test passes under the strict judge and the row check. The rig's
+default makes four at `HOLD_BELOW` 9/10; a shorter work slide (`SIM_SEAT=4`) makes five at 10 only. The chain row is not yet a crochet chain:
+the five-loop render is still a tangle at the hook, and the contact fails (section 5).
 
 ## 2. Rules of the repo (from the user)
 
@@ -92,22 +93,24 @@ turn back, snug, release). `judgeChain` decides "made".
   chains 1–4, but every loop is a large work loop (mean 15.3, 19.0, 21.5, 21.7 mm) and none is snug. The late rule holds the work 1 mm farther below and 0.05 s longer for chain 5 (13
   mm, 0.55 s). Only these two release settings have been run, so neither is a range. The five-attempt render (`SIM_SHOTYARN=1`) still shows
   loops piling around the hook, not a row of V stitches.
-- **Rig: four sequential linked loops, all snug, at `HOLD_BELOW=10`.** `SIM_RIG=1 PU_HOLDREL=0 PU_FIX=1 PU_RELEASE_LATE=0
-  HOLD_BELOW=10 YO_L=-5 YO_MODE=2 YO_ROLLMAX=1.2 ./yarn_sim --chains 5 --damp 15`: chains 1–4 are made and sequential. Their final
-  linking stretches are 122..141, 164..179, 208..229 and 322..379 (each ends after the previous one), with means 4.0, 3.1, 4.5 and 4.6 mm
-  (max 7.4 mm), all inside the `R + 3r = 11.1 mm` snug bound. The fifth is a relink of an earlier bight: old 240..269, final 217..307,
-  which stops before the fourth's 379; the row check rejects it. The old `newYarn`-only judge accepted it because 307 > 269, which is why
-  the earlier count said five. The first four are deterministic in repeated runs; the five-attempt output is identical at `PU_FIXMAX` 40,
-  50 and 60; 30 stops chain 2 on the old loop (85%). `HOLD_LATE=1` changes the fifth (final 213..294, mean 13.4 mm) but it still stops
-  before the fourth; 3 and 4 give no fifth (0 and -1 loops). `PU_BACK=1` makes two at 10 and three at 9. The default late hold and turn-back
-  path are the best of those ranges.
+- **Rig: four across the hold range; a narrow five at `HOLD_BELOW=10`.** The default command `SIM_RIG=1 PU_HOLDREL=0 PU_FIX=1
+  PU_RELEASE_LATE=0 HOLD_BELOW=10 YO_L=-5 YO_MODE=2 YO_ROLLMAX=1.2 ./yarn_sim --chains 5 --damp 15` (work slide `SIM_SEAT=5`) makes
+  chains 1–4, finals 122..141, 164..179, 208..229 and 322..379, means 4.0, 3.1, 4.5 and 4.6 mm (max 7.4 mm), all inside the `R + 3r =
+  11.1 mm` snug bound. The fifth is a relink of an earlier bight (old 240..269, final 217..307, which stops before the fourth's 379); the
+  row check rejects it. The old `newYarn`-only judge accepted it because 307 > 269, which is why the earlier count said five. The first four
+  are deterministic; the five-attempt output is identical at `PU_FIXMAX` 40, 50 and 60; 30 stops chain 2 on the old loop (85%).
+  `HOLD_LATE=1` changes the fifth (final 213..294, mean 13.4 mm) but it still stops before the fourth; 3 and 4 give no fifth (0 and -1 loops).
+  `PU_BACK=1` makes two at 10 and three at 9. The default late hold and turn-back path are the best of those ranges.
   At `HOLD_BELOW=9` chains 1–3 and 5 are sequential (the fourth, final 178..274, stops before the third's 281); 8, 9.5, 11 and 12 lose the
-  first chain. A sixth attempt at `HOLD_BELOW=9` takes the fifth's own loop (old 78%) and is not made. So both 9 and 10 give four, not five;
-  the false stitch is the fifth attempt at 10 and the fourth at 9. Without the fix, the late-release rig made four (chain 2 stayed on the old
-  loop) and early release three (chain 2 at 56%, chain 4 at exactly 50% and therefore not below the half) under the new-yarn judge, before the
-  row check. The fix only changes the final link when it is still
-  the old loop; it does not put the working loop on the shaft. The rig's finish keeps the half-plane pull; the slip knot's old-winding pull
-  breaks the rig's chain 5.
+  first chain. A sixth attempt at 9 takes the fifth's own loop (old 78%) and is not made. So the default range is four at both 9 and 10.
+  The work slide is the one motion lever that makes a five: with `SIM_SEAT=4` at `HOLD_BELOW=10`, chains 1–5 are all made and sequential, finals
+  122..141, 164..179, 207..227, 251..268 and 298..311, means 4.0, 3.1, 2.7, 4.4 and 3.0 mm (max 6.5 mm), all snug. The repeat is identical,
+  and `PU_FIXMAX` 40/50/60 are identical. It is a one-setting window, not a range: `SIM_SEAT` 3 makes two, 4.25 three, 4.5, 5 and 6 four,
+  and 7 three; at `HOLD_BELOW=9`, 4 makes only chain 1 (chain 2 final 156..199, new 0, old 57%). The five is a motion result, not the old
+  `hookLoop` fallback: the shorter slide (10 mm clearance instead of 12.5) leaves the working loop on the shaft. The default four at 9/10
+  is still the only range. The `PU_FIX` only changes the final link when it is still the old loop; the shorter slide, not the fix, is
+  what leaves the working loop on the shaft. The rig's finish keeps the half-plane pull; the slip knot's old-winding pull breaks the rig's
+  chain 5.
 - **Contact.** The three-chain slip test (now with `PU_RELEASE_LATE=0`) reaches a closest self-gap of 2.20 mm (yarn 2.20 mm) and 0.00 mm
   hook penetration; it passes. The five-attempt rig run at `HOLD_BELOW=10` (chains 1–4 sequential, the fifth a relink) reaches 1.68 mm
   (below the 0.95 × 2.20 mm = 2.09 mm limit) and
@@ -116,6 +119,11 @@ turn back, snug, release). `judgeChain` decides "made".
   the rig start. The three-chain rig run's 1.93 mm gap is chain 2's pull-through (frame 2187). The loops are held at the flat back/barb and
   the work slide bunches them; that is why the row is a knot. At `HOLD_BELOW=9` the five-attempt rig run is 1.92 mm and 2.30 mm. The slip
   five-attempt runs were 2.15 mm / 1.38 mm late and 2.05 mm / 0.06 mm early.
+  The `SIM_SEAT=4` five is not clean either: 1.93 mm self-gap at chain 2's pull and 1.73 mm into the hook at chain 3's yarn over. The
+  shorter slide improves the hook contact (2.18 -> 1.73 mm) but not the self-gap; both still fail (the limit is 0.95 x 2.20 = 2.09 mm self,
+  0 mm in the hook). `SIM_SEAT=4.25` makes three and reaches 1.85 mm / 2.79 mm; 4.5 is the default four. The five's whole-work render
+  (`SIM_SHOTYARN=1`) shows one small loop above a long tail and the work bunched at the hook, not five distinct V stitches: the five finals
+  sit on top of each other at the head.
   Attempts to move the contact did not keep five sequential: `YO_RADL=14` keeps four sequential and all snug (4.0, 4.5, 7.5, 6.9 mm; the
   fifth final 278..313 lies inside the fourth's 257..319 and stops at 313 < 319) but drops the self-gap to 1.07 mm; `16` keeps three (gap
   1.88, 0.73 mm in); `12` fails after chain 3. A larger contact radius (`SIM_RSCALE=1.05`) loses the
@@ -124,20 +132,23 @@ turn back, snug, release). `judgeChain` decides "made".
   knife-edge: four at both 9 and 10, but no tested contact lever keeps four and a clean gap. The goal is no strand through itself or the
   hook; the rig runs still violate it. The five-attempt render at `HOLD_BELOW=10` shows a compact knot at the hook, not
   a row of V stitches, consistent with the contact numbers.
-- **Row-motion attempts that did not hold.** Seating the last stitch's closed `hookLoop` whenever the winding loop stopped before it made a
-  five-sequential run at `HOLD_BELOW=10` (finals 122..141, 164..179, 316..334, 362..390, 414..444), but the row moved forward and contact
-  fell to 1.01 mm self-gap / 1.70 mm into the hook. It is not a range: with a `2R` compactness bound the fifth was 359..431, overlapped its
-  old 369..406 by 52%, and was not made (contact 1.93 mm / 3.00 mm); at `HOLD_BELOW=9` the same fallback seats the 11.1 mm chain-2 loop for
-  chain 3 and the yarn over fails (0 loops). Restoring the loop found before the grip after the snug drifted (349..375) also fails (0 loops).
-  A smaller barb (tried at 0.75 and 0.5 of the drawn lip) loses the first chain (0 and 1 chains made at HB10). The full-width flat back
-  and full barb remain required. The four at 10 and 9 is still the best count.
-- **First chain / the row.** The rig makes four sequential at `HOLD_BELOW=10` (chains 1–4) and four at 9 (chains 1–3 and 5). The fifth at
-  10 and the fourth at 9 are relinks of an earlier bight, not stitches; a sixth attempt at 9 is the fifth's own loop (old 78%) and is not
-  made. The first chain is deterministic at 10; the four does not survive `HOLD_BELOW` 8, 9.5, 11 and 12 (the first chain loses its yarn
-  over or its linked stretch), so the row is a narrow setting, not yet a range across the start height. It also does not survive a larger
-  contact radius or a slower pull (above). The slip knot's three-chain test is green under the row check; the slip five is still three
-  (late) or four (early) under the new-yarn judge (the row check not re-run). A half-back head (flat only on the throat side) passes
-  carry/slip but loses the first chain's yarn over (`yo:1` vs 2), so the full-width flat back is kept for now.
+- **Row-motion results.** The work slide at `SIM_SEAT=4` is the only motion lever that has made five (above, HB10 only); it is a one-setting
+  window, not a range. The other attempts did not hold. Seating the last stitch's closed `hookLoop` whenever the winding loop stopped
+  before it made a five-sequential run at `HOLD_BELOW=10` (finals 122..141, 164..179, 316..334, 362..390, 414..444), but the row moved
+  forward and contact fell to 1.01 mm self-gap / 1.70 mm into the hook. It is not a range: with a `2R` compactness bound the fifth was
+  359..431, overlapped its old 369..406 by 52%, and was not made (contact 1.93 mm / 3.00 mm); at `HOLD_BELOW=9` the same fallback seats the
+  11.1 mm chain-2 loop for chain 3 and the yarn over fails (0 loops). Restoring the loop found before the grip after the snug drifted
+  (349..375) also fails (0 loops). A smaller barb (tried at 0.75 and 0.5 of the drawn lip) loses the first chain (0 and 1 chains made at
+  HB10). The full-width flat back and full barb remain required. The default four at 10 and 9 is still the best range; the seat4 five is a
+  narrow HB10 exception, not a replacement.
+- **First chain / the row.** The default rig makes four sequential at `HOLD_BELOW=10` (chains 1–4) and four at 9 (chains 1–3 and 5); the
+  `SIM_SEAT=4` five at 10 is the only five. The default fifth at 10 and fourth at 9 are relinks of an earlier bight, not stitches; a sixth
+  attempt at 9 is the fifth's own loop (old 78%) and is not made. The first chain is deterministic at 10; the default four does not survive
+  `HOLD_BELOW` 8, 9.5, 11 and 12 (the first chain loses its yarn over or its linked stretch), so the row is a narrow setting, not a range
+  across the start height. The seat4 five does not survive 9 or adjacent slides (4.25/4.5). It also does not survive a larger contact
+  radius or a slower pull (above). The slip knot's three-chain test is green under the row check; the slip five is still three (late) or
+  four (early) under the new-yarn judge (the row check not re-run). A half-back head (flat only on the throat side) passes carry/slip but
+  loses the first chain's yarn over (`yo:1` vs 2), so the full-width flat back is kept for now.
 - **Adaptive pull and mixed finish (off by default).** `PU_HALF_CHAINS=2` uses the half-plane finish for the slip knot's first two chains
   (the rest keep old-winding). Without more pull, chain 3 ends on the old loop; with `PU_FIX=1` the finish keeps drawing until the final
   stretch is no longer the old loop, and the half-first-two run gives three made chains, but chain 1 (mean 11.4 mm) and chain 3 (mean
@@ -199,9 +210,10 @@ The old five count was these relinks; the row check now rejects them. The slip k
 new-yarn judge. Step 5 has `testChains` for three slip chains. With `PU_RELEASE_LATE=0` it passes the strict new-loop/new-yarn and row
 checks on all three chains and passes self-gap (2.20 mm) and hook clearance (0.00 mm), but all three working loops are large (mean 15.3, 19.0,
 21.5 mm), so the test is a loop/contact regression, not a picture-valid chain. The rig four is not clean either: self-gap 1.68 mm, 2.18 mm
-into the hook, and the render is still a compact knot at the hook rather than a chain of V stitches. Four at `HOLD_BELOW=10` are real; the
-fifth attempt, the picture and the contact are not. Row-motion attempts (loop-seat, late hold, turn-back path, smaller barb) did not produce
-a repeatable fifth; the next problem is the row advance/contact, not another loop-count knob. Step 7 has not started.
+into the hook, and the render is still a compact knot at the hook rather than a chain of V stitches. Four at `HOLD_BELOW=10` pass the loop
+and row judge by default; the fifth attempt, the picture and the contact do not. A shorter work slide (`SIM_SEAT=4`) makes five at 10,
+repeatably and over `PU_FIXMAX` 40/50/60, but not at 9 or at adjacent slides, and its render is still a tangle. The next problem is the
+row advance/contact, not another loop-count knob. Step 7 has not started.
 
 ## 8. Tools in the CLI (`build/yarn_sim`)
 
