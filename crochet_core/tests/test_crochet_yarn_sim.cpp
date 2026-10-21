@@ -62,7 +62,7 @@ void testSlipKnot() {
 }
 
 void testChains() {
-    // A linked stretch is one loop whichever way it winds (the rig's fifth chain at HOLD_BELOW=10 reads front -1); only the fallback uses
+    // A linked stretch is one loop whichever way it winds (the rig's fifth attempt at HOLD_BELOW=10 reads front -1); only the fallback uses
     // the half-plane count.
     CHECK(linkedLoopCount(true, -1) == 1);
     CHECK(linkedLoopCount(true, 2) == 1);
@@ -90,8 +90,10 @@ void testChains() {
         if (!c.ok) return;
         finishChain(sim, c);
         const ChainResult r = judgeChain(sim, c);
+        CHECK_MSG(r.sequential, "chain %d follows the previous stitch (link %d..%d, previous end %d)", k + 1, r.linkLo, r.linkHi, c.prevHi);
         CHECK_MSG(r.made, "chain %d made (linked %d, front %d, yarn %.0f -> %.0f mm)", k + 1, r.loops, r.frontLoops, c.length * 1e3,
                   r.length * 1e3);
+        if (r.made) sim.lastLinkHi = r.linkHi;
         CHECK_MSG(r.loops == 1, "chain %d ends with one linked loop (%d)", k + 1, r.loops);
         CHECK_MSG(r.newYarn, "chain %d's linked stretch includes the yarn drawn after the old loop", k + 1);
         CHECKP(r.linkMeanR > 0, "chain %d linked stretch radius mean/max %.1f/%.1f mm", k + 1, r.linkMeanR * 1e3, r.linkMaxR * 1e3);

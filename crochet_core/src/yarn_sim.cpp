@@ -817,6 +817,7 @@ bool loopRange(const YarnSim& sim, Real reach, Real turns, int* lo, int* hi) {
 // far the yarn winds round the hook, the yarn over goes on until the working yarn winds a full turn, the pull until the old loop no longer winds.
 ChainStart prepareChain(YarnSim& sim) {
     ChainStart c;
+    c.prevHi = sim.lastLinkHi;
     const Real m = kMm, R = sim.shape.R;
     const Vec3 ax = sim.hook.axis();            // tip -> handle (the hook lies tip to the left)
     const Vec3 up{0, 1, 0}, front{0, 0, 1};
@@ -1298,21 +1299,30 @@ ChainResult judgeChain(const YarnSim& sim, const ChainStart& c) {
     // A linking stretch entirely before the old loop's last particle is an earlier part of the work, not the yarn just drawn through.
     const bool newYarn = linked && c.oldHi >= 0 && hi > c.oldHi + 1;
     r.newYarn = newYarn;
+    // The final stretch's particles: its start is diagnostic, since a new loop can wrap back through the old loop.
+    r.linkLo = lo;
+    r.linkHi = hi;
+    // The new loop may wrap through the old loop, so its stretch can start before the old work ended; it must, however, reach the yarn at
+    // the end of the last valid stitch. A stretch that stops short is an earlier work loop (no new stitch was drawn through the row's end).
+    r.sequential = linked && (c.prevHi < 0 || hi >= c.prevHi);
     const int added = c.loopsAfterYo - c.loopsBefore;
     // The old loop has to be off the hook: a final linking stretch mostly inside the old loop's particles is the old loop, not a new stitch,
-    // even when the half-plane count rose during the yarn over. The stretch must also reach the yarn drawn after the old loop.
-    r.made = c.ok && r.loops == 1 && newLoop && newYarn && len > c.length + 0.004;
+    // even when the half-plane count rose during the yarn over. The stretch must also reach the yarn drawn after the old loop and follow the
+    // previous stitch rather than relink an earlier part of the work.
+    r.made = c.ok && r.loops == 1 && newLoop && newYarn && r.sequential && len > c.length + 0.004;
     if (envOr("SIM_CHAINDBG", 0) > 0)
         std::printf("  judge: old %d..%d, final %d..%d (span %d, overlap %d, old %.0f%%, r mean/max %.1f/%.1f mm), front %d, after %d, "
-                    "added %d, linked %d, new %d, newyarn %d\n",
+                    "added %d, linked %d, new %d, newyarn %d, seq %d (prev %d)\n",
                     c.oldLo, c.oldHi, lo, hi, span, overlap, oldFraction * 100, r.linkMeanR * 1e3, r.linkMaxR * 1e3, r.frontLoops,
-                    c.loopsAfterYo, added, linked ? 1 : 0, newLoop ? 1 : 0, newYarn ? 1 : 0);
+                    c.loopsAfterYo, added, linked ? 1 : 0, newLoop ? 1 : 0, newYarn ? 1 : 0, r.sequential ? 1 : 0, c.prevHi);
     return r;
 }
 
 void makeChain(YarnSim& sim) {
     const ChainStart c = prepareChain(sim);
     if (c.ok) finishChain(sim, c);
+    const ChainResult r = judgeChain(sim, c);
+    if (r.made) sim.lastLinkHi = r.linkHi;
 }
 
 }  // namespace fl

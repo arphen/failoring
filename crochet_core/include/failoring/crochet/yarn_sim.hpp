@@ -100,6 +100,7 @@ public:
     Real throatStiffness = 0.5;   // the throat's hold is soft (contact can push back on it), the finger's is firm
     bool homeSet = false;   // where the hook works from, stitch after stitch (set by the first chain)
     int chains = 0;         // completed chains; the left hand goes a little farther below the growing work for the fifth
+    int lastLinkHi = -1;    // final particle of the last valid chain's linking stretch (the row's end; set by the caller after a made chain)
     Vec3 home{};   // the finger is an eyelet the yarn slides through (true) or a capsule it lies over (false)
     // Fingers and other fixed things the yarn runs past (it slides along them): capsules added to the hook's.
     std::vector<StaticCapsule> fixtures;
@@ -168,6 +169,7 @@ struct ChainStart {
     Real along = 0;
     std::vector<int> oldLoop;   // the particles of the loop that was on the hook
     int oldLo = -1, oldHi = -1;
+    int prevHi = -1;            // the last valid chain's final linking stretch ended here (particle index); -1 for the first chain
     int loopsAtStart = 0, loopsBefore = 0, loopsAfterYo = 0;   // loopsOnHook(front) at the start and after the yarn over
     Real length = 0;            // the yarn between the tail and the hand (m) when the stitch began
 };
@@ -181,6 +183,8 @@ struct ChainResult {
     int frontLoops = 0;   // loopsOnHook(front), which also counts the chain's legs beside the hook; its sign is diagnostic
     int oldOn = 0;   // particles of the old loop still round the hook
     bool newYarn = false;   // the linking stretch reaches into the yarn drawn after the old loop (not an earlier work loop)
+    bool sequential = false;  // the linking stretch ends at or after the last valid chain's end, so the stitches form one row
+    int linkLo = -1, linkHi = -1;   // the final linking stretch's particles
     Real oldWind = 0, newWind = 0;    // how far the old loop's yarn and the yarn after it wind round the hook (turns)
     Real linkMeanR = 0, linkMaxR = 0;  // distance of the final linking stretch from the hook's axis (m)
     Real length = 0;

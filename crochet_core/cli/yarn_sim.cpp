@@ -508,6 +508,7 @@ int main(int argc, char** argv) {
         const ChainStart cs = prepareChain(sim);
         if (cs.ok) finishChain(sim, cs);
         const ChainResult r = judgeChain(sim, cs);
+        if (r.made) sim.lastLinkHi = r.linkHi;
         std::string frontNote;
         if (r.frontLoops != r.loops) frontNote = " (front count " + std::to_string(r.frontLoops) + ")";
         std::printf("chain %d: %d loops%s on the hook (after the yarn over %d), yarn %.1f mm (was %.1f)%s\n", c + 1, r.loops, frontNote.c_str(),
