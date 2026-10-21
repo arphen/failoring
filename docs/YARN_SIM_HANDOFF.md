@@ -124,6 +124,9 @@ turn back, snug, release). `judgeChain` decides "made".
   0 mm in the hook). `SIM_SEAT=4.25` makes three and reaches 1.85 mm / 2.79 mm; 4.5 is the default four. The five's whole-work render
   (`SIM_SHOTYARN=1`) shows one small loop above a long tail and the work bunched at the hook, not five distinct V stitches: the five finals
   sit on top of each other at the head.
+  A slower pull does not keep the five. At seat 4, `PU_V=10` makes chains 1, 3, 4 and 5 (chain 2 has no linking stretch), with a 2.14 mm
+  self-gap (passes) but 1.40 mm into the hook; `PU_V=8` makes 1, 2 and 4, with chain 3 on earlier work (`newYarn=0`, seq 0) and chain 5
+  likewise, and a 0.67 mm self-gap. The five needs the default pull speed.
   Attempts to move the contact did not keep five sequential: `YO_RADL=14` keeps four sequential and all snug (4.0, 4.5, 7.5, 6.9 mm; the
   fifth final 278..313 lies inside the fourth's 257..319 and stops at 313 < 319) but drops the self-gap to 1.07 mm; `16` keeps three (gap
   1.88, 0.73 mm in); `12` fails after chain 3. A larger contact radius (`SIM_RSCALE=1.05`) loses the
