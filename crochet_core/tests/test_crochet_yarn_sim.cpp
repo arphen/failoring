@@ -93,7 +93,11 @@ void testChains() {
         CHECK_MSG(r.sequential, "chain %d follows the previous stitch (link %d..%d, previous end %d)", k + 1, r.linkLo, r.linkHi, c.prevHi);
         CHECK_MSG(r.made, "chain %d made (linked %d, front %d, yarn %.0f -> %.0f mm)", k + 1, r.loops, r.frontLoops, c.length * 1e3,
                   r.length * 1e3);
-        if (r.made) sim.lastLinkHi = r.linkHi;
+        if (r.made) {
+            sim.lastLinkHi = r.linkHi;
+            sim.lastLinkLo = r.linkLo;
+            sim.lastLinkChain = sim.chains;
+        }
         CHECK_MSG(r.loops == 1, "chain %d ends with one linked loop (%d)", k + 1, r.loops);
         CHECK_MSG(r.newYarn, "chain %d's linked stretch includes the yarn drawn after the old loop", k + 1);
         CHECKP(r.linkMeanR > 0, "chain %d linked stretch radius mean/max %.1f/%.1f mm", k + 1, r.linkMeanR * 1e3, r.linkMaxR * 1e3);

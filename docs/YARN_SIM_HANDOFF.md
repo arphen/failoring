@@ -9,7 +9,8 @@ passing through itself or the hook; the hook moves; the shape is whatever the ph
 **free physics** (option 1) over a design-guided simulation, and wants it to look like the photographs (real hooks, real chains, real sc).
 
 Order of work: chain stitch (repeatable, many in a row) -> single crochet into the chain -> turn -> rows -> wire the editor's stitch buttons to
-the simulator. The slip knot works end to end. The three-chain loop/contact test passes under the strict judge and the row check. The rig's
+the simulator. The slip knot works end to end. The three-chain loop/contact test passed under the pre-groove judge; it now fails after the
+SDF-head/groove work (section 5) and is the regression target, not a passing check. The rig's
 default makes four at `HOLD_BELOW` 9/10; a shorter work slide (`SIM_SEAT=4`) makes five at 10 only. The chain row is not yet a crochet chain:
 the five-loop render is still a tangle at the hook, and the contact fails (section 5).
 
@@ -169,6 +170,29 @@ turn back, snug, release). `judgeChain` decides "made".
     off-axis hold winds it but has not produced a second loop yet.
   - Pushing the hook tip-first to seat a loop spears the chain hanging below; slide the work along the hook instead (`SEAT_HAND=1`).
   - The finger must travel with the hook during the pull (`PU_FOLLOW`), and the throat must turn back the way it came (`PU_BACK=2`).
+- **Strict link judge and the groove catch (current work).** The older `old-final link` / `chain link` readings are closure artefacts when
+  the final stretch includes the old loop; a `cross` count was added: the signed number of times the working yarn after `oldHi` passes
+  through a triangle fan spanning the old loop. `cross ±1` is a real passage, `cross 0` is none even when the closed-stretch link reads ±1.
+  `around` tests whether the old loop's projection along the hook axis encloses the shaft; a bight hanging beside the shaft cannot be
+  threaded. The groove catch had a real bug: it ignored `y`, so a yarn 6.2 R below the hook counted as caught when it lined up in x–z. It
+  now measures to the groove segment in 3D, and the old fake catches are gone. After the slip knot the full loop is yarn 88..186 and
+  `around 1`; the prep's winding loop is a 19-particle sub-stretch beside the shaft, which is why the first chains were never linked.
+  The best current slip run is `SIM_GROOVE=1 SIM_GX=0.65 SIM_GZ=1.30 SIM_GR=0.50 SIM_BARBX=0.85 SIM_BARBW=0.65
+  YO_ROLLMAX=0 YO_CATCHR=1.6 YO_GRIP=1 YO_GRIPREL=0 YO_SERVO=1 YO_SERVO_IT=90 PU_HOLDREL=1 PU_SNUG=8 PU_FIX=1
+  PU_RELEASE_LATE=0 HOLD_BELOW=12 YO_L=-15 YO_MODE=2 PU_SNUGT=1.0 PU_V=14 CH_PREFER=1 SEAT_HAND=0 CH_PREV=1
+  ./build/yarn_sim --chains 5 --damp 15 --every 0`. It makes chains 1–4; chain 3 is the first stitch that agrees under all three judges:
+  old loop 202..240, final 247..273 (clean, 4.2 mm mean), old-final link −1.00, clean link −1.00, cross 1, chain link 2–3 −1.00. Chain 1 is
+  a 10.8 mm final that includes the old loop; chain 2 is compact (3.8 mm) but links −0.00; chain 4's final 261..307 starts inside its old
+  loop and links 0.16; chain 5's yarn over leaves 0 loops. So this is one real stitch, not a chain. `CH_PREV=1` unions the previous made
+  stitch's final stretch with the on-hook loop; that is what turned chain 3's cross from 0 to 1. It does not fix chains 1, 2 or 4.
+  Failed levers in this round: the back rim at `z=2.0R` and behind the flat back at `z=2.15R` (no link, sometimes worse contact);
+  `YO_ROLL=±1` with `YO_ROLLMAX=0` (inert); `YO_GRIPREL=2` (3.09 mm in the hook); `YO_SERVO_IT=240` (loses the old loop, 0 loops); the
+  hand seat `SEAT_HAND=1` (loop 20.4 mm out, final lies before it); the post-snug hook seat `HOOK_SEAT_AFTER=1` (loop 36–48 mm out, 575 mm
+  of yarn on chain 1); `HOME_RETURN=0` (no effect); a longer pull (`PU_FIXMAX=90 PU_EXTRA=12 PU_OLDWIND=0.2`, chain 2's final 100% old);
+  `PREP_SNUG=1/2` (no clean final); `SLIP_SNUG=0/1` (does not keep a larger first loop). The three-chain test now fails: chain 1 passes,
+  chain 2 links earlier work (74..113) and draws no yarn, chain 3's yarn over is not caught, contact is 2.04 mm self / 2.76 mm in the hook.
+  The next two problems are the yarn over when the old loop is at the throat (3–4 mm) and the first stitch's final, which still contains
+  the old loop.
 
 ## 6. The SDF hook
 
@@ -220,6 +244,13 @@ and row judge by default; the fifth attempt, the picture and the contact do not.
 repeatably and over `PU_FIXMAX` 40/50/60, but not at 9 or at adjacent slides, and its render is still a tangle. The next problem is the
 row advance/contact, not another loop-count knob. Step 7 has not started.
 
+**Update after the groove/grip and link-judge work (current):** the three-chain test is no longer green. With the SDF hook and the new
+defaults it reports 10 failures: chain 1 passes; chain 2's final is earlier work (74..113) and draws no yarn; chain 3's yarn over is not
+caught; contact is 2.04 mm self / 2.76 mm in the hook. The best slip chain under the new `cross` / `around` / closed-link judges is still
+one real stitch (chain 3 in the command above), so step 4 is not met and step 5's regression test is red. The next step is not another
+loop-count knob: it is keeping the old loop 3–5 mm behind the throat through the snug, and making the first stitch's final not include the
+old loop. See the new bullet in section 5 for the exact command and the failed levers.
+
 ## 8. Tools in the CLI (`build/yarn_sim`)
 
 - `--chains N` runs N chains after the slip knot; `SIM_RIG=1` starts from the clean loop rig instead.
@@ -230,7 +261,8 @@ row advance/contact, not another loop-count knob. Step 7 has not started.
   sweep is applied to each child copy; other solver parameters are read only at startup.
 - `SIM_STAGES=1` prints loop counts at every stage; `SIM_ROLLDBG=1` during the roll; `YO_DUMP=1` the yarn's path in the hook's frame.
   `SIM_CHAINDBG=1` prints the old and final linking stretches, their overlap, the `newYarn` and `sequential` flags, the previous end, the
-  mean/max radius and the old loop's own winding outside the final stretch (`oldWind`, turns) for every judge.
+  mean/max radius, the old loop's own winding outside the final stretch (`oldWind`, turns), the closure-free `cross` count and whether the
+  old loop's projection encloses the shaft (`around`) for every judge.
   `SIM_CONTACT=1` prints the phase, frame, segment and particle indices of each new worst self-gap and hook penetration; `SIM_RSCALE=x` sets
   the contact radius scale after the build (the drawn radius stays `--rad`; 1.0 is the physical radius).
 - The later-chain hand: `HOLD_LATE` mm (default 2) and `HOLD_T_LATE` s (default 0.05) are added after four completed chains. The slip-knot
@@ -247,6 +279,12 @@ row advance/contact, not another loop-count knob. Step 7 has not started.
   `SIM_PHASESHOT=f` (at every phase change after frame f), `--close a-b/step` with `SIM_CFIX=1 SIM_CDIST=0.06` (close-ups).
   `SIM_SHOTYARN=1` frames all the yarn (not the origin); `SIM_SHOTDIST` and `SIM_SHOTTARGET=x,y,z` override the camera.
   Contact sheets: `python3 <scratch>/sheet.py dir kind` (or any PIL montage).
+- Groove/grip/link experiments: `SIM_GROOVE=1` with `SIM_GX=0.65 SIM_GZ=1.30 SIM_GR=0.50` cuts the throat groove; `YO_GRIP=1` holds
+  the caught particle in the hook frame; `YO_CATCHR` is the 3D distance to the groove segment; `YO_SERVO=1 YO_SERVO_IT=90` moves the
+  finger until the working yarn lies in the groove; `YO_SOLVE=1` puts the finger on the line from the old loop's end through the groove;
+  `CH_PREV=1` unions the previous made stitch's final stretch with the on-hook loop; `CH_PREFER=1` prefers a closed loop that encloses the
+  shaft. `SEAT_AFTER`, `HOOK_SEAT_AFTER`, `SIM_RIM`, `SLIP_SNUG` and `PREP_SNUG` are experiments; the last two default to 4.0 (the old
+  snug) and the others are off.
 - Knobs are read with `envOr("NAME", default)` in `yarn_sim.cpp`. When a value proves itself, make it the default and remove the knob.
 
 ## 9. Pitfalls

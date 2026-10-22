@@ -29,6 +29,17 @@ struct HookShape {
     Real length = 0.075;    // tip to the end of what is simulated of the shaft
     Real squash = 0.6;      // the yarn's radius against the hook, as a fraction of its own: wool squashes into the throat
     bool sdf = true;        // the hook as one smooth body (a round head with a barb, a neck, a taper and the shaft) instead of capsules
+    // Where the barb sits: x out from the axis and half its length across the throat, in shaft radii. A barb outside the head's 1R
+    // envelope blocks old loops; one set inside the mouth still blocks yarn in the throat (x ~0.3-0.6R) without standing in their way.
+    Real barbX = 0.85;
+    Real barbHalfWidth = 1.0;
+    // An open throat groove cut across the mouth side of the head (off by default: the old head is a closed bulb whose throat point a
+    // full-radius yarn cannot reach). Where its centre sits and its radius, in shaft radii; it runs across the hook in y.
+    bool groove = false;
+    Real grooveX = 0.70, grooveZ = 1.55, grooveR = 0.55;
+    // A low rim round the back and sides of the head's rear edge, open at the mouth: the old loop cannot slip off sideways, so it has
+    // to ride over the tip (where the new yarn, caught in the throat, goes through it).
+    bool rim = false;
 };
 // The hook's signed distance (m) at a point of its own frame (z from the tip toward the handle, the throat opening toward +x), and its gradient.
 Real hookSdf(const Vec3& p, const HookShape& s, Vec3* grad);
@@ -95,12 +106,20 @@ public:
     // The throat holds the yarn in it (a ring at the middle of the throat that the yarn runs through) while `throatRing` is set
     void setThroatRing(bool on, int fromParticle = 0);
     bool throatRingOn() const { return throatRing_ >= 0; }
+    // A hard grip on one particle, held at the middle of the throat and carried with the hook: the barb catching the yarn, not a ring it
+    // slides through. Used through the pull so the caught bight really goes through the old loop.
+    void gripThroat(int particle);
+    void releaseThroatGrip();
+    int throatGrip() const { return catchPin_; }
     bool fingerEyelet = true;
     Real throatX = 0.30;   // where the throat holds a caught yarn, out from the axis toward the throat's mouth (shaft radii)
+    Real throatZ = 2.50;   // and how far from the tip, along the axis (shaft radii)
     Real throatStiffness = 0.5;   // the throat's hold is soft (contact can push back on it), the finger's is firm
     bool homeSet = false;   // where the hook works from, stitch after stitch (set by the first chain)
     int chains = 0;         // completed chains; the left hand goes a little farther below the growing work for the fifth
     int lastLinkHi = -1;    // final particle of the last valid chain's linking stretch (the row's end; set by the caller after a made chain)
+    int lastLinkLo = -1;    // first particle of that stretch: the stitch loop the next chain is worked into
+    int lastLinkChain = -1; // the chain count when it was made, so a stitch after a failed chain does not reuse a stale loop
     Vec3 home{};   // the finger is an eyelet the yarn slides through (true) or a capsule it lies over (false)
     // Fingers and other fixed things the yarn runs past (it slides along them): capsules added to the hook's.
     std::vector<StaticCapsule> fixtures;
@@ -150,6 +169,8 @@ private:
     std::vector<int> caught_;   // the particles the throat's grip pulls on
     std::vector<int> reeled_;   // the particles the hand draws in
     int throatRing_ = -1, fingerRing_ = -1;   // their indices in rs.rings
+    int catchPin_ = -1;                        // the particle the barb holds at the throat (a hard grip), -1 when none
+    Vec3 catchOffset_{};                       // where that particle sits in the hook's frame (it is carried rigidly, not pulled into the throat)
 public:
     Real reelSlack = 0.6, reelForce = 0.0;   // the hand takes in yarn lying within reelSlack of its length from it, drawing it with reelForce x tension (off)
 private:
@@ -171,6 +192,8 @@ struct ChainStart {
     int oldLo = -1, oldHi = -1;
     int prevHi = -1;            // the last valid chain's final linking stretch ended here (particle index); -1 for the first chain
     int loopsAtStart = 0, loopsBefore = 0, loopsAfterYo = 0;   // loopsOnHook(front) at the start and after the yarn over
+    int catchParticle = -1;     // the working-yarn particle the throat caught
+    bool catchGripped = false;  // the barb holds it (a hard grip) through the pull
     Real length = 0;            // the yarn between the tail and the hand (m) when the stitch began
 };
 ChainStart prepareChain(YarnSim& sim);
@@ -197,7 +220,7 @@ int carriedRound(const YarnSim& sim);   // 360 with a loop on the hook, else 0
 // The loop on the hook: the shortest stretch of yarn, from particle `from` to `to` where the yarn touches itself, that the hook's axis passes
 // through (linking number 1 with the axis closed far away). False when there is none. Use this for the stitch, not loopsOnHook(front), which
 // also counts the chain's legs hanging beside the hook.
-bool hookLoop(const YarnSim& sim, int* from, int* to);
+bool hookLoop(const YarnSim& sim, int* from, int* to, int searchFrom = -1);
 
 // A test rig for stitches: the hook lying tip to the left at `tip`, a loop snug on its shaft, its front leg running down to the work (the tail end,
 // held), its back leg up behind to the index finger and over it to the spool. Builds `sim` (finger on, hook posed).

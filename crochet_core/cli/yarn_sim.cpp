@@ -77,6 +77,8 @@ int main(int argc, char** argv) {
     // The hook's shape: SIM_SDF=1 is the smooth barbed hook; the capsule hook is kept for comparing with the old tests.
     if (std::getenv("SIM_SDF")) sim.shape.sdf = std::atof(std::getenv("SIM_SDF")) > 0;
     if (std::getenv("SIM_SQUASH")) sim.shape.squash = std::atof(std::getenv("SIM_SQUASH"));
+    if (std::getenv("SIM_BARBW")) sim.shape.barbHalfWidth = std::atof(std::getenv("SIM_BARBW"));
+    if (std::getenv("SIM_BARBX")) sim.shape.barbX = std::atof(std::getenv("SIM_BARBX"));
     if (std::getenv("SIM_HOOKSHOT")) {   // the hook alone, close up: from the throat side, from the side, from above, at a slant
         const HookPose hp = hookPose(Vec3{}, Vec3{-1, 0, 0}, Vec3{0, 1, 0});
         const YarnMesh hm = hookMesh(hp, sim.shape, 0.1e-3);
@@ -158,8 +160,25 @@ int main(int argc, char** argv) {
     sim.params.massScale = massScale;
     sim.params.damping = damp;
     if (std::getenv("SIM_REEL")) std::sscanf(std::getenv("SIM_REEL"), "%lf,%lf", &sim.reelSlack, &sim.reelForce);
+    if (std::getenv("SIM_RIM")) sim.shape.rim = true;
+    if (std::getenv("SIM_GROOVE")) {
+        sim.shape.groove = true;
+        if (std::getenv("SIM_GX")) sim.shape.grooveX = std::atof(std::getenv("SIM_GX"));
+        if (std::getenv("SIM_GZ")) sim.shape.grooveZ = std::atof(std::getenv("SIM_GZ"));
+        if (std::getenv("SIM_GR")) sim.shape.grooveR = std::atof(std::getenv("SIM_GR"));
+        if (!std::getenv("SIM_TX")) sim.throatX = sim.shape.grooveX;
+        if (!std::getenv("SIM_TZ")) sim.throatZ = sim.shape.grooveZ;
+    }
     if (std::getenv("SIM_TX")) sim.throatX = std::atof(std::getenv("SIM_TX"));
+    if (std::getenv("SIM_TZ")) sim.throatZ = std::atof(std::getenv("SIM_TZ"));
     if (std::getenv("SIM_THK")) sim.throatStiffness = std::atof(std::getenv("SIM_THK"));
+    if (std::getenv("SIM_SDFDBG")) {
+        const Real R = sim.shape.R;
+        for (Real x = 0; x <= 1.6; x += 0.1)
+            std::printf("sdf x %.2fR at y0 z%.2fR: %.3f R\n", x, sim.shape.grooveZ, hookSdf(Vec3{x * R, 0, sim.shape.grooveZ * R}, sim.shape, nullptr) / R);
+        for (Real z = 0.8; z <= 2.4; z += 0.1)
+            std::printf("sdf z %.2fR at x%.2fR y0: %.3f R\n", z, sim.shape.grooveX, hookSdf(Vec3{sim.shape.grooveX * R, 0, z * R}, sim.shape, nullptr) / R);
+    }
     if (std::getenv("SIM_HMU")) sim.params.hookFriction = std::atof(std::getenv("SIM_HMU"));
     if (std::getenv("SIM_SUB")) sim.params.substeps = std::atoi(std::getenv("SIM_SUB"));
     if (std::getenv("SIM_IT")) sim.params.iterations = std::atoi(std::getenv("SIM_IT"));
@@ -504,20 +523,55 @@ int main(int argc, char** argv) {
         }
         return 0;
     }
+    std::vector<std::pair<int, int>> links;
     for (int c = 0; c < chains; ++c) {
         const ChainStart cs = prepareChain(sim);
         if (cs.ok) finishChain(sim, cs);
         const ChainResult r = judgeChain(sim, cs);
-        if (r.made) sim.lastLinkHi = r.linkHi;
+        if (r.made) {
+            sim.lastLinkHi = r.linkHi;
+            sim.lastLinkLo = r.linkLo;
+            sim.lastLinkChain = sim.chains;
+        }
+        if (r.made) {
+            links.push_back({r.linkLo, r.linkHi});
+            if (links.size() >= 2) {
+                const auto& a = links[links.size() - 2];
+                const auto& b = links[links.size() - 1];
+                std::vector<Vec3> A(sim.rs.x.begin() + a.first, sim.rs.x.begin() + a.second + 1);
+                std::vector<Vec3> B(sim.rs.x.begin() + b.first, sim.rs.x.begin() + b.second + 1);
+                std::printf("  chain link %d-%d: linking %.2f\n", (int)links.size() - 1, (int)links.size(), linkingNumber(A, B));
+            }
+        }
         std::string frontNote;
         if (r.frontLoops != r.loops) frontNote = " (front count " + std::to_string(r.frontLoops) + ")";
         std::printf("chain %d: %d loops%s on the hook (after the yarn over %d), yarn %.1f mm (was %.1f)%s\n", c + 1, r.loops, frontNote.c_str(),
                     cs.loopsAfterYo, r.length * 1e3, cs.length * 1e3, r.made ? "  MADE" : "");
+        if (std::getenv("SIM_PATHDIR")) {
+            char name[512];
+            std::snprintf(name, sizeof name, "%s_ch%d.csv", std::getenv("SIM_PATHDIR"), c + 1);
+            if (FILE* f = std::fopen(name, "w")) {
+                const Vec3 ax = sim.hook.axis();
+                std::fprintf(f, "# tip %.6f %.6f %.6f ax %.6f %.6f %.6f old %d %d link %d %d\n", sim.hook.tip.x, sim.hook.tip.y, sim.hook.tip.z,
+                             ax.x, ax.y, ax.z, cs.oldLo, cs.oldHi, r.linkLo, r.linkHi);
+                for (int i = 0; i < sim.rs.particleCount(); ++i)
+                    std::fprintf(f, "%d,%.6f,%.6f,%.6f\n", i, sim.rs.x[i].x, sim.rs.x[i].y, sim.rs.x[i].z);
+                std::fclose(f);
+            }
+        }
         if (std::getenv("SIM_CHAINSHOT")) { char tag[16]; std::snprintf(tag, sizeof tag, "ch%d", c + 1); snap(tag); }
         continue;
         std::printf("chain %d: loops on hook %d (up) %d (front)\n", c + 1, sim.loopsOnHook(Vec3{0, 1, 0}), sim.loopsOnHook(Vec3{0, 0, 1}));
     }
     snap("end");
+    if (std::getenv("SIM_HOOKOFF")) {
+        // Take the hook out of the work and let the yarn settle: a linked chain stays a chain; loops that were only hanging on
+        // the hook fall straight and the yarn pulls out to the hand.
+        sim.setThroatRing(false);
+        sim.hook = hookPose(sim.hook.tip + Vec3{0, 0.25, 0}, -sim.hook.axis(), sim.hook.throat());
+        sim.settle(150);
+        snap("hookoff");
+    }
     const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     std::printf("slip knot: %d frames in %.1f s; worst gap %.2f mm (2r %.2f), worst strain %.3f, worst in hook %.2f mm\n", sim.frame, secs,
                 worstGap * 1e3, 2 * rad, worstStrain, worstPen * 1e3);
