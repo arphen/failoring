@@ -222,7 +222,14 @@ int main(int argc, char** argv) {
     const bool rig = std::getenv("SIM_RIG") != nullptr;
     sim.rig = rig;
     if (!loadPath.empty()) {
-        if (!sim.loadState(loadPath)) return 2;
+        // The slip knot is made on legacy (the knot works there); a checkpoint of it loads onto the inline shape for the chain. The header's
+        // hook is then not checked, and the shape is switched.
+        const bool reshape = hookName == "inline";
+        if (!sim.loadState(loadPath, !reshape)) return 2;
+        if (reshape && sim.shape.form != HookShape::Form::Inline) {
+            sim.shape = HookShape::inlineHook();
+            std::printf("knot from legacy: the chain runs on the inline hook\n");
+        }
         std::printf("loaded %s: %d particles, %d chains, frame %d\n", loadPath.c_str(), sim.rs.particleCount(), sim.chains, sim.frame);
         if (std::getenv("SIM_LOADDBG")) std::fprintf(stderr, "main: loaded\n");
     } else {

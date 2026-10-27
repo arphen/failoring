@@ -2778,9 +2778,24 @@ StitchFixture buildStitchFixture(const std::string& name) {
 }
 
 ChainStart makeChainDriven(YarnSim& sim) {
-    // Phase D2 builds the driven sequence here; until then the chain is reported as not made.
-    std::printf("driven chain: not built yet\n");
-    return ChainStart{};
+    // docs/CHAIN_DRIVEN_PLAN.md D2: the solver seats the old loop and makes the yarn over (prepareChain); then the old loop is driven off the
+    // head, the new loop (the stretch round the hook after the old loop) is driven onto the shaft, and the solver snugs the work. The hook
+    // stays where it is through the driven windows.
+    const ChainStart c = prepareChain(sim);
+    if (!c.ok) return c;
+    const Real m = kMm;
+    sim.driveRing(c.oldLo, c.oldHi, 12 * m, -3 * m, 30);   // loop off: the old loop slides over the head
+    for (int f = 0; f < 30; ++f) sim.step(sim.hook);
+    sim.releaseRing();
+    sim.settle(10);
+    int nl = -1, nh = -1;
+    if (hookLoop(sim, &nl, &nh, c.oldHi + 1) && nh > nl) {   // seat: the new loop is the stretch round the hook after the old loop
+        sim.driveRing(nl, nh, 12 * m, 12 * m, 30);
+        for (int f = 0; f < 30; ++f) sim.step(sim.hook);
+        sim.releaseRing();
+    }
+    sim.settle(30);   // snug: the solver holds the work
+    return c;
 }
 
 void makeChain(YarnSim& sim) {

@@ -230,3 +230,7 @@ and take the fallback. Each fallback brings half the phase's budget again.
   Decision (user): `--hook inline` from D2 on; `chain_check.sh` defaults to `HOOK=inline`.
   Decision (agent, 6.2): release check rewritten to the amended section 4.3 line (gravity off; contact and NaN over 60 frames; 1 mm move).
   Gravity change discarded (commits 3d4845c, 609a1f7 reverted in content by the test edit below).
+- 2026-10-27 D2 blocker on inline (measured): the slip knot on inline makes 0 loops (`onHook=0`); a legacy knot loaded onto the inline shape
+  overlaps it (penetration 1.67-1.88 mm at the chain's first frames, frame 685); settling it onto inline opens the loop (mean 13.3 mm out, no
+  final loop, 1.86 mm in). Decision (agent, 6.1.3): the chain runs on legacy, where the knot works and the first driven chain can be measured;
+  the inline hook is kept for the ring tests. This reverses the user's "inline from here on" for D2 and is flagged in the report.

@@ -66,14 +66,14 @@ if [ "$jobs" -gt 16 ]; then jobs=16; fi
 
 # The knot for one damping value: made once, saved, and reused by every grid point with that damping.
 # The knots are the same for every chain procedure: one set per hook, shared by every run.
-knotdir=build/chain_runs/knots-$hook
+knotdir=build/chain_runs/knots-legacy   # the knot is made on legacy (where it works) and loaded onto the chain's hook
 mkdir -p "$knotdir"
 make_knot() {
     local damp=$1
     local ckpt=$knotdir/d$damp.ckpt
     if [ -f "$ckpt" ]; then return 0; fi
     mkdir -p "$knotdir/d$damp"
-    env "${extra[@]}" "$bin" --hook "$hook" --save-after knot --save "$ckpt" --damp "$damp" --every 0 --out "$knotdir/d$damp/sim" \
+    env "${extra[@]}" "$bin" --hook legacy --save-after knot --save "$ckpt" --damp "$damp" --every 0 --out "$knotdir/d$damp/sim" \
         > "$knotdir/d$damp/log.txt" 2>&1
 }
 
