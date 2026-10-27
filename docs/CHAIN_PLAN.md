@@ -213,4 +213,4 @@ Known decision points the user will want to hear about, not decide around:
 - 2026-10-27 Phase 0 (judge and harness): Gate 0 passes. `judgeStitch` gives a closure-free verdict per stitch. The CH_PREV=2 second
   chain (old 135..197, final 202..235) reads `through=0` and fails on that column alone; the same run's third chain reads `through=1` and
   passes. Today's 17 mm loop fails `onShaft` at 4.3/17.0 mm. `tools/chain_check.sh p0 3 slip` runs the seven grid points on today's
-  defaults: every point reads 0/3 in a row. Renders in `build/chain_runs/p0/base/`.
+  defaults: every point reads 0/3 in a row. Renders in `build/chain_runs/p0/base/`. Commit f675371.
