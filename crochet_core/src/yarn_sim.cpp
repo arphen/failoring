@@ -586,6 +586,20 @@ void YarnSim::step(const HookPose& pose) {
     if (!rs.bodies.empty()) impulseHook += rs.bodies[0].impulse;
     // running contact: every second frame (the plan allows this; a crossing lasts longer than a frame at the stitch's speeds)
     if ((frame & 1) == 0) {
+        static const bool gapDbg = envOr("DR_GAPDBG", 0) > 0;
+        if (gapDbg && minGap() < 0.95 * 2 * params.radius) {
+            // the pair of segments that come closest, and whether their ends are pinned
+            const int S = rs.segmentCount(), skip = rs.params.contactSkipSegments + 1;
+            Real best = 1e300;
+            int ba = -1, bb = -1;
+            for (int a = 0; a < S; ++a)
+                for (int b = a + skip + 1; b < S; ++b) {
+                    const fl::SegSegResult r = fl::closestSegmentSegment(rs.x[rs.segA[a]], rs.x[rs.segB[a]], rs.x[rs.segA[b]], rs.x[rs.segB[b]]);
+                    if (r.dist2 < best) { best = r.dist2; ba = a; bb = b; }
+                }
+            std::printf("gap [%d] %s: %.2f mm between %d%s and %d%s\n", frame, phase.c_str(), std::sqrt(best) * 1e3, rs.segA[ba],
+                        rs.w[rs.segA[ba]] > 0 ? "" : "P", rs.segA[bb], rs.w[rs.segA[bb]] > 0 ? "" : "P");
+        }
         worstGap = std::min(worstGap, minGap());
         worstPen = std::max(worstPen, hookPenetration());
     }
@@ -2922,8 +2936,21 @@ ChainStart makeChainDriven(YarnSim& sim) {
     auto report = [&](const char* what, int lo, int hi) {
         Real mr, z0, z1;
         stretchStats(sim, lo, hi, &mr, &z0, &z1);
-        if (dbg) std::printf("driven [%d] %s: yarn %d..%d (%.1f mm), %.1f mm out, z %.1f..%.1f mm; gap %.2f mm, in hook %.2f mm\n", sim.frame, what, lo,
-                             hi, (hi - lo) * seg / m, mr / m, z0 / m, z1 / m, sim.minGap() / m, sim.hookPenetration() / m);
+        if (dbg) std::printf("driven [%d] %s: yarn %d..%d (%.1f mm), %.1f mm out, z %.1f..%.1f mm; gap %.2f mm (worst %.2f), in hook %.2f mm\n", sim.frame, what, lo,
+                             hi, (hi - lo) * seg / m, mr / m, z0 / m, z1 / m, sim.minGap() / m, sim.worstGap / m, sim.hookPenetration() / m);
+    };
+
+    // DR_DUMP=<file> (and DR_DUMPD for the dressed state) writes every particle's hook-frame position in mm
+    auto dump = [&](const char* var) {
+        const char* to = std::getenv(var);
+        if (!to) return;
+        if (FILE* f = std::fopen(to, "w")) {
+            for (int i = 0; i < sim.rs.particleCount(); ++i) {
+                const Vec3 l = toHook(sim, sim.rs.x[i]);
+                std::fprintf(f, "%d %.3f %.3f %.3f %d\n", i, l.x / m, l.y / m, l.z / m, sim.rs.w[i] > 0 ? 0 : 1);
+            }
+            std::fclose(f);
+        }
     };
 
     // the old loop: the compact stretch that winds round the shaft (the slip knot's whole ring also links the axis, with the knot in it),
@@ -3114,10 +3141,101 @@ ChainStart makeChainDriven(YarnSim& sim) {
             std::printf("cinch: no leg below %.1f mm\n", zc / m);
         }
     }
+    // dress (DR_DRESS, plan D2): the stitch takes the judge fixture's shape. The old loop's own yarn is driven into a ring below the shaft
+    // (DR_DRESSY from the axis, in the plane across the down direction, at the new loop's height), so both legs of the new loop leave it
+    // downward through that ring. In the same window the finger and the left hand go below the hook, so both legs are drawn down and the yarn
+    // pulls the old loop against the new loop's foot instead of along the axis.
+    const bool dress = envOr("DR_DRESS", 1) > 0;
+    std::pair<int, int> workHeld{0, -1};
+    Vec3 workPull{};   // hook frame, unit: the way the left hand pulls the work
+    if (dress) {
+        sim.phase = "The old loop closes below the hook, round both legs";
+        // The judge fixture's frame F: x across, -y down (toward the work), z along the axis. F turns into the hook frame by `down + pi/2` round z.
+        const Real a = down + kPi / 2, ca = std::cos(a), sa = std::sin(a);
+        auto fromF = [&](const Vec3& f) { return Vec3{f.x * ca - f.y * sa, f.x * sa + f.y * ca, f.z}; };
+        auto toF = [&](const Vec3& l) { return Vec3{l.x * ca + l.y * sa, -l.x * sa + l.y * ca, l.z}; };
+        const Vec3 foot1 = toF(toHook(sim, sim.rs.x[nlo])) / m, foot2 = toF(toHook(sim, sim.rs.x[nhi])) / m;   // mm
+        const Real zc = zSeat / m, yO = -envOr("DR_DRESSY", 7);   // mm
+        // the old loop's 300 degree ring, its open side toward the tip; it turns so that its end lies on the first leg's side
+        const int nO = c.oldHi - c.oldLo;
+        const Real rho = nO * seg / m / (envOr("DR_ARC", 325) * kPi / 180.0), sgn = foot1.x < 0 ? 1 : -1;
+        const Real arcDeg = envOr("DR_ARC", 325), th0 = -(90 - (360 - arcDeg) / 2) * kPi / 180.0, thSpan = arcDeg * kPi / 180.0;
+        // past a full turn the ring is a short helix along the legs: its ends overlap DR_HELIX apart, not through each other
+        const Real helix = arcDeg > 360 ? envOr("DR_HELIX", 2.4) : 0;
+        auto ringPt = [&](Real th) {
+            const Real u = (th - th0) / thSpan - 0.5;
+            return Vec3{sgn * rho * std::cos(th), yO + helix * u, zc + rho * std::sin(th)};
+        };
+        std::vector<std::pair<int, Vec3>> tgt;   // particle, place in F (mm)
+        for (int k = 0; k <= nO; ++k) tgt.push_back({c.oldLo + k, ringPt(th0 + thSpan * k / nO)});
+        // a polyline's particles, evenly spaced by arc length, the first and last points excluded
+        auto along = [&](const std::vector<Vec3>& P, int i0, int n) {
+            std::vector<Real> L{0};
+            for (size_t k = 1; k < P.size(); ++k) L.push_back(L.back() + length(P[k] - P[k - 1]));
+            for (int j = 1; j <= n; ++j) {
+                const Real s = L.back() * j / (n + 1);
+                size_t k = 1;
+                while (k + 1 < L.size() && L[k] < s) ++k;
+                const Real t = (s - L[k - 1]) / std::max(1e-9, L[k] - L[k - 1]);
+                tgt.push_back({i0 + j - 1, P[k - 1] + (P[k] - P[k - 1]) * t});
+            }
+        };
+        // the connection: from the ring's end down below its plane, across to under the first leg, then up through the ring to the new loop. Its
+        // depth below the ring takes up the yarn there is.
+        const Vec3 S = ringPt(th0), E = ringPt(th0 + thSpan);
+        const int nC = nlo - c.oldHi - 1;
+        auto conn = [&](Real D) {
+            const Real lx = foot1.x < 0 ? -envOr("DR_LEGX", 0.6) : envOr("DR_LEGX", 0.6);
+            return std::vector<Vec3>{E, Vec3{E.x, yO - D, E.z}, Vec3{lx, yO - D, zc}, Vec3{lx, foot1.y - 1.0, zc}, foot1};
+        };
+        auto polyLen = [](const std::vector<Vec3>& P) { Real L = 0; for (size_t k = 1; k < P.size(); ++k) L += length(P[k] - P[k - 1]); return L; };
+        Real D0 = 1.5, D1 = 60;
+        for (int it = 0; it < 50; ++it) {
+            const Real D = (D0 + D1) / 2;
+            (polyLen(conn(D)) < (nC + 1) * seg / m ? D0 : D1) = D;
+        }
+        along(conn(D0), c.oldHi + 1, nC);
+        // the second leg: straight down from the new loop's end, through the ring
+        const int n2 = (int)envOr("DR_LEG2", 16);
+        // both legs close to 2r apart just below the loop (the judge's touch is 2.5 r)
+        const Real legX = envOr("DR_LEGX", 0.6);
+        const Vec3 leg2Top{foot2.x < 0 ? -legX : legX, foot2.y - 1.0, zc};
+        for (int k = 1; k <= n2; ++k) tgt.push_back({nhi + k, k == 1 ? (foot2 + leg2Top) * 0.5 : leg2Top + Vec3{0, -(k - 1) * seg / m, 0}});
+        // the work: from the ring's start away below, toward the tip (the earlier chain hangs from the hand)
+        const int nW = (int)envOr("DR_WORKN", 20);
+        const Vec3 wDir = normalized(Vec3{sgn * 4.85, -26, 4.8 - 12} - Vec3{sgn * rho * 0.5, -7, -rho * 0.866});
+        for (int k = 1; k <= nW && c.oldLo - k >= 1; ++k) tgt.push_back({c.oldLo - k, S + wDir * (k * seg / m)});
+        workPull = fromF(wDir);
+        std::printf("dress: ring r %.1f mm, connection %d particles %.1f mm below the ring, feet x %.1f / %.1f mm\n", rho, nC, D0, foot1.x, foot2.x);
+        // the hand lets go of its pinch: the work is held by these pins now
+        sim.release(c.hold);
+        std::vector<Vec3> from;
+        for (auto& [i, f] : tgt) {
+            from.push_back(toHook(sim, sim.rs.x[i]));
+            sim.rs.pin(i);
+        }
+        const int df = (int)envOr("DR_DRESSF", 60);
+        const Vec3 hFrom = sim.fingerOn ? sim.hand : sim.ball.target;
+        const Vec3 hTo = fromHook(sim, fromF(Vec3{foot2.x, -envOr("DR_FDOWN", 40), zc + envOr("DR_FDZ", 0)}) * m);
+        for (int k = 1; k <= df; ++k) {
+            const Real t = (Real)k / df, e = t * t * (3 - 2 * t);
+            for (size_t j = 0; j < tgt.size(); ++j) sim.rs.movePin(tgt[j].first, fromHook(sim, from[j] + (fromF(tgt[j].second) * m - from[j]) * e));
+            (sim.fingerOn ? sim.hand : sim.ball.target) = hFrom + (hTo - hFrom) * e;
+            sim.step(sim.hook);
+            if (sim.onFrame) sim.onFrame();
+        }
+        cinchHeld = {c.oldHi + 1, nlo - 1};   // the connection and first leg (the ring is released with the old loop's range below)
+        offHeld = {c.oldLo, c.oldHi};
+        workHeld = {std::max(1, c.oldLo - nW), c.oldLo - 1};
+        sim.unpinRange({nhi + 1, nhi + n2});   // the second leg runs free to the finger
+        report("stitch dressed", c.oldLo, nhi);
+        dump("DR_DUMPD");
+    } else {
     moveHandTo(sim, fromHook(sim, Vec3{std::cos(down + kPi), std::sin(down + kPi), 0} * (envOr("DR_FUP2", 25) * m) +
                                       Vec3{0, 0, zSeat + envOr("DR_FZ2", 5) * m}),
                envOr("DR_FT2", 0.3));
-    {
+    }
+    if (!dress) {
     // the left hand tugs the work down by the yarn the loop borrowed from it: the old loop closes round the yarn over's legs
     const Real tug = std::max(borrowed * seg, envOr("DR_TUGMM", 8) * m) * envOr("DR_TUG", 1.0);
     const Vec3 gFrom = sim.grips[c.hold].at, gTo = gFrom + rotate(sim.hook.q, Vec3{std::cos(down), std::sin(down), 0}) * tug;
@@ -3133,15 +3251,39 @@ ChainStart makeChainDriven(YarnSim& sim) {
     // The loops are released in one order: the new loop first, which settles on the shaft for DR_RELN frames while the old loop's cinch ring
     // stays pinned (the old loop is the stop that keeps the new loop from sliding down the legs), then the old loop. With DR_PINSNUG the loops
     // stay pinned through the snug (the tension then stretches only the working yarn) and are released after it.
+    // With the dress, the left hand pinches the finished stitch (the old loop and the first leg up to the new loop) between thumb and middle
+    // finger, as a crocheter does while working the next one (DR_PINCH); only the new loop on the hook and the working yarn are let go.
+    const bool pinch = dress && envOr("DR_PINCH", 1) > 0;
     auto releaseLoops = [&]() {
         sim.unpinRange(seatHeld);
         sim.unpinRange(yoHeld);
         if (envOr("DR_RELN", 0) > 0) driveFor(sim, (int)envOr("DR_RELN", 0));
+        if (pinch) return;
         unpinOff();
         sim.unpinRange(cinchHeld);
     };
     const bool pinSnug = envOr("DR_PINSNUG", 0) > 0;
-    if (!pinSnug) releaseLoops();
+    // the left hand pulls the work away by DR_WTUG over DR_WTUGF frames and keeps it there, so the old loop closes on the legs
+    if (dress && envOr("DR_WTUG", 0) > 0) {
+        const int wf = (int)envOr("DR_WTUGF", 30);
+        std::vector<Vec3> w0;
+        for (int i = workHeld.first; i <= workHeld.second; ++i) w0.push_back(sim.rs.x[i]);
+        const Vec3 d = rotate(sim.hook.q, workPull) * (envOr("DR_WTUG", 0) * m);
+        for (int k = 1; k <= wf; ++k) {
+            const Real t = (Real)k / wf, e = t * t * (3 - 2 * t);
+            for (int i = workHeld.first; i <= workHeld.second; ++i) sim.rs.movePin(i, w0[i - workHeld.first] + d * e);
+            // 1: everything is let go as the pull starts; 2: the new loop stays held (the hook holds it), only the old loop and the first leg go
+            if (k == 1 && envOr("DR_WTUGFIRST", 1) > 0) {
+                if (envOr("DR_WTUGFIRST", 1) < 2) { sim.unpinRange(seatHeld); sim.unpinRange(yoHeld); }
+                unpinOff();
+                sim.unpinRange(cinchHeld);
+            }
+            sim.step(sim.hook);
+            if (sim.onFrame) sim.onFrame();
+        }
+    }
+    const bool keep = envOr("DR_KEEP", 0) > 0;   // diagnostic: the dressed stitch judged with its pins on
+    if (!pinSnug && !keep) releaseLoops();
 
     // 4. snug: the hand draws the working yarn in while the work is held
     sim.phase = "The yarn drawn snug";
@@ -3149,24 +3291,29 @@ ChainStart makeChainDriven(YarnSim& sim) {
     driveFor(sim, (int)envOr("DR_SNUGF", 30));
     sim.ball.tension = sim.params.tension;
     driveFor(sim, 10);
-    if (pinSnug) releaseLoops();
+    if (pinSnug && !keep) releaseLoops();
     driveFor(sim, 5);
+    // DR_SETTLE: more frames of free physics before the judge; DR_TRACE prints the stitch's shape every 5 of them
+    for (int f = 0, nf = (int)envOr("DR_SETTLE", 0); f < nf; f += 5) {
+        driveFor(sim, 5);
+        if (envOr("DR_TRACE", 0) > 0) {
+            int flo = -1, fhi = -1;
+            judgeLoop(sim, c, &flo, &fhi);
+            std::printf("trace [%d] old ends %.1f mm, legs %.1f / %.1f mm apart (3 / 6 below), final %d..%d\n", sim.frame,
+                        length(sim.rs.x[c.oldHi] - sim.rs.x[c.oldLo]) / m, length(sim.rs.x[nlo - 3] - sim.rs.x[nhi + 3]) / m,
+                        length(sim.rs.x[nlo - 6] - sim.rs.x[nhi + 6]) / m, flo, fhi);
+        }
+    }
     {
         int flo = -1, fhi = -1;
         if (hookLoop(sim, &flo, &fhi, hi + 1)) report("new loop after the snug", flo, fhi);
     }
     report("old loop after the snug", c.oldLo, c.oldHi);
-    if (const char* dumpTo = std::getenv("DR_DUMP")) {
-        if (FILE* f = std::fopen(dumpTo, "w")) {
-            for (int i = 0; i < sim.rs.particleCount(); ++i) {
-                const Vec3 l = toHook(sim, sim.rs.x[i]);
-                std::fprintf(f, "%d %.3f %.3f %.3f\n", i, l.x / m, l.y / m, l.z / m);
-            }
-            std::fclose(f);
-        }
-    }
+    dump("DR_DUMP");
+    unpinOff();
     sim.unpinRange(cinchHeld);
-    sim.release(c.hold);
+    sim.unpinRange(workHeld);
+    if (!dress) sim.release(c.hold);
     c.ok = true;
     return c;
 }
