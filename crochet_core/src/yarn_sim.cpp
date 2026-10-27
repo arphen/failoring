@@ -550,6 +550,7 @@ void YarnSim::step(const HookPose& pose) {
     if (throatRing_ >= 0) rs.rings[throatRing_].at = throatPoint();
     if (catchSpring_ >= 0) moveGuideSpring(catchSpring_, hook.tip + rotate(hook.q, catchOffset_));
     controlEnd(tail);
+    if (driveOn_) applyRing();
     controlEnd(ball);
     for (const Grip& g : grips)
         for (size_t k = 0; k < g.particles.size(); ++k) rs.movePin(g.particles[k], g.at + g.offset[k]);
@@ -957,6 +958,127 @@ void YarnSim::moveHook(const HookPose& to, Real seconds) {
         step(lerpPose(from, to, e));
         if (onFrame) onFrame();
     }
+}
+
+// The hook's largest distance from its axis at height z (hook frame, m): the outermost point of its body in any direction. The ring driver
+// keeps its yarn this far from the axis plus the yarn's clearance.
+static Real hookSectionRadius(const HookShape& s, Real z) {
+    Real best = 0;
+    for (int k = 0; k < 64; ++k) {
+        const Real a = 2 * kPi * k / 64;
+        for (Real r = 0; r <= 4 * s.R; r += 0.02 * s.R)
+            if (hookSdf(Vec3{r * std::cos(a), r * std::sin(a), z}, s, nullptr) < 0) best = std::max(best, r);
+    }
+    return best;
+}
+
+// The particles beyond each end that the ring driver holds with the stretch (0: the legs are free).
+static const int kDriveLegHold = 0;
+
+void YarnSim::driveRing(int lo, int hi, Real zFrom, Real zTo, int frames) {
+    releaseRing();   // a new window starts from the pins where they are now
+    if (lo < 6 || hi < lo || hi + 6 >= rs.particleCount()) return;
+    driveOn_ = true;
+    driveRingLo_ = lo;
+    driveRingHi_ = hi;
+    driveFrame_ = 0;
+    driveFrames_ = std::max(1, frames);
+    driveZ0_ = zFrom;
+    driveZ1_ = zTo;
+    // the stretch and three particles of each leg (plan 3.1: the loop involved plus its legs up to 3 mm) are held
+    driveLo_ = lo - kDriveLegHold;
+    driveHi_ = hi + kDriveLegHold;
+    driveStart_.clear();
+    driveStartLocal_.clear();
+    driveTargets_.assign(driveHi_ - driveLo_ + 1, Vec3{});
+    for (int i = driveLo_; i <= driveHi_; ++i) {
+        driveStart_.push_back(rs.x[i]);
+        driveStartLocal_.push_back(rotate(conj(hook.q), rs.x[i] - hook.tip));
+        rs.pin(i);
+        rs.movePin(i, rs.x[i]);
+    }
+    // the legs leave the ring toward the midpoint of the particles just beyond each end; the gap goes on that side
+    // (5 particles beyond each end, not 1: the first particle beyond the stretch is at the stretch's own end, which says nothing about where the legs go)
+    const Vec3 mid = (rs.x[lo - 5] + rs.x[hi + 5]) * 0.5;
+    const Vec3 lm = rotate(conj(hook.q), mid - hook.tip);
+    driveGapLeg_ = std::hypot(lm.x, lm.y) > 1e-9 ? std::atan2(lm.y, lm.x) : kPi / 2;
+}
+
+void YarnSim::releaseRing() {
+    if (!driveOn_) return;
+    for (int i = driveLo_; i <= driveHi_; ++i) rs.unpin(i);
+    driveOn_ = false;
+}
+
+Vec3 YarnSim::driveTarget(int i) const {
+    const int k = i - driveLo_;
+    return k >= 0 && k < (int)driveTargets_.size() ? driveTargets_[k] : Vec3{};
+}
+
+void YarnSim::applyRing() {
+    const int n = driveRingHi_ - driveRingLo_ + 1;   // the particles that form the ring
+    const int off = driveRingLo_ - driveLo_;         // where the ring's first particle is in the held arrays
+    const Real seg = params.segment, r = params.radius;
+    const Real t = std::min(1.0, (Real)driveFrame_ / driveFrames_);
+    const Real z = driveZ0_ + (driveZ1_ - driveZ0_) * t;   // the ring's plane, in the hook's frame
+    // the ring's radius clears the hook here, and its open gap is at least twice the squashed width of the yarn
+    const Real arcLen = (n - 1) * seg, gapMin = 2 * (2 * 0.6 * r);
+    const Real rho = std::max(hookSectionRadius(shape, z) + 0.6 * r + 0.2 * kMm, (arcLen + gapMin) / (2 * kPi));
+    const Real gap = 2 * kPi * rho - arcLen;
+    // The yarn comes to the ring in two stages over 8 frames, so no jump and no crossing of the hook. First every particle turns round the
+    // axis to its place on the ring, at a radius clear of the ring; then they move in to the ring's radius. The turn is one rotation for the
+    // whole stretch: the ring is walked the way that turns the yarn least, and its angles are shifted by whole turns to lie nearest the
+    // start, so neighbours turn the same way by nearly the same amount and the chords between them stay outside the hook.
+    std::vector<Real> start(n);
+    for (int k = 0; k < n; ++k) {
+        const Vec3& s0 = driveStartLocal_[off + k];
+        const Real a0 = std::atan2(s0.y, s0.x);
+        start[k] = k == 0 ? a0 : start[k - 1] + std::remainder(a0 - std::atan2(driveStartLocal_[off + k - 1].y, driveStartLocal_[off + k - 1].x), 2 * kPi);
+    }
+    std::vector<Real> target(n);
+    Real bestCost = 1e18;
+    for (const Real dir : {1.0, -1.0}) {
+        std::vector<Real> tt(n);
+        for (int k = 0; k < n; ++k) tt[k] = driveGapLeg_ + dir * (gap / (2 * rho) + k * seg / rho);
+        const Real shift = -2 * kPi * std::round((tt[n / 2] - start[n / 2]) / (2 * kPi));
+        Real cost = 0;
+        for (int k = 0; k < n; ++k) cost += std::fabs(tt[k] + shift - start[k]);
+        if (cost < bestCost) {
+            bestCost = cost;
+            for (int k = 0; k < n; ++k) target[k] = tt[k] + shift;
+        }
+    }
+    const Real ta = std::min(1.0, (Real)driveFrame_ / 4.0), tb = std::clamp((Real)(driveFrame_ - 4) / 4.0, 0.0, 1.0);
+    std::vector<Vec3> ringNow(n);
+    for (int k = 0; k < n; ++k) {
+        const Vec3& s0 = driveStartLocal_[off + k];
+        const Real r0 = std::hypot(s0.x, s0.y);
+        const Real rClear = std::max(r0, rho + 2.5 * kMm);
+        const Real a = start[k] + (target[k] - start[k]) * ta;
+        const Real rad = rClear + (rho - rClear) * tb;
+        const Real zk = s0.z + (z - s0.z) * ta;
+        ringNow[k] = hook.tip + rotate(hook.q, Vec3{rad * std::cos(a), rad * std::sin(a), zk});
+    }
+    // every held particle: the ring's particles at their places, and the legs follow the nearest ring end by a share that falls off
+    // (0.75, 0.5, 0.25 of its move for the first, second and third particle beyond the end)
+    const Vec3 moveLo = ringNow[0] - driveStart_[off], moveHi = ringNow[n - 1] - driveStart_[off + n - 1];
+    if (std::getenv("RING_DBG") && driveFrame_ == 2) std::fprintf(stderr, "ring k0 start (%.2f %.2f) start-angle %.1f target %.1f now (%.2f %.2f) gapLeg %.1f rho %.2f dir-ok\n", driveStart_[off].x*1e3, driveStart_[off].y*1e3, start[0]*180/kPi, target[0]*180/kPi, ringNow[0].x*1e3, ringNow[0].y*1e3, driveGapLeg_*180/kPi, rho*1e3);
+    for (int p = 0; p <= driveHi_ - driveLo_; ++p) {
+        const int idx = driveLo_ + p;
+        Vec3 world;
+        if (idx >= driveRingLo_ && idx <= driveRingHi_) {
+            world = ringNow[idx - driveRingLo_];
+        } else if (idx < driveRingLo_) {
+            const int j = driveRingLo_ - idx;   // 1..3 beyond the low end
+            world = driveStart_[p] + moveLo * (1.0 - j / 4.0);
+        } else {
+            const int j = idx - driveRingHi_;   // 1..3 beyond the high end
+            world = driveStart_[p] + moveHi * (1.0 - j / 4.0);
+        }
+        driveTargets_[p] = world;
+        rs.movePin(idx, world);
+    }
+    ++driveFrame_;
 }
 
 void YarnSim::settle(int frames) {

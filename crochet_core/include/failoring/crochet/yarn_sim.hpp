@@ -171,6 +171,14 @@ public:
     // The hook from where it is to `to` over `seconds` (minimum jerk), calling `onFrame` after every frame.
     void moveHook(const HookPose& to, Real seconds);
     void settle(int frames);
+    // The ring driver (docs/CHAIN_DRIVEN_PLAN.md 4): particles [lo, hi] are pinned onto a ring round the hook's axis, centred on the axis at
+    // height z (m, along the axis from the tip toward the handle) and sliding from zFrom to zTo over `frames` frames, then held. The ring's
+    // radius is the hook's section plus 0.6 r + 0.2 mm; its gap is where the legs leave it. `step` moves the pins every frame until
+    // releaseRing. Nothing is driven outside the window the caller opens.
+    void driveRing(int lo, int hi, Real zFrom, Real zTo, int frames);
+    void releaseRing();
+    bool driving() const { return driveOn_; }
+    Vec3 driveTarget(int i) const;   // the pin's target this frame (for the test)
     void relaxStraight(Real f, int fromJoint = 0);   // the curl the yarn was laid with, times f (it lets go of it), from a joint on
     std::function<void()> onFrame;   // called after every frame (a recorder, a renderer)
     std::string phase;               // what the hands are doing now, in words (a script sets it)
@@ -214,6 +222,12 @@ private:
     int catchPin_ = -1;                        // the particle the barb holds at the throat, -1 when none
     int catchSpring_ = -1;                     // its guide spring in rs.guideSprings (the barb's hold is a stiff spring, not a pin)
     Vec3 catchOffset_{};                       // where that particle sits in the hook's frame (it is carried rigidly, not pulled into the throat)
+    // ring driver state
+    bool driveOn_ = false;
+    int driveLo_ = 0, driveHi_ = -1, driveRingLo_ = 0, driveRingHi_ = -1, driveFrame_ = 0, driveFrames_ = 1;   // held range, ring range
+    Real driveZ0_ = 0, driveZ1_ = 0, driveGapLeg_ = 0;   // gapLeg: the angle (hook frame) of the direction the legs leave the ring
+    std::vector<Vec3> driveStart_, driveStartLocal_, driveTargets_;   // world and hook-frame positions when the window opened; this frame's targets
+    void applyRing();
 public:
     Real reelSlack = 0.6, reelForce = 0.0;   // the hand takes in yarn lying within reelSlack of its length from it, drawing it with reelForce x tension (off)
 private:

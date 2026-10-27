@@ -204,3 +204,15 @@ and take the fallback. Each fallback brings half the phase's budget again.
   Smoke run `tools/chain_check.sh d0 1 slip` (physics, legacy): stitch 1 fails at all 7 points, 0/1, as recorded in CHAIN_PLAN.md.
   Decision (agent): hook for this plan, legacy, rule 6.1.1 (the slip knot works on it, the inline hook loses the first yarn over).
   Decision (agent): knot store shared across chain procedures, rule 6.1.4 (one knot per damping, never re-simulated).
+- 2026-10-27 Phase D1 (budget spent, gate not passed; debt recorded). Built: `driveRing` / `releaseRing` / `driveTarget` in `yarn_sim.cpp`
+  (ring radius from the SDF section + 0.6 r + 0.2 mm, gap 2 squashed widths on the legs' side, ring direction and whole-turn shift chosen
+  to turn the yarn least, two-stage move over 8 frames in polar coordinates). `ringDrive` test in `test_crochet_yarn_sim.cpp`: legacy and
+  inline, 22 mm stretch, start an arc of radius 8 mm on the far side with legs toward -x.
+  Numbers (legacy / inline): target error 0.000 / 0.000 mm (pass); length 21.94 / 21.94 of 22.00 mm (pass); yarn-yarn closest 2.20 / 2.20 mm
+  (pass); yarn in hook 0.35 / pass (legacy fails at 0.3 mm); released move 2.3 / 2.4 mm (fails 5 mm: no gravity in the rod, the hand's
+  0.15 N pull moves the stretch little). Attempts: straight start at x = -8 mm (yarn crossed the shaft, 2.5 mm in); springs at 2000 N/m
+  instead of pins (1.41 / 1.51 mm in, targets missed) - deleted; legs held with the stretch (three particles each side, shares 0.75/0.5/0.25:
+  the held legs folded at the gap, 0.37 mm in) - deleted; legs free (kept).
+  Decision (agent): stretch-only hold, rule 6.4 fallback set after springs failed.
+  Decision (agent): the gap's side is set from the particles 5 beyond each end (the first beyond is at the stretch's own end), rule 6.2.
+  Decision (agent): release check kept at 5 mm; the rod has no gravity, so "hangs" is not met by the sim (debt).
