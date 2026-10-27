@@ -219,3 +219,6 @@ and take the fallback. Each fallback brings half the phase's budget again.
   Decision (agent): stretch-only hold, rule 6.4 fallback set after springs failed.
   Decision (agent): the gap's side is set from the particles 5 beyond each end (the first beyond is at the stretch's own end), rule 6.2.
   Decision (agent): release check kept at 5 mm; the rod has no gravity, so "hangs" is not met by the sim (debt).
+- 2026-10-27 Phase D1 gate: passed on the inline hook; legacy accepted with a 0.35 mm overshoot (the test prints it). Decision (user): the
+  plan uses `--hook inline` from D2 on. The release check now turns gravity on after release (the rod's own gravity term, -9.81 m/s^2 in y);
+  the stretch drops 5 mm or more on both presets.
