@@ -199,3 +199,8 @@ and take the fallback. Each fallback brings half the phase's budget again.
 ## 7. Progress log
 
 (append below: date, phase, gate result, commit hash, decisions)
+- 2026-10-27 Phase D0 (done): `--chain driven|physics` in the CLI and `CHAIN=driven|physics` in `chain_check.sh` (default physics; the
+  driven branch is a stub until D2). Knots are shared per hook (`build/chain_runs/knots-legacy/`, d17, d20, d23). Hook: `--hook legacy`.
+  Smoke run `tools/chain_check.sh d0 1 slip` (physics, legacy): stitch 1 fails at all 7 points, 0/1, as recorded in CHAIN_PLAN.md.
+  Decision (agent): hook for this plan, legacy, rule 6.1.1 (the slip knot works on it, the inline hook loses the first yarn over).
+  Decision (agent): knot store shared across chain procedures, rule 6.1.4 (one knot per damping, never re-simulated).

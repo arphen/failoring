@@ -61,11 +61,12 @@ int main(int argc, char** argv) {
     int every = 30;
     Real rad = 1.1, segMm = 1.0, topDist = 0.07, massScale = 100, damp = 20;
     int fa = -1, fb = -2, fstep = 1, chains = 0;
-    std::string savePath, loadPath, saveAfter, diffSpec, hookName = "legacy";
+    std::string savePath, loadPath, saveAfter, diffSpec, hookName = "legacy", chainMode = "physics";
     bool keepGoing = false;
     for (int i = 1; i + 1 < argc; i += 2) {
         const std::string k = argv[i];
         if (k == "--out") out = argv[i + 1];
+        else if (k == "--chain") chainMode = argv[i + 1];   // physics (prepare + finish, the default) or driven (the ring-driven chain)
         else if (k == "--hook") hookName = argv[i + 1];   // legacy (the committed hook, the default) or inline (the groove hook)
         else if (k == "--keep-going") keepGoing = std::atoi(argv[i + 1]) > 0;   // diagnostics: run on past a failed stitch (default: stop)
         else if (k == "--every") every = std::atoi(argv[i + 1]);
@@ -80,6 +81,10 @@ int main(int argc, char** argv) {
         else if (k == "--load") loadPath = argv[i + 1];
         else if (k == "--save-after") saveAfter = argv[i + 1];
         else if (k == "--statediff") diffSpec = argv[i + 1];
+    }
+    if (chainMode != "physics" && chainMode != "driven") {
+        std::printf("--chain takes physics or driven\n");
+        return 2;
     }
     if (hookName != "legacy" && hookName != "inline") {
         std::printf("--hook takes legacy or inline\n");
@@ -583,8 +588,8 @@ int main(int argc, char** argv) {
     if (!saveAfter.empty() && saveAfter != "knot") saveAfterChain = std::atoi(saveAfter.c_str());
     if (saveAfterChain > chains) chains = saveAfterChain;
     for (int c = sim.chains; c < chains; ++c) {
-        const ChainStart cs = prepareChain(sim);
-        if (cs.ok) finishChain(sim, cs);
+        const ChainStart cs = chainMode == "driven" ? makeChainDriven(sim) : prepareChain(sim);
+        if (chainMode == "physics" && cs.ok) finishChain(sim, cs);
         const ChainResult r = judgeChain(sim, cs);
         const StitchVerdict v = judgeStitch(sim, cs);
         if (!cs.ok || !v.pass) {

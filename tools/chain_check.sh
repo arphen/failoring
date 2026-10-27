@@ -44,7 +44,9 @@ fi
 
 # The hook is legacy (the committed hook) unless HOOK=inline is set; it is in the run's directory name and the checkpoints' headers.
 hook=${HOOK:-legacy}
-outroot=build/chain_runs/$run-$hook
+# The chain procedure: physics (prepare and finish, the default) or driven (the ring-driven chain of docs/CHAIN_DRIVEN_PLAN.md).
+chain=${CHAIN:-physics}
+outroot=build/chain_runs/$run-$hook-$chain
 mkdir -p "$outroot"
 
 # name, HOLD_BELOW mm, damping, SIM_SEAT mm
@@ -63,7 +65,8 @@ if [ "$jobs" -lt 1 ]; then jobs=1; fi
 if [ "$jobs" -gt 16 ]; then jobs=16; fi
 
 # The knot for one damping value: made once, saved, and reused by every grid point with that damping.
-knotdir=$outroot/knots
+# The knots are the same for every chain procedure: one set per hook, shared by every run.
+knotdir=build/chain_runs/knots-$hook
 mkdir -p "$knotdir"
 make_knot() {
     local damp=$1
@@ -79,7 +82,7 @@ run_point() {
     local dir=$outroot/$name
     mkdir -p "$dir"
     env "${extra[@]}" HOLD_BELOW="$hold" SIM_SEAT="$seat" \
-        "$bin" --hook "$hook" --load "$knotdir/d$damp.ckpt" --chains "$chains" --damp "$damp" --every 0 --out "$dir/sim" > "$dir/log.txt" 2>&1
+        "$bin" --hook "$hook" --chain "$chain" --load "$knotdir/d$damp.ckpt" --chains "$chains" --damp "$damp" --every 0 --out "$dir/sim" > "$dir/log.txt" 2>&1
 }
 
 # One knot per distinct damping, made before any grid point starts.

@@ -2655,6 +2655,12 @@ StitchFixture buildStitchFixture(const std::string& name) {
     return f;
 }
 
+ChainStart makeChainDriven(YarnSim& sim) {
+    // Phase D2 builds the driven sequence here; until then the chain is reported as not made.
+    std::printf("driven chain: not built yet\n");
+    return ChainStart{};
+}
+
 void makeChain(YarnSim& sim) {
     const ChainStart c = prepareChain(sim);
     if (c.ok) finishChain(sim, c);

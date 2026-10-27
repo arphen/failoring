@@ -242,6 +242,9 @@ struct ChainStart {
     Real length = 0;            // the yarn between the tail and the hand (m) when the stitch began
 };
 ChainStart prepareChain(YarnSim& sim);
+// The ring-driven chain (docs/CHAIN_DRIVEN_PLAN.md): the old loop is driven onto the shaft, slid off the head and the new loop is driven
+// onto the shaft, while the solver does the rest. Returns the ChainStart the judge reads. Not built yet (Phase D2).
+ChainStart makeChainDriven(YarnSim& sim);
 void finishChain(YarnSim& sim, const ChainStart& c);
 // Was a chain made: a loop is round the hook (in a copy, with the work held and the working yarn pulled firmly, the yarn closes round the shaft),
 // the old loop is off it, and more yarn has been drawn from the hand into the work than before the stitch (a stitch that unravelled gives it back).
