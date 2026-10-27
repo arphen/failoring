@@ -977,6 +977,7 @@ static const int kDriveLegHold = 0;
 
 void YarnSim::driveRing(int lo, int hi, Real zFrom, Real zTo, int frames, Real gapAngle, Vec3 shift) {
     releaseRing();   // a new window starts from the pins where they are now
+    driveAt_ = false;
     if (lo < 6 || hi < lo || hi + 6 >= rs.particleCount()) return;
     driveOn_ = true;
     driveRingLo_ = lo;
@@ -1005,6 +1006,30 @@ void YarnSim::driveRing(int lo, int hi, Real zFrom, Real zTo, int frames, Real g
     driveGapLeg_ = std::isfinite(gapAngle) ? gapAngle : std::hypot(lm.x, lm.y) > 1e-9 ? std::atan2(lm.y, lm.x) : kPi / 2;
 }
 
+void YarnSim::driveRingAt(int lo, int hi, Vec3 centre, Vec3 axis, Vec3 gapDir, Real radius, int frames) {
+    releaseRing();   // a new window starts from the pins where they are now
+    if (lo < 6 || hi < lo || hi + 6 >= rs.particleCount() || length(axis) < 1e-9) return;
+    driveOn_ = true;
+    driveAt_ = true;
+    driveRingLo_ = driveLo_ = lo;
+    driveRingHi_ = driveHi_ = hi;
+    driveFrame_ = 0;
+    driveFrames_ = std::max(1, frames);
+    driveC_ = centre;
+    driveA_ = normalized(axis);
+    driveGap_ = gapDir;
+    driveRad_ = radius;
+    driveStart_.clear();
+    driveStartLocal_.clear();
+    driveTargets_.assign(hi - lo + 1, Vec3{});
+    for (int i = lo; i <= hi; ++i) {
+        driveStart_.push_back(rs.x[i]);
+        driveStartLocal_.push_back(rotate(conj(hook.q), rs.x[i] - hook.tip));
+        rs.pin(i);
+        rs.movePin(i, rs.x[i]);
+    }
+}
+
 std::pair<int, int> YarnSim::holdRing() {
     if (!driveOn_) return {0, -1};
     driveOn_ = false;
@@ -1026,7 +1051,62 @@ Vec3 YarnSim::driveTarget(int i) const {
     return k >= 0 && k < (int)driveTargets_.size() ? driveTargets_[k] : Vec3{};
 }
 
+// The ring of driveRingAt: particles go onto a ring of radius rho (at least the given radius, and the stretch's length plus the gap) in a plane with
+// any centre and axis. The ring's particles are placed in the order that turns the yarn least (as applyRing does).
+void YarnSim::applyRingAt() {
+    const int n = driveRingHi_ - driveRingLo_ + 1;
+    const int off = driveRingLo_ - driveLo_;   // 0: the held range is the ring
+    const Real seg = params.segment, r = params.radius;
+    const Vec3 A = driveA_;
+    const Vec3 ref = std::fabs(A.x) < 0.9 ? Vec3{1, 0, 0} : Vec3{0, 1, 0};
+    const Vec3 U = normalized(cross(A, ref)), V = cross(A, U);
+    const Vec3 gp = driveGap_ - A * dot(driveGap_, A);
+    const Real gapAng = std::hypot(dot(gp, U), dot(gp, V)) > 1e-9 ? std::atan2(dot(gp, V), dot(gp, U)) : 0.0;
+    const Real arcLen = (n - 1) * seg, gapMin = 2 * (2 * 0.6 * r);
+    const Real rho = std::max(driveRad_, (arcLen + gapMin) / (2 * kPi));
+    const Real gap = 2 * kPi * rho - arcLen;
+    // each particle's angle round the centre, unwrapped along the stretch (the same way applyRing unwraps)
+    std::vector<Real> start(n);
+    for (int k = 0; k < n; ++k) {
+        const Vec3 d = driveStartLocal_[off + k] - driveC_;
+        const Real a0 = std::atan2(dot(d, V), dot(d, U));
+        start[k] = k == 0 ? a0 : start[k - 1] + std::remainder(a0 - std::atan2(dot(driveStartLocal_[off + k - 1] - driveC_, V), dot(driveStartLocal_[off + k - 1] - driveC_, U)), 2 * kPi);
+    }
+    std::vector<Real> target(n);
+    Real bestCost = 1e18;
+    for (const Real dir : {1.0, -1.0}) {
+        std::vector<Real> tt(n);
+        for (int k = 0; k < n; ++k) tt[k] = gapAng + dir * (gap / (2 * rho) + k * seg / rho);
+        const Real shift = -2 * kPi * std::round((tt[n / 2] - start[n / 2]) / (2 * kPi));
+        Real cost = 0;
+        for (int k = 0; k < n; ++k) cost += std::fabs(tt[k] + shift - start[k]);
+        if (cost < bestCost) {
+            bestCost = cost;
+            for (int k = 0; k < n; ++k) target[k] = tt[k] + shift;
+        }
+    }
+    // each particle moves in a straight line in the hook's frame from where it was to its place on the ring, over the whole window (an arc
+    // round the centre would pass the hook when the centre is a few mm from the axis)
+    const auto ease = [](Real u) { u = std::clamp(u, 0.0, 1.0); return u * u * (3 - 2 * u); };
+    const Real u = ease((Real)driveFrame_ / driveFrames_);
+    for (int k = 0; k < n; ++k) {
+        const Real a = target[k];
+        const Vec3 ringPt = driveC_ + U * (rho * std::cos(a)) + V * (rho * std::sin(a));
+        const Vec3 startL = driveStartLocal_[off + k];
+        const Vec3 local = startL + (ringPt - startL) * u;
+        const Vec3 world = hook.tip + rotate(hook.q, local);
+        const int idx = driveRingLo_ + k;
+        driveTargets_[idx - driveLo_] = world;
+        rs.movePin(idx, world);
+    }
+    ++driveFrame_;
+}
+
 void YarnSim::applyRing() {
+    if (driveAt_) {
+        applyRingAt();
+        return;
+    }
     const int n = driveRingHi_ - driveRingLo_ + 1;   // the particles that form the ring
     const int off = driveRingLo_ - driveLo_;         // where the ring's first particle is in the held arrays
     const Real seg = params.segment, r = params.radius;
@@ -2950,6 +3030,7 @@ ChainStart makeChainDriven(YarnSim& sim) {
     c.loopsAfterYo = sim.loopsOnHook(Vec3{0, 0, 1});
 
     int borrowed = 0;
+    std::pair<int, int> offHeld{0, -1};   // the old loop's range, held below the tip through the seat (DR_HOLDO, off by default)
     // 2. pull through: the old loop opens until it clears the yarn over, slides over the head and past the tip
     sim.phase = "The old loop slides over the head and off the hook";
     {
@@ -2978,7 +3059,12 @@ ChainStart makeChainDriven(YarnSim& sim) {
         sim.driveRing(olo, ohi, zOff, zOff, lf, down, let);
         driveFor(sim, lf);
         report("old loop below the tip", olo, ohi);
-        sim.releaseRing();
+        if (envOr("DR_HOLDO", 0) > 0) offHeld = sim.holdRing();
+        else sim.releaseRing();
+        if (envOr("DR_OLDRANGE", 0) > 0) {
+            c.oldLo = olo;
+            c.oldHi = ohi;
+        }
     }
 
     // 3. seat: the yarn over, now the new loop, slides back onto the full shaft; then the finger goes back up above the work, so the working
@@ -2993,6 +3079,41 @@ ChainStart makeChainDriven(YarnSim& sim) {
     report("new loop seated", nlo, nhi);
     // held on the shaft while the finger goes up and the work is tugged (the hook's body would hold it there; the yarn is let go after)
     const std::pair<int, int> seatHeld = sim.holdRing();
+    // cinch (plan D2, the closing of the old loop): the new loop's second leg runs down through the old loop below the tip (where the hook is
+    // absent). The old loop's own particles are driven into a closed ring round that leg, horizontal, at DR_CINCHZ below the tip, its centre
+    // DR_CINCHD from the axis on the leg's side (so the ring does not wind round the axis). The ring is held until the end of the stitch.
+    std::pair<int, int> cinchHeld{0, -1};
+    // the old loop's hold (below the tip) and its cinch ring share particles: releasing the hold leaves the cinch ring pinned
+    auto unpinOff = [&]() {
+        for (int i = offHeld.first; i <= offHeld.second; ++i)
+            if (i < cinchHeld.first || i > cinchHeld.second) sim.rs.unpin(i);
+    };
+    if (envOr("DR_CINCH", 0) > 0) {
+        const Real zc = envOr("DR_CINCHZ", -5) * m;
+        Vec3 leg{};
+        bool found = false;
+        for (int j = nhi + 1; j < std::min(sim.rs.particleCount(), nhi + 80) && !found; ++j) {
+            const Vec3 l0 = toHook(sim, sim.rs.x[j - 1]), l1 = toHook(sim, sim.rs.x[j]);
+            if (l0.z >= zc && l1.z < zc) {
+                const Real t = (zc - l0.z) / (l1.z - l0.z);
+                leg = l0 + (l1 - l0) * t;
+                found = true;
+            }
+        }
+        if (found) {
+            const Real rl = std::hypot(leg.x, leg.y);
+            const Vec3 radial = rl > 1e-9 ? Vec3{leg.x / rl, leg.y / rl, 0} : Vec3{1, 0, 0};
+            const Vec3 centre = radial * (envOr("DR_CINCHD", 4.5) * m) + Vec3{0, 0, zc};
+            const int cf = (int)envOr("DR_CINCHF", 40);
+            std::printf("cinch: leg at %.2f %.2f mm, ring centre %.2f %.2f %.2f mm\n", leg.x / m, leg.y / m, centre.x / m, centre.y / m, centre.z / m);
+            sim.driveRingAt(c.oldLo, c.oldHi, centre, Vec3{0, 0, 1}, radial, envOr("DR_CINCHR", 3.5) * m, cf);
+            driveFor(sim, cf);
+            cinchHeld = sim.holdRing();
+            report("old loop cinched", c.oldLo, c.oldHi);
+        } else {
+            std::printf("cinch: no leg below %.1f mm\n", zc / m);
+        }
+    }
     moveHandTo(sim, fromHook(sim, Vec3{std::cos(down + kPi), std::sin(down + kPi), 0} * (envOr("DR_FUP2", 25) * m) +
                                       Vec3{0, 0, zSeat + envOr("DR_FZ2", 5) * m}),
                envOr("DR_FT2", 0.3));
@@ -3009,8 +3130,18 @@ ChainStart makeChainDriven(YarnSim& sim) {
     }
     report("old loop after the tug", lo - borrowed, hi);
     }
-    sim.unpinRange(seatHeld);
-    sim.unpinRange(yoHeld);
+    // The loops are released in one order: the new loop first, which settles on the shaft for DR_RELN frames while the old loop's cinch ring
+    // stays pinned (the old loop is the stop that keeps the new loop from sliding down the legs), then the old loop. With DR_PINSNUG the loops
+    // stay pinned through the snug (the tension then stretches only the working yarn) and are released after it.
+    auto releaseLoops = [&]() {
+        sim.unpinRange(seatHeld);
+        sim.unpinRange(yoHeld);
+        if (envOr("DR_RELN", 0) > 0) driveFor(sim, (int)envOr("DR_RELN", 0));
+        unpinOff();
+        sim.unpinRange(cinchHeld);
+    };
+    const bool pinSnug = envOr("DR_PINSNUG", 0) > 0;
+    if (!pinSnug) releaseLoops();
 
     // 4. snug: the hand draws the working yarn in while the work is held
     sim.phase = "The yarn drawn snug";
@@ -3018,6 +3149,8 @@ ChainStart makeChainDriven(YarnSim& sim) {
     driveFor(sim, (int)envOr("DR_SNUGF", 30));
     sim.ball.tension = sim.params.tension;
     driveFor(sim, 10);
+    if (pinSnug) releaseLoops();
+    driveFor(sim, 5);
     {
         int flo = -1, fhi = -1;
         if (hookLoop(sim, &flo, &fhi, hi + 1)) report("new loop after the snug", flo, fhi);
@@ -3032,6 +3165,7 @@ ChainStart makeChainDriven(YarnSim& sim) {
             std::fclose(f);
         }
     }
+    sim.unpinRange(cinchHeld);
     sim.release(c.hold);
     c.ok = true;
     return c;

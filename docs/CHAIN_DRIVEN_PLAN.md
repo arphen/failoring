@@ -234,3 +234,47 @@ and take the fallback. Each fallback brings half the phase's budget again.
   overlaps it (penetration 1.67-1.88 mm at the chain's first frames, frame 685); settling it onto inline opens the loop (mean 13.3 mm out, no
   final loop, 1.86 mm in). Decision (agent, 6.1.3): the chain runs on legacy, where the knot works and the first driven chain can be measured;
   the inline hook is kept for the ring tests. This reverses the user's "inline from here on" for D2 and is flagged in the report.
+- 2026-10-27 D2 (legacy hook, `HOOK=legacy`, d20; gate not passed, 0 of 7 points run). Baseline reproduced from cda6d24: `final 180..249
+  oldOff=0.02 through=? onShaft=6.9/69.0 contact=0.15/0.30`. The working yarn's legs run down the hook's axis to the finger 40 mm below the
+  tip, and the judge fixture has them leave the new loop sideways (toward the work); that difference drives most of what follows.
+  Built: `YarnSim::driveRingAt(lo, hi, centre, axis, gapDir, radius, frames)` (a ring with any centre and axis; each particle moves in a
+  straight line in the hook's frame to its ring point over the window; an arc round the centre swung the yarn 1.8 mm into the hook). Cinch
+  step after the seat (`DR_CINCH`, default 0): the old loop's particles 159..182 are driven into a horizontal ring at `DR_CINCHZ` (-5 mm,
+  below the tip, where the hook is absent), centred `DR_CINCHD` (4.5 mm) out on the side of the new loop's descending leg, radius `DR_CINCHR`
+  (3.5, forced to 4.1 by the 23 mm length), `DR_CINCHF` (40) frames. Ring closes with its gap at 1.9-2.2 mm and `oldOff` 0.00.
+  Decision (agent): cinch below the tip, not round the legs at z 4-18 mm (rule 6.4 fallback): the hook section is 2.45 mm at z 4-18 mm
+  (`hookSectionRadius`), so a 4.1 mm ring round a leg 4 mm out clears it only from 6.9 mm, and the leg is 4.1 mm out.
+  Knobs added, all off by default: `DR_HOLDO` (old loop held below the tip through the seat), `DR_RELN` (frames the new loop settles with the
+  cinch ring pinned, then the ring goes), `DR_PINSNUG` (loops pinned through the snug, released after it), `DR_OLDRANGE` (judge's old-loop
+  indices from the ring after loop-off). Released loops are unpinned in one place (`releaseLoops`); the old loop's hold and the cinch ring share
+  particles 159..182, which the first version unpinned by mistake (fixed).
+  Runs (d20, `HOLD_BELOW=10 SIM_SEAT=5 DR_LEG=28`; cinch on unless noted):
+  | run | through | final | fresh | oldOff | onShaft | contact |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | committed baseline (cinch off) | ? | 180..249 | 0.04 | 0.02 | 6.9/69 | 0.15/0.30 |
+  | cinch z -5, hold to tug | ? | 190..248 | 0.00 | 0.00 | 7.5/58 | 0.15/0.30 |
+  | DR_PINSNUG, cinch kept pinned (diagnostic, not a pass) | +0/+1 | 171..257 | 0.14 | 0.00 | 6.1/86 | 0.15/0.30 |
+  | DR_RELN 30 (new loop first, cinch pinned 30 frames) | ? | 191..245 | 0.00 | 0.00 | 8.6/54 | 0.15/0.30 |
+  | DR_RELN 30, DR_TUGMM 0 | ? | 171..237 | 0.18 | 0.00 | 8.1/66 | 0.15/0.30 |
+  | DR_PINSNUG 1, DR_RELN 30 | ? | none (new loop slid to z -1..9) | - | 0.00 | - | 0.15/0.30 |
+  | DR_PINSNUG 1, DR_RELN 30, DR_TUGMM 0 | ? | 187..245 | 0.00 | 0.00 | 8.1/58 | 0.15/0.30 |
+  | DR_TUGMM 0, DR_SNUG 1, DR_SNUGF 0 | ? | 181..248 | 0.03 | 0.00 | 6.2/67 | 0.15/0.30 |
+  | DR_BORROWLO=1 (HOLDO 0) | ? | 165..237 | 0.25 | 0.00 | 10.2/72 | 0.31/0.26 |
+  | DR_LEG=32 | ? | 205..249 | 0.00 | 0.14 | 6.8/44 | 0.02/0.33 |
+  | DR_LEG=36 | ? | 201..253 | 0.00 | 0.23 | 6.3/52 | 0.03/0.71 |
+  | DR_TUGMM=20 | ? | 194..246 | 0.00 | 0.00 | 8.2/52 | 0.14/0.30 |
+  | DR_YOLEN=19 | ? | 199..245 | 0.00 | 0.05 | 6.4/46 | 0.05/0.13 |
+  | DR_CINCHR=4.5 | ? | 181..251 | 0.03 | 0.00 | 8.6/70 | 0.15/0.30 |
+  What the numbers show: the cinch closes the old loop (oldOff 0.00 and a valid disc, `+0/+1`, when the ring stays pinned). Released, the old
+  loop rises 5 to 12-22 mm up the leg and the new loop slides 4-8 mm down its legs: the new loop's release and the tug each move both. The
+  final loop spans 44-86 mm because the two legs run side by side from the new loop down to the old loop (the judge's touch closure follows
+  them); `onShaft` needs 19-29.6 mm. Contact: the running minimum gap dips to 0.14 mm in the loop-off window (frame 880) and the seat window
+  (frame 1048), and the judge's `contact` column fails at 0.15 mm in every run, the committed baseline included.
+  Render `build/chain_runs/me/holdO_oldrange/sim_042_end_*`: the end state is tangled and the new loop is off the shaft. (Looked at.)
+  Test: `ringDrive` passes on both presets with the new code (targets 0.000 mm, length 21.94 of 22.00 mm, closest 2.20 mm, released move
+  5.3 mm legacy). `test_crochet_yarn_sim` chain 2 and 3 failures (`makeChain`, physics) are the same at cda6d24; not touched here.
+  Committed defaults reproduce the baseline line exactly.
+  Stuck: D2 budget spent (about 30 runs). Next idea: move the finger sideways, level with the new loop, on the work side, so the legs leave
+  the loop perpendicular to the axis as in the judge fixture; then the old loop rides at about 7 mm from the axis, clear of the head, and the
+  cinch needs no leg below the tip. This changes the finger placement before the yarn over; it needs its own gate run. Debt: gate D2 open,
+  contact column (0.14 mm in the windows) open, final loop length open.

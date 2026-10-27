@@ -181,6 +181,10 @@ public:
     void driveRing(int lo, int hi, Real zFrom, Real zTo, int frames, Real gapAngle = std::numeric_limits<Real>::quiet_NaN(),
                    Vec3 shift = Vec3{});
     void releaseRing();
+    // The same window on a ring with any centre and axis (hook frame, m), for the cinch (docs/CHAIN_DRIVEN_PLAN.md D2): particles [lo, hi] go
+    // onto a ring round `centre` whose plane is perpendicular to `axis`, the gap facing `gapDir`. The radius is `radius` or the stretch's length
+    // plus the gap, whichever is larger. The ring's centre and axis are fixed for the window; the particles move from where they are.
+    void driveRingAt(int lo, int hi, Vec3 centre, Vec3 axis, Vec3 gapDir, Real radius, int frames);
     // Ends the window but leaves its particles pinned where the ring put them (the yarn over is held while the old loop is driven over it);
     // the returned range is unpinned with unpinRange.
     std::pair<int, int> holdRing();
@@ -237,6 +241,10 @@ private:
     Vec3 driveShift_{};   // gapLeg: the angle (hook frame) of the direction the legs leave the ring
     std::vector<Vec3> driveStart_, driveStartLocal_, driveTargets_;   // world and hook-frame positions when the window opened; this frame's targets
     void applyRing();
+    void applyRingAt();
+    bool driveAt_ = false;                        // the window is a driveRingAt ring (not the hook's axis)
+    Vec3 driveC_{}, driveA_{}, driveGap_{};       // its centre, axis and gap direction (hook frame)
+    Real driveRad_ = 0;                           // its minimum radius
 public:
     Real reelSlack = 0.6, reelForce = 0.0;   // the hand takes in yarn lying within reelSlack of its length from it, drawing it with reelForce x tension (off)
 private:
