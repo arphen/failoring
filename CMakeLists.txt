@@ -63,6 +63,12 @@ add_library(crochet_core STATIC
 target_include_directories(crochet_core PUBLIC crochet_core/include)
 target_link_libraries(crochet_core PUBLIC cloth_core)
 target_compile_options(crochet_core PRIVATE -Wall -Wextra)
+# Checkpoints carry the hash of the build that wrote them. Configure-time: re-run CMake after committing to refresh it.
+execute_process(COMMAND git -C "${CMAKE_SOURCE_DIR}" rev-parse HEAD OUTPUT_VARIABLE FL_GIT_HASH OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+if(NOT FL_GIT_HASH)
+  set(FL_GIT_HASH "unknown")
+endif()
+target_compile_definitions(crochet_core PRIVATE FL_GIT_HASH="${FL_GIT_HASH}")
 
 enable_testing()
 set(FL_MATERIALS_PATH "${CMAKE_SOURCE_DIR}/materials/fabrics.json")
@@ -95,6 +101,11 @@ add_executable(test_crochet_yarn_sim crochet_core/tests/test_crochet_yarn_sim.cp
 target_link_libraries(test_crochet_yarn_sim PRIVATE crochet_core)
 target_include_directories(test_crochet_yarn_sim PRIVATE cloth_core/tests)
 add_test(NAME test_crochet_yarn_sim COMMAND test_crochet_yarn_sim)
+
+add_executable(test_chain_judge crochet_core/tests/test_chain_judge.cpp)
+target_link_libraries(test_chain_judge PRIVATE crochet_core)
+target_include_directories(test_chain_judge PRIVATE cloth_core/tests)
+add_test(NAME test_chain_judge COMMAND test_chain_judge)
 
 add_executable(test_crochet_yarn_work crochet_core/tests/test_crochet_yarn_work.cpp)
 target_link_libraries(test_crochet_yarn_work PRIVATE crochet_core)

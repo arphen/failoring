@@ -2,14 +2,26 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <unistd.h>
+
+#ifndef FL_GIT_HASH
+#define FL_GIT_HASH "unknown"
+#endif
+#if defined(__APPLE__) || defined(__linux__)
+extern char** environ;
+#endif
 
 namespace fl {
 
 namespace {
 
 const Real kMm = 1e-3;
+
+Real envOr(const char* k, Real d) { return std::getenv(k) ? std::atof(std::getenv(k)) : d; }
 
 Vec3 catmull(const Vec3& p0, const Vec3& p1, const Vec3& p2, const Vec3& p3, Real t) {
     const Real t2 = t * t, t3 = t2 * t;
@@ -108,28 +120,27 @@ Real capsuleDist(const Vec3& p, const Vec3& a, const Vec3& b, Real r) { return s
 Real hookSdfRaw(const Vec3& p, const HookShape& s) {
     const Real R = s.R;
     auto W = [&](Real x, Real z) { return Vec3{x * R, 0, z * R}; };
-    // shaft: a capsule along the axis beyond the taper
-    Real d = capsuleDist(p, W(0, 5.2), W(0, s.length / R), R);
-    // taper: three capsules of growing radius, so it reads as a cone from the neck up to the shaft
-    d = smin(d, capsuleDist(p, W(-0.10, 4.9), W(0, 5.4), 0.85 * R), 0.10 * R);
-    d = smin(d, capsuleDist(p, W(-0.22, 4.5), W(-0.12, 5.0), 0.65 * R), 0.10 * R);
-    d = smin(d, capsuleDist(p, W(-0.36, 4.2), W(-0.28, 4.6), 0.48 * R), 0.10 * R);
-    // neck: the spine of the hook, on the far side of the throat from the mouth; it leaves the groove open toward +x
-    d = smin(d, capsuleDist(p, W(s.neckX, 2.05), W(s.neckX, 4.2), s.neckR * R), 0.12 * R);
-    // head: a dome on the axis from the tip to a flat back at the front of the groove (the back edge is the barb: a wall a yarn drawn
+    // shaft: a capsule whose full radius is reached at shaftZ; the rounded front of the capsule is the shoulder behind the throat
+    Real d = capsuleDist(p, W(0, s.shaftZ), W(0, s.length / R), R);
+    // spine: a thick neck behind the throat, its rounded front meeting the head's back wall. The mouth side is cut away by the groove
+    // below, leaving a spine at least neckR thick behind the yarn.
+    d = smin(d, capsuleDist(p, W(s.neckX, s.headBack + s.neckR), W(s.neckX, s.shaftZ + 0.1), s.neckR * R), 0.12 * R);
+    // head: a dome on the axis from the tip to a flat back at the front of the throat (the back edge is the barb: a wall a yarn drawn
     // toward the tip is stopped by, while the mouth beside it stays open so the yarn can be laid in from the throat's side)
     Real head = capsuleDist(p, W(0.0, 0.35), W(0.0, 1.0), 0.62 * R);
     head = smin(head, capsuleDist(p, W(0.0, 0.9), W(0.0, 1.5), 0.92 * s.headR * R), 0.12 * R);
     head = smin(head, capsuleDist(p, W(0.0, 1.4), W(0.0, 1.8), s.headR * R), 0.10 * R);
     if (s.flatBack == 1) {
-        head = smax(head, p.z - 2.05 * R, 0.08 * R);
+        head = smax(head, p.z - s.headBack * R, 0.08 * R);
     } else if (s.flatBack == 2) {
         // The wall only where the throat is: the barb's back face stops the yarn over, the smooth far side lets an old loop ride off.
-        head = smax(head, std::max(p.z - 2.05 * R, -p.x), 0.08 * R);
+        head = smax(head, std::max(p.z - s.headBack * R, -p.x), 0.08 * R);
     }
-    // barb: a raised lip along the back edge on the mouth side. The neck pushes the yarn toward the mouth; without the lip it slips out round
-    // the head's edge (the hook passes it by), with it the yarn is held between the neck and the lip, in front of the head's back.
-    head = smin(head, capsuleDist(p, Vec3{s.barbX * R, -s.barbHalfWidth * R, 2.0 * R}, Vec3{s.barbX * R, s.barbHalfWidth * R, 2.0 * R}, s.barbR * R), 0.10 * R);
+    // barb: a raised lip along the back edge inside the head's envelope, on the mouth side. The groove pushes the yarn toward the mouth;
+    // without the lip it slips out round the head's edge (the hook passes it by), with it the yarn is held between the groove and the lip.
+    head = smin(head, capsuleDist(p, Vec3{s.barbX * R, -s.barbHalfWidth * R, (s.headBack - 0.05) * R},
+                               Vec3{s.barbX * R, s.barbHalfWidth * R, (s.headBack - 0.05) * R}, s.barbR * R),
+                0.10 * R);
     if (s.rim) {
         const Real rr = 0.22 * R, zr = 2.15 * R;
         head = smin(head, capsuleDist(p, Vec3{-0.95 * R, -0.90 * R, zr}, Vec3{-0.95 * R, 0.90 * R, zr}, rr), 0.06 * R);
@@ -138,8 +149,8 @@ Real hookSdfRaw(const Vec3& p, const HookShape& s) {
     }
     d = smin(d, head, 0.15 * R);
     if (s.groove) {
-        // cut an open channel across the mouth side, between the tip lobe and the barb: the yarn can then be laid into the throat
-        // with its centre inside the head's envelope, so the head and yarn together pass through the old loop instead of jamming.
+        // cut the open channel across the mouth side, behind the head's back wall: the yarn lies in the groove with its centre inside the
+        // shaft's envelope, so the head and yarn together pass through the old loop instead of jamming.
         const Real cut = capsuleDist(p, Vec3{s.grooveX * R, -1.30 * R, s.grooveZ * R}, Vec3{s.grooveX * R, 1.30 * R, s.grooveZ * R}, s.grooveR * R);
         d = smax(d, -cut, 0.06 * R);
     }
@@ -343,7 +354,10 @@ void YarnSim::feedHand(End& e) {
         const int i = p - k;
         arc += length(rs.x[i + 1] - rs.x[i]);
         if (rs.w[i] <= 0 || length(e.target - rs.x[i]) > reelSlack * arc) continue;
-        rs.extForce[i] = normalized(rs.x[i + 1] - rs.x[i - 1]) * (reelForce * e.tension);
+        if (assistReel <= 0) continue;
+        const Real f = reelForce * e.tension * assistReel;
+        rs.extForce[i] = normalized(rs.x[i + 1] - rs.x[i - 1]) * f;
+        impulseReel += f * params.dt;
         reeled_.push_back(i);
     }
 }
@@ -384,7 +398,7 @@ void dropRing(RodSystem& rs, int& idx, int& other) {
 }  // namespace
 
 void YarnSim::setThroatRing(bool on, int fromParticle) {
-    if (!on) {
+    if (!on || assistRing <= 0) {
         dropRing(rs, throatRing_, fingerRing_);
         return;
     }
@@ -396,22 +410,23 @@ void YarnSim::setThroatRing(bool on, int fromParticle) {
     SlideRing ring;
     ring.at = T;
     ring.seg = best;
-    ring.stiffness = throatStiffness;
+    ring.stiffness = throatStiffness * assistRing;
     rs.rings.push_back(ring);
     throatRing_ = (int)rs.rings.size() - 1;
 }
 
 void YarnSim::gripThroat(int particle) {
     releaseThroatGrip();
-    if (particle < 0 || particle >= rs.particleCount()) return;
+    if (particle < 0 || particle >= rs.particleCount() || assistGrip <= 0) return;
     catchOffset_ = rotate(conj(hook.q), rs.x[particle] - hook.tip);   // hold it where the barb found it, on the surface
-    rs.pin(particle);
     catchPin_ = particle;
-    setThroatRing(false);   // the hard grip replaces the sliding ring
+    catchSpring_ = addGuideSpring(particle, hook.tip + rotate(hook.q, catchOffset_), 2000.0 * assistGrip, 1);
+    setThroatRing(false);   // the grip replaces the sliding ring
 }
 
 void YarnSim::releaseThroatGrip() {
-    if (catchPin_ >= 0 && catchPin_ < rs.particleCount()) rs.unpin(catchPin_);
+    if (catchSpring_ >= 0) releaseGuideSpring(catchSpring_);
+    catchSpring_ = -1;
     catchPin_ = -1;
 }
 
@@ -473,7 +488,7 @@ void YarnSim::step(const HookPose& pose) {
         }
     }
     if (throatRing_ >= 0) rs.rings[throatRing_].at = throatPoint();
-    if (catchPin_ >= 0 && catchPin_ < rs.particleCount()) rs.movePin(catchPin_, hook.tip + rotate(hook.q, catchOffset_));
+    if (catchSpring_ >= 0) moveGuideSpring(catchSpring_, hook.tip + rotate(hook.q, catchOffset_));
     controlEnd(tail);
     controlEnd(ball);
     for (const Grip& g : grips)
@@ -481,7 +496,7 @@ void YarnSim::step(const HookPose& pose) {
     for (int i : caught_)
         if (i < rs.particleCount() && std::find(reeled_.begin(), reeled_.end(), i) == reeled_.end()) rs.extForce[i] = Vec3{};
     caught_.clear();
-    if (catchK > 0) {
+    if (catchK > 0 && assistCatch > 0) {
         // the middle of the throat: just behind the head, in the groove (the yarn's squashed radius out from the neck)
         const Vec3 T = throatPoint();
         const int n = rs.particleCount();
@@ -490,12 +505,380 @@ void YarnSim::step(const HookPose& pose) {
             const Vec3 d = T - rs.x[i];
             if (length(d) > catchReach) continue;
             const Vec3 t = normalized(rs.x[i + 1] - rs.x[i - 1]);
-            rs.extForce[i] = (d - t * dot(d, t)) * catchK;
+            const Vec3 F = (d - t * dot(d, t)) * (catchK * assistCatch);
+            rs.extForce[i] = F;
+            impulseCatch += length(F) * params.dt;
             caught_.push_back(i);
         }
     }
     rs.step(params.dt);
+    // the guide report: the ring and the hook's own body accumulated their impulses inside the step; the springs are measured from their
+    // final error. The judge ignores all of these.
+    if (throatRing_ >= 0 && throatRing_ < (int)rs.rings.size()) impulseRing += rs.rings[throatRing_].impulse;
+    for (const fl::GuideSpring& g : rs.guideSprings) {
+        if (g.particle < 0 || g.particle >= rs.particleCount() || g.k <= 0) continue;
+        const Real f = g.k * length(g.target - rs.x[g.particle]);
+        if (g.kind == 1) impulseGrip += f * params.dt;
+        else impulsePins += f * params.dt;
+    }
+    impulseHook += rs.lastStaticsImpulse;
+    if (!rs.bodies.empty()) impulseHook += rs.bodies[0].impulse;
+    // running contact: every second frame (the plan allows this; a crossing lasts longer than a frame at the stitch's speeds)
+    if ((frame & 1) == 0) {
+        worstGap = std::min(worstGap, minGap());
+        worstPen = std::max(worstPen, hookPenetration());
+    }
     ++frame;
+}
+
+
+void YarnSim::readAssist() {
+    assist = envOr("SIM_ASSIST", assist);
+    assistGrip = envOr("SIM_ASSIST_GRIP", assist);
+    assistRing = envOr("SIM_ASSIST_RING", assist);
+    assistCatch = envOr("SIM_ASSIST_CATCH", assist);
+    assistPins = envOr("SIM_ASSIST_PINS", assist);
+    assistReel = envOr("SIM_ASSIST_REEL", assist);
+}
+
+int YarnSim::addGuideSpring(int particle, const Vec3& target, Real k, int kind) {
+    if (particle < 0 || particle >= rs.particleCount() || k <= 0) return -1;
+    fl::GuideSpring g;
+    g.particle = particle;
+    g.target = target;
+    g.k = k;
+    g.kind = kind;
+    rs.guideSprings.push_back(g);
+    return (int)rs.guideSprings.size() - 1;
+}
+
+void YarnSim::releaseGuideSprings() { rs.guideSprings.clear(); }
+
+namespace {
+
+const char kStateMagic[8] = {'F', 'L', 'Y', 'A', 'R', 'N', '0', '1'};
+constexpr uint32_t kStateVersion = 2;
+
+template <class T>
+bool wr(FILE* f, const T& v) { return std::fwrite(&v, sizeof(T), 1, f) == 1; }
+template <class T>
+bool rd(FILE* f, T& v) { return std::fread(&v, sizeof(T), 1, f) == 1; }
+bool wrBytes(FILE* f, const void* p, size_t n) { return n == 0 || std::fwrite(p, 1, n, f) == n; }
+bool rdBytes(FILE* f, void* p, size_t n) { return n == 0 || std::fread(p, 1, n, f) == n; }
+bool wrStr(FILE* f, const std::string& s) {
+    const uint64_t n = s.size();
+    return wr(f, n) && wrBytes(f, s.data(), (size_t)n);
+}
+bool rdStr(FILE* f, std::string& s) {
+    uint64_t n = 0;
+    if (!rd(f, n) || n > 10000000) return false;
+    s.resize((size_t)n);
+    return rdBytes(f, s.data(), (size_t)n);
+}
+template <class T>
+bool wrVec(FILE* f, const std::vector<T>& v) {
+    const uint64_t n = v.size();
+    return wr(f, n) && wrBytes(f, v.data(), (size_t)n * sizeof(T));
+}
+template <class T>
+bool rdVec(FILE* f, std::vector<T>& v) {
+    uint64_t n = 0;
+    if (!rd(f, n) || n > 10000000) return false;
+    v.resize((size_t)n);
+    return rdBytes(f, v.data(), (size_t)n * sizeof(T));
+}
+
+bool wrHook(FILE* f, const HookShape& s) {
+    return wr(f, s.R) && wr(f, s.length) && wr(f, s.squash) && wr(f, s.sdf) && wr(f, s.barbX) && wr(f, s.barbHalfWidth) &&
+           wr(f, s.barbR) && wr(f, s.headR) && wr(f, s.headBack) && wr(f, s.shaftZ) && wr(f, s.neckX) && wr(f, s.neckR) &&
+           wr(f, s.flatBack) && wr(f, s.groove) && wr(f, s.grooveX) && wr(f, s.grooveZ) && wr(f, s.grooveR) && wr(f, s.rim);
+}
+bool rdHook(FILE* f, HookShape& s) {
+    return rd(f, s.R) && rd(f, s.length) && rd(f, s.squash) && rd(f, s.sdf) && rd(f, s.barbX) && rd(f, s.barbHalfWidth) &&
+           rd(f, s.barbR) && rd(f, s.headR) && rd(f, s.headBack) && rd(f, s.shaftZ) && rd(f, s.neckX) && rd(f, s.neckR) &&
+           rd(f, s.flatBack) && rd(f, s.groove) && rd(f, s.grooveX) && rd(f, s.grooveZ) && rd(f, s.grooveR) && rd(f, s.rim);
+}
+bool sameHook(const HookShape& a, const HookShape& b) {
+    return a.R == b.R && a.length == b.length && a.squash == b.squash && a.sdf == b.sdf && a.barbX == b.barbX &&
+           a.barbHalfWidth == b.barbHalfWidth && a.barbR == b.barbR && a.headR == b.headR && a.headBack == b.headBack &&
+           a.shaftZ == b.shaftZ && a.neckX == b.neckX && a.neckR == b.neckR && a.flatBack == b.flatBack && a.groove == b.groove &&
+           a.grooveX == b.grooveX && a.grooveZ == b.grooveZ && a.grooveR == b.grooveR && a.rim == b.rim;
+}
+bool wrYsp(FILE* f, const YarnSimParams& p) {
+    return wr(f, p.radius) && wr(f, p.segment) && wr(f, p.dt) && wr(f, p.tension) && wr(f, p.massScale) && wr(f, p.damping) &&
+           wr(f, p.bend) && wr(f, p.friction) && wr(f, p.hookFriction) && wr(f, p.substeps) && wr(f, p.iterations);
+}
+bool rdYsp(FILE* f, YarnSimParams& p) {
+    return rd(f, p.radius) && rd(f, p.segment) && rd(f, p.dt) && rd(f, p.tension) && rd(f, p.massScale) && rd(f, p.damping) &&
+           rd(f, p.bend) && rd(f, p.friction) && rd(f, p.hookFriction) && rd(f, p.substeps) && rd(f, p.iterations);
+}
+bool sameYsp(const YarnSimParams& a, const YarnSimParams& b) {
+    return a.radius == b.radius && a.segment == b.segment && a.dt == b.dt && a.tension == b.tension && a.massScale == b.massScale &&
+           a.damping == b.damping && a.bend == b.bend && a.friction == b.friction && a.hookFriction == b.hookFriction &&
+           a.substeps == b.substeps && a.iterations == b.iterations;
+}
+bool wrRod(FILE* f, const RodParams& p) {
+    return wr(f, p.radius) && wr(f, p.linearDensity) && wr(f, p.EA) && wr(f, p.GAs) && wr(f, p.EI) && wr(f, p.GJ) && wr(f, p.friction) &&
+           wr(f, p.staticFriction) && wr(f, p.contactSkin) && wr(f, p.contact) && wr(f, p.contactSkipSegments) && wr(f, p.radiusScale) &&
+           wr(f, p.ribbonWidth) && wr(f, p.ribbonThickness) && wr(f, p.ribbonNormal) && wr(f, p.shapeStiffness) && wr(f, p.gravity) &&
+           wr(f, p.damping) && wr(f, p.substeps) && wr(f, p.iterations) && wr(f, p.direct) && wr(f, p.maxMoveRadii) && wr(f, p.floorOn) &&
+           wr(f, p.floorY);
+}
+bool rdRod(FILE* f, RodParams& p) {
+    return rd(f, p.radius) && rd(f, p.linearDensity) && rd(f, p.EA) && rd(f, p.GAs) && rd(f, p.EI) && rd(f, p.GJ) && rd(f, p.friction) &&
+           rd(f, p.staticFriction) && rd(f, p.contactSkin) && rd(f, p.contact) && rd(f, p.contactSkipSegments) && rd(f, p.radiusScale) &&
+           rd(f, p.ribbonWidth) && rd(f, p.ribbonThickness) && rd(f, p.ribbonNormal) && rd(f, p.shapeStiffness) && rd(f, p.gravity) &&
+           rd(f, p.damping) && rd(f, p.substeps) && rd(f, p.iterations) && rd(f, p.direct) && rd(f, p.maxMoveRadii) && rd(f, p.floorOn) &&
+           rd(f, p.floorY);
+}
+bool sameRod(const RodParams& a, const RodParams& b) {
+    return a.radius == b.radius && a.linearDensity == b.linearDensity && a.EA == b.EA && a.GAs == b.GAs && a.EI == b.EI && a.GJ == b.GJ &&
+           a.friction == b.friction && a.staticFriction == b.staticFriction && a.contactSkin == b.contactSkin && a.contact == b.contact &&
+           a.contactSkipSegments == b.contactSkipSegments && a.radiusScale == b.radiusScale && a.ribbonWidth == b.ribbonWidth &&
+           a.ribbonThickness == b.ribbonThickness && a.ribbonNormal.x == b.ribbonNormal.x && a.ribbonNormal.y == b.ribbonNormal.y &&
+           a.ribbonNormal.z == b.ribbonNormal.z && a.shapeStiffness == b.shapeStiffness && a.gravity.x == b.gravity.x &&
+           a.gravity.y == b.gravity.y && a.gravity.z == b.gravity.z && a.damping == b.damping && a.substeps == b.substeps &&
+           a.iterations == b.iterations && a.direct == b.direct && a.maxMoveRadii == b.maxMoveRadii && a.floorOn == b.floorOn &&
+           a.floorY == b.floorY;
+}
+std::vector<std::string> envKnobs() {
+    std::vector<std::string> out;
+#if defined(__APPLE__) || defined(__linux__)
+    for (char** e = environ; e && *e; ++e) {
+        const std::string s(*e);
+        const size_t eq = s.find('=');
+        if (eq == std::string::npos) continue;
+        const std::string k = s.substr(0, eq);
+        static const char* pre[] = {"SIM_", "CH_", "HOLD_", "HOME_", "HOOK_", "PREP_", "PU_", "SEAT_", "SLIP_", "YO_"};
+        bool keep = false;
+        for (const char* p : pre)
+            if (k.rfind(p, 0) == 0) { keep = true; break; }
+        if (keep) out.push_back(s);
+    }
+#endif
+    std::sort(out.begin(), out.end());
+    return out;
+}
+bool wrEnd(FILE* f, const YarnSim::End& e) {
+    return wr(f, e.particle) && wr(f, e.target) && wr(f, e.hand) && wr(f, e.tension);
+}
+bool rdEnd(FILE* f, YarnSim::End& e) {
+    return rd(f, e.particle) && rd(f, e.target) && rd(f, e.hand) && rd(f, e.tension);
+}
+bool wrGrip(FILE* f, const YarnSim::Grip& g) { return wr(f, g.at) && wrVec(f, g.particles) && wrVec(f, g.offset); }
+bool rdGrip(FILE* f, YarnSim::Grip& g) { return rd(f, g.at) && rdVec(f, g.particles) && rdVec(f, g.offset); }
+bool wrBody(FILE* f, const SdfBody& b) {
+    return wr(f, b.q) && wr(f, b.qPrev) && wr(f, b.t) && wr(f, b.tPrev) && wr(f, b.squash) && wr(f, b.friction) && wr(f, b.reach) &&
+           wr(f, b.started) && wr(f, b.impulse);
+}
+bool rdBody(FILE* f, SdfBody& b) {
+    return rd(f, b.q) && rd(f, b.qPrev) && rd(f, b.t) && rd(f, b.tPrev) && rd(f, b.squash) && rd(f, b.friction) && rd(f, b.reach) &&
+           rd(f, b.started) && rd(f, b.impulse);
+}
+
+template <class T>
+bool sameVec(const std::vector<T>& a, const std::vector<T>& b) {
+    return a.size() == b.size() && (a.empty() || std::memcmp(a.data(), b.data(), a.size() * sizeof(T)) == 0);
+}
+
+}  // namespace
+
+bool YarnSim::saveState(const std::string& path) const {
+    FILE* f = std::fopen(path.c_str(), "wb");
+    if (!f) {
+        std::printf("save: cannot write %s\n", path.c_str());
+        return false;
+    }
+    bool ok = wrBytes(f, kStateMagic, 8) && wr(f, kStateVersion) && wrStr(f, FL_GIT_HASH);
+    ok = ok && wrHook(f, shape) && wrYsp(f, params) && wrRod(f, rs.params) && wr(f, assist);
+    ok = ok && wr(f, assistGrip) && wr(f, assistRing) && wr(f, assistCatch) && wr(f, assistPins) && wr(f, assistReel);
+    const std::vector<std::string> env = envKnobs();
+    uint64_t ne = env.size();
+    ok = ok && wr(f, ne);
+    for (const std::string& e : env) ok = ok && wrStr(f, e);
+    // YarnSim
+    ok = ok && wr(f, frame) && wr(f, rig) && wr(f, hook) && wr(f, homeSet) && wr(f, chains) && wr(f, lastLinkHi) && wr(f, lastLinkLo) &&
+         wr(f, lastLinkChain) && wr(f, home) && wrEnd(f, tail) && wrEnd(f, ball) && wr(f, catchK) && wr(f, catchReach) && wr(f, catchFrom) &&
+         wr(f, worstGap) && wr(f, worstPen) && wr(f, impulseGrip) && wr(f, impulseRing) && wr(f, impulseCatch) && wr(f, impulsePins) &&
+         wr(f, impulseReel) && wr(f, impulseHook) && wr(f, fingerOn) && wr(f, hand) && wr(f, fingerAxis) && wr(f, fingerR) &&
+         wr(f, fingerLen) && wr(f, spoolOff) && wr(f, spoolRadial) && wr(f, fingerEyelet) && wr(f, throatX) && wr(f, throatZ) &&
+         wr(f, throatStiffness) && wr(f, reelSlack) && wr(f, reelForce);
+    uint64_t ng = grips.size();
+    ok = ok && wr(f, ng);
+    for (const Grip& g : grips) ok = ok && wrGrip(f, g);
+    ok = ok && wrVec(f, fixtures);
+    ok = ok && wr(f, pulled_) && wrVec(f, caught_) && wrVec(f, reeled_) && wr(f, throatRing_) && wr(f, fingerRing_) && wr(f, catchPin_) &&
+         wr(f, catchSpring_) && wr(f, catchOffset_);
+    // RodSystem
+    ok = ok && wrVec(f, rs.x) && wrVec(f, rs.xPrev) && wrVec(f, rs.v) && wrVec(f, rs.w) && wrVec(f, rs.wFree) && wrVec(f, rs.wBase) &&
+         wrVec(f, rs.extForce) && wrVec(f, rs.pinTarget) && wrVec(f, rs.particleChain) && wrVec(f, rs.anchor) && wrVec(f, rs.segA) &&
+         wrVec(f, rs.segB) && wrVec(f, rs.segChain) && wrVec(f, rs.segIndex) && wrVec(f, rs.q) && wrVec(f, rs.qPrev) && wrVec(f, rs.omega) &&
+         wrVec(f, rs.wq) && wrVec(f, rs.restLen) && wrVec(f, rs.slack) && wrVec(f, rs.radius) && wrVec(f, rs.mass) && wrVec(f, rs.jointA) &&
+         wrVec(f, rs.jointB) && wrVec(f, rs.restDarboux) && wrVec(f, rs.chains) && wrVec(f, rs.statics) && wrVec(f, rs.rings);
+    uint64_t nb = rs.bodies.size();
+    ok = ok && wr(f, nb);
+    for (const SdfBody& b : rs.bodies) ok = ok && wrBody(f, b);
+    ok = ok && wrVec(f, rs.guideSprings) && wr(f, rs.lastStaticsImpulse) && wr(f, rs.lastContacts) && wr(f, rs.restBendMemory) &&
+         wr(f, rs.rotInertiaScale_) && wr(f, rs.massScale_) && wrVec(f, rs.savedW_) && wrVec(f, rs.savedWq_) && wrVec(f, rs.segActive_) &&
+         wrVec(f, rs.staticsPrev_);
+    ok = ok && wrBytes(f, kStateMagic, 8);
+    if (!ok) std::printf("save: write failed for %s\n", path.c_str());
+    std::fclose(f);
+    return ok;
+}
+
+bool YarnSim::loadState(const std::string& path, bool checkHeader) {
+    FILE* f = std::fopen(path.c_str(), "rb");
+    if (std::getenv("SIM_LOADDBG")) std::fprintf(stderr, "load: open\n");
+    if (!f) {
+        std::printf("load: cannot read %s\n", path.c_str());
+        return false;
+    }
+    char magic[8]{};
+    uint32_t version = 0;
+    std::string hash;
+    HookShape hs;
+    YarnSimParams yp;
+    RodParams rp;
+    Real as = 1;
+    bool ok = rdBytes(f, magic, 8) && std::memcmp(magic, kStateMagic, 8) == 0 && rd(f, version) && version == kStateVersion && rdStr(f, hash);
+    if (!ok) {
+        std::printf("load: %s is not a checkpoint of this version\n", path.c_str());
+        std::fclose(f);
+        return false;
+    }
+    ok = rdHook(f, hs) && rdYsp(f, yp) && rdRod(f, rp) && rd(f, as);
+    Real ag = 1, ar = 1, ac = 1, ap = 1, areel = 1;
+    ok = ok && rd(f, ag) && rd(f, ar) && rd(f, ac) && rd(f, ap) && rd(f, areel);
+    std::vector<std::string> env;
+    uint64_t ne = 0;
+    ok = ok && rd(f, ne) && ne <= 10000;
+    for (uint64_t i = 0; ok && i < ne; ++i) {
+        std::string e;
+        ok = rdStr(f, e);
+        env.push_back(e);
+    }
+    if (!ok) {
+        std::printf("load: %s ends in its header\n", path.c_str());
+        std::fclose(f);
+        return false;
+    }
+    if (checkHeader && hash != FL_GIT_HASH) {
+        std::printf("load: %s was saved by git %s; this build is %s\n", path.c_str(), hash.c_str(), FL_GIT_HASH);
+        std::fclose(f);
+        return false;
+    }
+    if (checkHeader && (!sameHook(hs, shape) || !sameYsp(yp, params) || as != assist)) {
+        std::printf("load: %s was saved with different physics (hook %d, params %d, assist %.2f vs %.2f)\n", path.c_str(),
+                    sameHook(hs, shape) ? 1 : 0, sameYsp(yp, params) ? 1 : 0, as, assist);
+        std::fclose(f);
+        return false;
+    }
+    if (checkHeader && !sameRod(rp, rs.params))
+        std::printf("load: rod parameters differ from this run's defaults; the saved solver parameters are used\n");
+    const std::vector<std::string> now = envKnobs();
+    if (checkHeader && now != env) {
+        std::printf("load: environment knobs differ (informational):");
+        for (const std::string& s : env)
+            if (std::find(now.begin(), now.end(), s) == now.end()) std::printf(" -%s", s.substr(0, s.find('=')).c_str());
+        for (const std::string& s : now)
+            if (std::find(env.begin(), env.end(), s) == env.end()) std::printf(" +%s", s.substr(0, s.find('=')).c_str());
+        std::printf("\n");
+    }
+    shape = hs;
+    params = yp;
+    rs.params = rp;
+    assist = as;
+    assistGrip = ag;
+    assistRing = ar;
+    assistCatch = ac;
+    assistPins = ap;
+    assistReel = areel;
+    ok = ok && rd(f, frame) && rd(f, rig) && rd(f, hook) && rd(f, homeSet) && rd(f, chains) && rd(f, lastLinkHi) && rd(f, lastLinkLo) &&
+         rd(f, lastLinkChain) && rd(f, home) && rdEnd(f, tail) && rdEnd(f, ball) && rd(f, catchK) && rd(f, catchReach) && rd(f, catchFrom) &&
+         rd(f, worstGap) && rd(f, worstPen) && rd(f, impulseGrip) && rd(f, impulseRing) && rd(f, impulseCatch) && rd(f, impulsePins) &&
+         rd(f, impulseReel) && rd(f, impulseHook) && rd(f, fingerOn) && rd(f, hand) && rd(f, fingerAxis) && rd(f, fingerR) &&
+         rd(f, fingerLen) && rd(f, spoolOff) && rd(f, spoolRadial) && rd(f, fingerEyelet) && rd(f, throatX) && rd(f, throatZ) &&
+         rd(f, throatStiffness) && rd(f, reelSlack) && rd(f, reelForce);
+    uint64_t ng = 0;
+    ok = ok && rd(f, ng) && ng <= 10000;
+    grips.clear();
+    for (uint64_t i = 0; ok && i < ng; ++i) {
+        Grip g;
+        ok = rdGrip(f, g);
+        grips.push_back(g);
+    }
+    ok = ok && rdVec(f, fixtures);
+    ok = ok && rd(f, pulled_) && rdVec(f, caught_) && rdVec(f, reeled_) && rd(f, throatRing_) && rd(f, fingerRing_) && rd(f, catchPin_) &&
+         rd(f, catchSpring_) && rd(f, catchOffset_);
+    ok = ok && rdVec(f, rs.x) && rdVec(f, rs.xPrev) && rdVec(f, rs.v) && rdVec(f, rs.w) && rdVec(f, rs.wFree) && rdVec(f, rs.wBase) &&
+         rdVec(f, rs.extForce) && rdVec(f, rs.pinTarget) && rdVec(f, rs.particleChain) && rdVec(f, rs.anchor) && rdVec(f, rs.segA) &&
+         rdVec(f, rs.segB) && rdVec(f, rs.segChain) && rdVec(f, rs.segIndex) && rdVec(f, rs.q) && rdVec(f, rs.qPrev) && rdVec(f, rs.omega) &&
+         rdVec(f, rs.wq) && rdVec(f, rs.restLen) && rdVec(f, rs.slack) && rdVec(f, rs.radius) && rdVec(f, rs.mass) && rdVec(f, rs.jointA) &&
+         rdVec(f, rs.jointB) && rdVec(f, rs.restDarboux) && rdVec(f, rs.chains) && rdVec(f, rs.statics) && rdVec(f, rs.rings);
+    uint64_t nb = 0;
+    ok = ok && rd(f, nb) && nb <= 1000;
+    rs.bodies.clear();
+    for (uint64_t i = 0; ok && i < nb; ++i) {
+        SdfBody b;
+        ok = rdBody(f, b);
+        rs.bodies.push_back(b);
+    }
+    ok = ok && rdVec(f, rs.guideSprings) && rd(f, rs.lastStaticsImpulse) && rd(f, rs.lastContacts) && rd(f, rs.restBendMemory) &&
+         rd(f, rs.rotInertiaScale_) && rd(f, rs.massScale_) && rdVec(f, rs.savedW_) && rdVec(f, rs.savedWq_) && rdVec(f, rs.segActive_) &&
+         rdVec(f, rs.staticsPrev_);
+    if (std::getenv("SIM_LOADDBG")) std::fprintf(stderr, "load: arrays read ok=%d\n", ok ? 1 : 0);
+    char trailer[8]{};
+    ok = ok && rdBytes(f, trailer, 8) && std::memcmp(trailer, kStateMagic, 8) == 0;
+    std::fclose(f);
+    if (!ok) {
+        std::printf("load: %s is truncated or corrupt\n", path.c_str());
+        return false;
+    }
+    if (std::getenv("SIM_LOADDBG"))
+        std::fprintf(stderr, "load: trailer ok=%d bodies=%zu rings=%zu throat=%d finger=%d catch=%d springs=%zu grips=%zu chains=%zu parts=%d\n",
+                     ok ? 1 : 0, rs.bodies.size(), rs.rings.size(), throatRing_, fingerRing_, catchSpring_, rs.guideSprings.size(), grips.size(),
+                     rs.chains.size(), rs.particleCount());
+    const HookShape sh = shape;
+    for (SdfBody& b : rs.bodies) b.f = [sh](const Vec3& p, Vec3* g) { return hookSdf(p, sh, g); };
+    rs.pairs_.clear();
+    rs.lambdaS_.assign((size_t)rs.segmentCount() * 3, 0.0);
+    rs.lambdaB_.assign((size_t)rs.jointA.size() * 3, 0.0);
+    rs.lambdaA_.assign((size_t)rs.particleCount() * 3, 0.0);
+    return true;
+}
+
+std::string YarnSim::stateDiff(const YarnSim& o) const {
+    auto where = [&](const char* what, int i) {
+        return std::string(what) + " " + std::to_string(i) + " at frame " + std::to_string(frame);
+    };
+    if (frame != o.frame) return "frame " + std::to_string(frame) + " vs " + std::to_string(o.frame);
+    if (rs.particleCount() != o.rs.particleCount()) return "particle count " + std::to_string(rs.particleCount()) + " vs " + std::to_string(o.rs.particleCount());
+    for (int i = 0; i < rs.particleCount(); ++i)
+        if (std::memcmp(&rs.x[i], &o.rs.x[i], sizeof(Vec3)) != 0) return where("particle", i);
+    if (!sameVec(rs.xPrev, o.rs.xPrev)) return "xPrev";
+    if (!sameVec(rs.v, o.rs.v)) return "v";
+    if (!sameVec(rs.w, o.rs.w)) return "w";
+    if (!sameVec(rs.wFree, o.rs.wFree)) return "wFree";
+    if (!sameVec(rs.wBase, o.rs.wBase)) return "wBase";
+    if (!sameVec(rs.q, o.rs.q)) return "q";
+    if (!sameVec(rs.qPrev, o.rs.qPrev)) return "qPrev";
+    if (!sameVec(rs.omega, o.rs.omega)) return "omega";
+    if (!sameVec(rs.restLen, o.rs.restLen)) return "restLen";
+    if (!sameVec(rs.slack, o.rs.slack)) return "slack";
+    if (!sameVec(rs.extForce, o.rs.extForce)) return "extForce";
+    if (!sameVec(rs.pinTarget, o.rs.pinTarget)) return "pinTarget";
+    if (!sameVec(rs.rings, o.rs.rings)) return "rings";
+    if (!sameVec(rs.guideSprings, o.rs.guideSprings)) return "guideSprings";
+    if (!sameVec(rs.staticsPrev_, o.rs.staticsPrev_)) return "staticsPrev";
+    if (!sameVec(rs.savedW_, o.rs.savedW_)) return "savedW";
+    if (!sameVec(rs.savedWq_, o.rs.savedWq_)) return "savedWq";
+    if (rs.bodies.size() != o.rs.bodies.size()) return "body count";
+    for (size_t i = 0; i < rs.bodies.size(); ++i)
+        if (std::memcmp(&rs.bodies[i].q, &o.rs.bodies[i].q, sizeof(Quat)) != 0 ||
+            std::memcmp(&rs.bodies[i].t, &o.rs.bodies[i].t, sizeof(Vec3)) != 0)
+            return "body pose " + std::to_string(i);
+    return "identical";
 }
 
 void YarnSim::moveHook(const HookPose& to, Real seconds) {
@@ -696,7 +1079,7 @@ void makeSlipKnot(YarnSim& sim) {
     const Real m = kMm, R = sim.shape.R;
     const Real zb = std::max(3.3 * sim.params.radius, 3.6 * m);
     // the hook comes from the front, the tip pointing into the ring, the throat toward the yarn behind the ring
-    const Real deep = -zb - 3.4 * R;                   // the tip this far back puts the yarn behind the ring at the mouth of the throat
+    const Real deep = -zb - sim.shape.grooveZ * R;   // the tip this far back puts the yarn behind the ring in the mouth of the throat
     // the left hand pinches the ring where it closes (over the tail) and holds the working yarn loosely: the ring keeps its shape
     sim.phase = "The yarn laid in a ring, the working yarn behind it; the left hand pinches where the ring crosses the tail";
     const int pinch = sim.grab(Vec3{2.8 * m, -14.5 * m, -0.3 * m}, 5.2 * m);
@@ -736,8 +1119,10 @@ void makeSlipKnot(YarnSim& sim) {
     }
     // A slip knot's noose closes down onto the thin neck until its hole is narrower than the yarn. A crocheter holds the loop at the size it
     // should be while the knot comes snug; a gauge round the shaft does that here, so the starting loop stays a loop the chain can use.
+    // The gauge is a guide (plan 3.1): it joins the pins' scale, and at SIM_ASSIST_PINS 0 it is not made.
     const Real gauge = std::getenv("SLIP_GAUGE") ? std::atof(std::getenv("SLIP_GAUGE")) : 0;
-    if (gauge > 0) {
+    const bool gaugeOn = gauge > 0 && sim.assistPins > 0;
+    if (gaugeOn) {
         const Vec3 ax = sim.hook.axis();
         StaticCapsule g;
         g.a = sim.hook.tip + ax * (3.0 * sim.shape.R);
@@ -757,7 +1142,7 @@ void makeSlipKnot(YarnSim& sim) {
     }
     sim.ball.tension = tension0;
     sim.settle(20);
-    if (gauge > 0) {
+    if (gaugeOn) {
         sim.fixtures.pop_back();   // the gauge out: the loop stays at the size it was held
         sim.ball.tension = 0.2 * tension0;
         sim.settle(10);
@@ -775,8 +1160,19 @@ void makeSlipKnot(YarnSim& sim) {
     }
     if (std::getenv("SIM_CHAINDBG")) {
         int l = -1, h = -1;
-        if (hookLoop(sim, &l, &h))
-            std::printf("slip knot: the loop on the shaft is yarn %d..%d around the shaft %d\n", l, h, originInsideLoop(sim, l, h) ? 1 : 0);
+        if (hookLoop(sim, &l, &h)) {
+            // The same measure as judgeStitch's onShaft: the loop's mean distance from the axis and its centreline length.
+            Real sum = 0, len = 0;
+            for (int i = l; i <= h; ++i) {
+                const Vec3 q = rotate(conj(sim.hook.q), sim.rs.x[i] - sim.hook.tip);
+                sum += std::hypot(q.x, q.y);
+                if (i < h) len += sim.rs.restLen[i];
+            }
+            std::printf("slip knot: the loop on the shaft is yarn %d..%d around the shaft %d, onShaft=%.1f/%.1f\n", l, h,
+                        originInsideLoop(sim, l, h) ? 1 : 0, sum / (h - l + 1) * 1e3, len * 1e3);
+        } else {
+            std::printf("slip knot: no loop on the shaft\n");
+        }
     }
 }
 
@@ -813,7 +1209,6 @@ void moveHandTo(YarnSim& sim, const Vec3& to, Real seconds) {
         if (sim.onFrame) sim.onFrame();
     }
 }
-Real envOr(const char* k, Real d) { return std::getenv(k) ? std::atof(std::getenv(k)) : d; }
 std::vector<int> roundHook(const YarnSim& sim, Real a0, Real a1) {
     std::vector<int> out;
     const Vec3 ax = sim.hook.axis();
@@ -897,6 +1292,11 @@ bool loopRange(const YarnSim& sim, Real reach, Real turns, int* lo, int* hi) {
 // far the yarn winds round the hook, the yarn over goes on until the working yarn winds a full turn, the pull until the old loop no longer winds.
 ChainStart prepareChain(YarnSim& sim) {
     ChainStart c;
+    sim.readAssist();
+    sim.worstGap = 1e9;
+    sim.worstPen = 0;
+    sim.impulseGrip = sim.impulseRing = sim.impulseCatch = sim.impulsePins = sim.impulseReel = sim.impulseHook = 0;
+    sim.releaseGuideSprings();   // a previous stitch's holds never carry into this one
     c.prevHi = sim.lastLinkHi;
     const int prevLo = sim.lastLinkLo, prevHi = sim.lastLinkHi;
     const bool usePrev = envOr("CH_PREV", 0) > 0 && prevLo >= 0 && prevHi > prevLo && sim.lastLinkChain == sim.chains;
@@ -1002,20 +1402,20 @@ ChainStart prepareChain(YarnSim& sim) {
     } else {
         // The seat pushes the hook forward through the loop; the work grip skips yarn near the hook, so without a thumb on it the loop
         // simply travels with the hook and nothing is seated. Hold the compact loop itself while the hook slides through it.
-        std::vector<int> seatPins;
-        if (envOr("SEAT_HOLD", 0) > 0) {
+        std::vector<int> seatSprings;
+        if (envOr("SEAT_HOLD", 0) > 0 && sim.assistPins > 0) {
             for (int i = lo; i <= hi && i < sim.rs.particleCount(); ++i) {
                 const Vec3 d = sim.rs.x[i] - sim.hook.tip;
                 const Real a = dot(d, ax);
                 if (a > -R && a < 30 * R && length(d - ax * a) < R + 3 * sim.params.radius) {
-                    sim.rs.pin(i);
-                    seatPins.push_back(i);
+                    const int sp = sim.addGuideSpring(i, sim.rs.x[i], 2000.0 * sim.assistPins, 0);
+                    if (sp >= 0) seatSprings.push_back(sp);
                 }
             }
-            if (envOr("SIM_CHAINDBG", 0) > 0) std::printf("  seat: holding %d particles of the loop while the hook slides through\n", (int)seatPins.size());
+            if (envOr("SIM_CHAINDBG", 0) > 0) std::printf("  seat: holding %d particles of the loop while the hook slides through\n", (int)seatSprings.size());
         }
         seatLoop(sim, envOr("SIM_SEAT", 5.0) * R, up * (envOr("SEAT_UP", 0.0) * m), lo, hi);
-        for (int i : seatPins) sim.rs.unpin(i);
+        for (int sp : seatSprings) sim.releaseGuideSpring(sp);
     }
     if (!sim.homeSet) { sim.home = sim.hook.tip; sim.homeSet = true; }
     if (envOr("HOME_RETURN", 1) > 0) {
@@ -1039,8 +1439,8 @@ ChainStart prepareChain(YarnSim& sim) {
     // The tension that draws the working yarn snug also drags a compact loop forward, off the shaft and onto the throat. A crocheter's
     // left hand keeps the work (and with it the old loop) back while the right hand pulls. Pin the old loop's front for the snug so it stays
     // behind the throat where the new yarn can be laid in front of it (experimental: PREP_HOLD=0 keeps the old behaviour).
-    std::vector<int> heldLoop;
-    if (envOr("PREP_HOLD", 0) > 0) {
+    std::vector<int> heldLoop, heldSprings;
+    if (envOr("PREP_HOLD", 0) > 0 && sim.assistPins > 0) {
         // The loop on the shaft is the compact stretch, not the whole carried loop the prep preferred (the slip knot's ring is much
         // bigger than the stitch loop). Find it again here, ignoring the preferred full stretch, and hold its front while the yarn comes tight.
         int plo = lo, phi = hi;
@@ -1054,8 +1454,12 @@ ChainStart prepareChain(YarnSim& sim) {
         int n = (int)envOr("PREP_HOLDN", 3);
         if (n <= 0 || n > (int)byZ.size()) n = (int)byZ.size();
         for (int k = 0; k < n; ++k) {
-            sim.rs.pin(byZ[k].second);
-            heldLoop.push_back(byZ[k].second);
+            const int i = byZ[k].second;
+            const int sp = sim.addGuideSpring(i, sim.rs.x[i], 2000.0 * sim.assistPins, 0);
+            if (sp >= 0) {
+                heldLoop.push_back(i);
+                heldSprings.push_back(sp);
+            }
         }
         if (envOr("SIM_CHAINDBG", 0) > 0)
             std::printf("chain: holding %d of the compact loop %d..%d through the snug (%d..%d)\n", n, plo, phi, byZ.front().second,
@@ -1064,12 +1468,16 @@ ChainStart prepareChain(YarnSim& sim) {
     sim.ball.tension = envOr("PREP_SNUG", 4.0) * sim.params.tension;
     sim.settle((int)(0.6 / sim.params.dt));
     sim.ball.tension = sim.params.tension;
-    if (envOr("PREP_HOLD", 0) >= 2) c.prepHeld = heldLoop;   // hold it through the yarn over; finishChain releases it
-    else for (int i : heldLoop) sim.rs.unpin(i);
+    if (envOr("PREP_HOLD", 0) >= 2) {
+        c.prepHeld = heldLoop;   // hold it through the yarn over; finishChain releases it
+        c.prepHeldSprings = heldSprings;
+    } else {
+        for (int sp : heldSprings) sim.releaseGuideSpring(sp);
+    }
     if (!loopRange(sim, reach, turns, &c.oldLo, &c.oldHi)) {
         if (sim.loopsOnHook(front) == 0) {
             std::printf("chain: the loop came off while it was snugged\n");
-            for (int i : c.prepHeld) sim.rs.unpin(i);
+            for (int sp : c.prepHeldSprings) sim.releaseGuideSpring(sp);
             sim.release(c.hold);
             return c;
         }
@@ -1402,7 +1810,7 @@ ChainStart prepareChain(YarnSim& sim) {
 void finishChain(YarnSim& sim, const ChainStart& c) {
     // PREP_HOLD=2 lets the old loop slide from the pull on; PREP_HOLD=3 is the left hand holding it while the hook is drawn out: the loop
     // stays where it is and the hook slides through it, instead of the two travelling together and no link forming.
-    if (envOr("PREP_HOLD", 0) == 2) for (int i : c.prepHeld) sim.rs.unpin(i);
+    if (envOr("PREP_HOLD", 0) == 2) for (int sp : c.prepHeldSprings) sim.releaseGuideSpring(sp);
     const Real m = kMm;
     const Vec3 ax = sim.hook.axis();
     const Vec3 up{0, 1, 0}, front{0, 0, 1};
@@ -1425,10 +1833,11 @@ void finishChain(YarnSim& sim, const ChainStart& c) {
     // The old loop must stay where it is while the hook (and the new loop) goes through it; otherwise it is dragged along and the new loop
     // never crosses it. The left hand holds it open at three points round its front, as a crocheter's thumb and finger do, and lets the hook
     // slide through the hole. PU_SPREAD is how far each point is opened out; PU_HOLDMM is how far the hook goes before the hand lets go.
-    std::vector<int> spreadGrips;
+    std::vector<int> spreadSprings;
+    std::vector<Vec3> spreadBase, spreadDir;
     {
         const Real spread = envOr("PU_SPREAD", 0);
-        if (spread > 0 && c.oldLo >= 0 && c.oldHi > c.oldLo) {
+        if (spread > 0 && sim.assistPins > 0 && c.oldLo >= 0 && c.oldHi > c.oldLo) {
             const Vec3 ax0 = sim.hook.axis();
             Real zmin = 1e9, zmax = -1e9;
             for (int i = c.oldLo; i <= c.oldHi; ++i) {
@@ -1453,21 +1862,19 @@ void finishChain(YarnSim& sim, const ChainStart& c) {
                 const Real len = std::sqrt(dot(d, d));
                 if (len < 1e-9) continue;
                 d = d / len;
+                const int sp = sim.addGuideSpring(i, sim.rs.x[i], 2000.0 * sim.assistPins, 0);
+                if (sp < 0) continue;
                 base.push_back(sim.rs.x[i]);
                 dir.push_back(d);
-                YarnSim::Grip g;
-                g.particles.push_back(i);
-                g.offset.push_back(Vec3{});
-                g.at = sim.rs.x[i];
-                sim.rs.pin(i);
-                sim.grips.push_back(g);
-                spreadGrips.push_back((int)sim.grips.size() - 1);
+                spreadSprings.push_back(sp);
+                spreadBase.push_back(sim.rs.x[i]);
+                spreadDir.push_back(d);
             }
             const int steps = std::max(1, (int)(envOr("PU_SPREADT", 0.4) / sim.params.dt));
             sim.phase = "The left hand holds the old loop open while the hook pulls through";
             for (int s2 = 1; s2 <= steps; ++s2) {
-                for (size_t k = 0; k < spreadGrips.size(); ++k)
-                    sim.grips[spreadGrips[k]].at = base[k] + dir[k] * (spread * m * (Real)s2 / steps);
+                for (size_t k = 0; k < spreadSprings.size(); ++k)
+                    sim.moveGuideSpring(spreadSprings[k], spreadBase[k] + spreadDir[k] * (spread * m * (Real)s2 / steps));
                 sim.step(sim.hook);
                 if (sim.onFrame) sim.onFrame();
             }
@@ -1512,16 +1919,16 @@ void finishChain(YarnSim& sim, const ChainStart& c) {
         bool prepReleased = false;
         const Real spreadHold = envOr("PU_HOLDMM", 12) * m;
         for (; moved < maxPull && clear < (int)envOr("PU_EXTRA", 6); moved += step) {
-            if (!spreadGrips.empty() && moved >= spreadHold) {
-                for (int k = (int)spreadGrips.size() - 1; k >= 0; --k) sim.release(spreadGrips[k]);
-                spreadGrips.clear();
+            if (!spreadSprings.empty() && moved >= spreadHold) {
+                for (int k = (int)spreadSprings.size() - 1; k >= 0; --k) sim.releaseGuideSpring(spreadSprings[k]);
+                spreadSprings.clear();
                 if (envOr("SIM_CHAINDBG", 0) > 0) std::printf("  spread: the hand lets the loop go at %.1f mm\\n", moved / m);
             }
             sim.hand += ax * (step * envOr("PU_FOLLOW", 1.0));
             sim.step(hookPose(sim.hook.tip + ax * step, -ax, pullThroat));
             if (sim.onFrame) sim.onFrame();
             if (!prepReleased && envOr("PREP_HOLD", 0) >= 3 && moved >= envOr("PU_HOLDMM", 12) * m) {
-                for (int i : c.prepHeld) sim.rs.unpin(i);
+                for (int sp : c.prepHeldSprings) sim.releaseGuideSpring(sp);
                 prepReleased = true;
             }
             // The rig's clean first loop comes off when the half-plane count drops. From the slip knot the half-plane count also drops when a
@@ -1548,7 +1955,7 @@ void finishChain(YarnSim& sim, const ChainStart& c) {
         if (envOr("SIM_CHAINDBG", 0) > 0)
             std::printf("  pull: the hook moved %.1f mm; the old loop is %s (clear %d)\n", moved * 1e3,
                         clear >= (int)envOr("PU_EXTRA", 6) ? "off the tip" : "still on the hook", clear);
-        for (int i : c.prepHeld) sim.rs.unpin(i);   // the pull through done: the loop may hang freely again
+        for (int sp : c.prepHeldSprings) sim.releaseGuideSpring(sp);   // the pull through done: the loop may hang freely again
         // The winding and half-plane signals can both say "off" while the final linked stretch is still the old loop (a leg left, or the
         // loop is open but still links the axis). If so, keep drawing the hook through until the judge's own stretch is no longer the old loop.
         auto oldStill = [&] {
@@ -1566,8 +1973,8 @@ void finishChain(YarnSim& sim, const ChainStart& c) {
                 if (sim.onFrame) sim.onFrame();
             }
     }
-    for (int k = (int)spreadGrips.size() - 1; k >= 0; --k) sim.release(spreadGrips[k]);
-    spreadGrips.clear();
+    for (int k = (int)spreadSprings.size() - 1; k >= 0; --k) sim.releaseGuideSpring(spreadSprings[k]);
+    spreadSprings.clear();
     sim.ball.tension = pullTension0;
     // The hook has drawn the new loop through; the old loop has not always slid off the head. The left hand then slips it forward off the tip
     // (the hook stays still, the new loop stays in the throat), instead of dragging the whole work further.
@@ -1578,28 +1985,26 @@ void finishChain(YarnSim& sim, const ChainStart& c) {
         for (int i = c.oldLo; i <= c.oldHi; ++i) ord.push_back({dot(sim.rs.x[i] - sim.hook.tip, ax2), i});
         std::sort(ord.begin(), ord.end());
         const int n = std::min((int)envOr("PU_SLIPN", 4), (int)ord.size());
-        YarnSim::Grip g;
-        Vec3 at{};
-        for (int k = 0; k < n; ++k) {
-            g.particles.push_back(ord[k].second);
-            at += sim.rs.x[ord[k].second];
+        std::vector<int> slipSprings;
+        std::vector<Vec3> slipBase;
+        if (sim.assistPins > 0) {
+            for (int k = 0; k < n; ++k) {
+                const int i = ord[k].second;
+                const int sp = sim.addGuideSpring(i, sim.rs.x[i], 2000.0 * sim.assistPins, 0);
+                if (sp < 0) continue;
+                slipSprings.push_back(sp);
+                slipBase.push_back(sim.rs.x[i]);
+            }
         }
-        at = at / (Real)n;
-        for (int k = 0; k < n; ++k) {
-            g.offset.push_back(sim.rs.x[g.particles[k]] - at);
-            sim.rs.pin(g.particles[k]);
-        }
-        g.at = at;
-        sim.grips.push_back(g);
-        const int gi = (int)sim.grips.size() - 1;
         const int steps = std::max(1, (int)(envOr("PU_SLIPT", 0.3) / sim.params.dt));
         sim.phase = "The left hand slips the old loop off the tip";
         for (int k = 1; k <= steps; ++k) {
-            sim.grips[gi].at = at - ax2 * (slip * m * (Real)k / steps);
+            for (size_t j = 0; j < slipSprings.size(); ++j)
+                sim.moveGuideSpring(slipSprings[j], slipBase[j] - ax2 * (slip * m * (Real)k / steps));
             sim.step(sim.hook);
             if (sim.onFrame) sim.onFrame();
         }
-        sim.release(gi);
+        for (int sp : slipSprings) sim.releaseGuideSpring(sp);
         sim.settle(10);
         if (envOr("SIM_CHAINDBG", 0) > 0) std::printf("  slip: moved the old loop's front %.1f mm toward the tip\n", slip);
     }
@@ -1631,6 +2036,7 @@ void finishChain(YarnSim& sim, const ChainStart& c) {
     sim.settle(20);
     stage("released");
     if (c.catchGripped && envOr("YO_GRIPREL", 0) > 0) sim.releaseThroatGrip();
+    sim.releaseGuideSprings();
     ++sim.chains;
 }
 
@@ -1655,7 +2061,6 @@ static int loopCrossings(const std::vector<Vec3>& A, const std::vector<Vec3>& B,
     for (const Vec3& p : A) C += p;
     C = C / (Real)A.size();
     int sum = 0;
-    const Real eps = 0.25 * r;
     for (size_t k = 0; k + 1 < B.size(); ++k) {
         const Vec3 p0 = B[k], p1 = B[k + 1], d = p1 - p0;
         for (size_t i = 0; i < A.size(); ++i) {
@@ -1677,14 +2082,13 @@ static int loopCrossings(const std::vector<Vec3>& A, const std::vector<Vec3>& B,
             const Real v = (d00 * d21 - d01 * d20) / den2;
             if (u <= 0 || v <= 0 || u + v >= 1) continue;
             // ignore a crossing right at either end of the working-yarn stretch
-            if (length(p - p0) < eps || length(p - p1) < eps) continue;
             sum += den > 0 ? 1 : -1;
         }
     }
     return sum;
 }
 
-bool hookLoop(const YarnSim& sim, int* from, int* to, int searchFrom) {
+bool hookLoop(const YarnSim& sim, int* from, int* to, int searchFrom, Real touchRadii) {
     // the hook's axis, closed far away
     const Vec3 ax = sim.hook.axis();
     Vec3 u = Vec3{0, 0, 1} - ax * ax.z;
@@ -1693,7 +2097,9 @@ bool hookLoop(const YarnSim& sim, int* from, int* to, int searchFrom) {
     const std::vector<Vec3> H{sim.hook.tip - ax * 0.05, sim.hook.tip + ax * 0.08, sim.hook.tip + ax * 0.08 + u * 1.0, sim.hook.tip - ax * 0.05 + u * 1.0};
     // stretches of yarn closed where the yarn touches itself
     const int n = sim.rs.particleCount();
-    const Real touch2 = std::pow(5.0 * sim.params.radius, 2);   // (a loose crossing counts)
+    // Two strands touch when their centrelines are within `touchRadii` yarn radii (the simulator uses 5; the judge uses 2.5, because a loop 5 mm or
+    // more across has points 5r apart on its own far side, which must not count as a crossing).
+    const Real touch2 = std::pow(touchRadii * sim.params.radius, 2);
     int bestSpan = 1 << 30;
     bool found = false;
     for (int i = std::max(0, searchFrom); i < n; ++i)
@@ -1894,18 +2300,22 @@ ChainResult judgeChain(const YarnSim& sim, const ChainStart& c) {
     return r;
 }
 
-// Crossings of the open yarn path B through a triangle fan spanning the loop A, counted without sign: a stitch's new loop goes through the
-// old loop's opening, so both of its legs cross the disc and each one is a passage. Points on a fan edge belong to no triangle, which keeps a
-// yarn lying on the old loop's own polygon from counting.
-static int discCrossings(const std::vector<Vec3>& A, const std::vector<Vec3>& B, Real r) {
+// Signed crossings of the open yarn path B through a triangle fan spanning the loop A, with their sign along the disc's normal (the Newell
+// normal of A). The stitch's two legs are counted separately so a yarn merely running past the old loop cannot pass for a stitch.
+struct LegCrossings {
+    int in = 0, out = 0;       // signed
+    int inCount = 0, outCount = 0;   // unsigned: every crossing counts, whichever way it goes
+    bool valid = true;
+};
+
+// The signed crossings of B through the fan (the sum), and the number of crossings whichever way they go (`count`).
+static int signedFanCrossings(const std::vector<Vec3>& A, const Vec3& C, const Vec3& N, const std::vector<Vec3>& B, Real r, int* count) {
     if (A.size() < 3 || B.size() < 2) return 0;
-    Vec3 C{};
-    for (const Vec3& p : A) C += p;
-    C = C / (Real)A.size();
-    int count = 0;
-    const Real eps = 0.25 * r;
+    int sum = 0;
+    if (count) *count = 0;
     for (size_t k = 0; k + 1 < B.size(); ++k) {
         const Vec3 p0 = B[k], p1 = B[k + 1], d = p1 - p0;
+        const int sign = dot(d, N) > 0 ? 1 : -1;
         for (size_t i = 0; i < A.size(); ++i) {
             const Vec3& a = A[i];
             const Vec3& b = A[(i + 1) % A.size()];
@@ -1922,18 +2332,42 @@ static int discCrossings(const std::vector<Vec3>& A, const std::vector<Vec3>& B,
             const Real u = (d11 * d20 - d01 * d21) / den2;
             const Real v = (d00 * d21 - d01 * d20) / den2;
             if (u <= 0 || v <= 0 || u + v >= 1) continue;
-            if (length(p - p0) < eps || length(p - p1) < eps) continue;
-            ++count;
+            sum += sign;
+            if (count) ++*count;
         }
     }
-    return count;
+    return sum;
 }
+
+static LegCrossings legCrossings(const std::vector<Vec3>& A, const std::vector<Vec3>& Bin, const std::vector<Vec3>& Bout, Real r) {
+    LegCrossings lc;
+    if (A.size() < 3) {
+        lc.valid = false;
+        return lc;
+    }
+    Vec3 C{};
+    for (const Vec3& p : A) C += p;
+    C = C / (Real)A.size();
+    Vec3 N{};
+    for (size_t i = 0; i < A.size(); ++i) N += cross(A[i] - C, A[(i + 1) % A.size()] - C);
+    if (length(N) < 1e-12) {
+        lc.valid = false;
+        return lc;
+    }
+    N = normalized(N);
+    lc.in = signedFanCrossings(A, C, N, Bin, r, &lc.inCount);
+    lc.out = signedFanCrossings(A, C, N, Bout, r, &lc.outCount);
+    return lc;
+}
+
+// The judge's touch distance for the final loop (see hookLoop): 2.5 yarn radii.
+const Real kJudgeTouchRadii = 2.5;
 
 StitchVerdict judgeStitch(const YarnSim& sim, const ChainStart& c) {
     StitchVerdict v;
     const Real R = sim.shape.R, r = sim.params.radius;
     int lo = -1, hi = -1;
-    v.onHook = hookLoop(sim, &lo, &hi) && hi > lo;
+    v.onHook = hookLoop(sim, &lo, &hi, -1, kJudgeTouchRadii) && hi > lo;
     v.linkLo = lo;
     v.linkHi = hi;
     const int span = v.onHook ? hi - lo + 1 : 0;
@@ -1953,13 +2387,28 @@ StitchVerdict judgeStitch(const YarnSim& sim, const ChainStart& c) {
             oldWind = sim.windingNear(c.oldLo, c.oldHi, R + 3.0 * r);
         }
     }
-    v.oldOff = oldWind / (2 * kPi);
-    // The yarn drawn through the old loop starts at the old loop's end and ends with the final loop. A stitch passes through the opening the
-    // old loop spans; a loop lying beside it does not cross the disc at all.
-    if (c.oldLo >= 0 && c.oldHi >= c.oldLo && v.onHook && hi > c.oldHi) {
-        const std::vector<Vec3> A(sim.rs.x.begin() + c.oldLo, sim.rs.x.begin() + c.oldHi + 1);
-        const std::vector<Vec3> B(sim.rs.x.begin() + c.oldHi, sim.rs.x.begin() + hi + 1);
-        v.through = discCrossings(A, B, r);
+    v.oldOff = oldWind;   // windingNear already returns turns
+    // The yarn drawn through the old loop is split into the new loop's two legs. The inner leg starts on the old loop's edge, so its crossing
+    // can fall inside the two skipped particles; the stitch passes when the outer leg crosses the disc at least once. The yarn beyond hi+6,
+    // running to the finger, never counts. A disc whose old-loop ends are more than three yarn widths apart is not a disc: `?` fails.
+    v.throughValid = c.oldLo >= 0 && c.oldHi > c.oldLo && v.onHook && hi > c.oldHi;
+    if (v.throughValid) {
+        const int n = sim.rs.particleCount();
+        if (length(sim.rs.x[c.oldHi] - sim.rs.x[c.oldLo]) > 6 * r || c.oldHi + 3 >= n) {
+            v.throughValid = false;
+        } else {
+            const int mid = (lo + hi) / 2;
+            const int in0 = std::min(n - 1, c.oldHi + 3), in1 = std::max(in0, std::min(mid, n - 1));
+            const int out1 = std::min(n - 1, hi + 6);
+            const std::vector<Vec3> A(sim.rs.x.begin() + c.oldLo, sim.rs.x.begin() + c.oldHi + 1);
+            const std::vector<Vec3> Bin(sim.rs.x.begin() + in0, sim.rs.x.begin() + in1 + 1);
+            const std::vector<Vec3> Bout(sim.rs.x.begin() + mid, sim.rs.x.begin() + out1 + 1);
+            const LegCrossings lc = legCrossings(A, Bin, Bout, r);
+            v.throughIn = lc.in;
+            v.throughValid = lc.valid;
+            v.through = lc.out;
+            v.throughCount = lc.outCount;
+        }
     }
     if (v.onHook) {
         Real sum = 0;
@@ -1970,17 +2419,161 @@ StitchVerdict judgeStitch(const YarnSim& sim, const ChainStart& c) {
         }
         v.meanR = sum / span;
     }
-    v.gap = sim.minGap();
-    v.depth = sim.hookPenetration();
-    const bool onShaft = v.meanR >= R + 0.6 * r && v.length >= 19e-3;
+    // Running contact: the worst gap and the deepest penetration over the whole stitch, not just at its end.
+    v.gap = sim.worstGap < 1e8 ? sim.worstGap : sim.minGap();
+    v.depth = sim.worstPen;
+    const Real Lstar = 2 * kPi * (R + 0.6 * r) + 2e-3;
+    const bool onShaft = v.meanR >= R + 0.6 * r && v.length >= 19e-3 && v.length <= 1.35 * Lstar;
     const bool contact = v.gap >= 0.95 * 2 * r && v.depth <= 0.4e-3;
-    v.pass = v.onHook && v.fresh < 0.25 && v.newYarn && v.sequential && std::fabs(v.oldOff) < 0.25 && v.through >= 1 && onShaft && contact;
+    v.onShaftPass = onShaft;
+    v.contactPass = contact;
+    v.pass = v.onHook && v.fresh < 0.25 && v.newYarn && v.sequential && std::fabs(v.oldOff) < 0.25 && v.throughValid && v.throughCount >= 1 &&
+             onShaft && contact;
     // A stitch that could not be started has not advanced the chain count; its line still names the stitch it attempted.
     const int k = sim.chains + (c.ok ? 0 : 1);
-    std::printf("stitch %d %s onHook=%d fresh=%.2f newYarn=%d sequential=%d oldOff=%.2f through=%d onShaft=%.1f/%.1f contact=%.2f/%.2f\n",
-                k, v.pass ? "PASS" : "FAIL", v.onHook ? 1 : 0, v.fresh, v.newYarn ? 1 : 0, v.sequential ? 1 : 0, v.oldOff, v.through,
-                v.meanR * 1e3, v.length * 1e3, v.gap * 1e3, v.depth * 1e3);
+    char through[32];
+    if (v.throughValid) std::snprintf(through, sizeof through, "%+d/%+d", v.throughIn, v.through);
+    else std::snprintf(through, sizeof through, "?");
+    std::printf("stitch %d %s onHook=%d fresh=%.2f newYarn=%d sequential=%d oldOff=%.2f through=%s onShaft=%.1f/%.1f contact=%.2f/%.2f "
+                "assist grip %.2f:%.2f ring %.2f:%.2f catch %.2f:%.2f pins %.2f:%.2f reel %.2f:%.2f hook %.2f mN.s\n",
+                k, v.pass ? "PASS" : "FAIL", v.onHook ? 1 : 0, v.fresh, v.newYarn ? 1 : 0, v.sequential ? 1 : 0, v.oldOff, through,
+                v.meanR * 1e3, v.length * 1e3, v.gap * 1e3, v.depth * 1e3, sim.assistGrip, sim.impulseGrip * 1e3, sim.assistRing,
+                sim.impulseRing * 1e3, sim.assistCatch, sim.impulseCatch * 1e3, sim.assistPins, sim.impulsePins * 1e3, sim.assistReel,
+                sim.impulseReel * 1e3, sim.impulseHook * 1e3);
     return v;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------------
+// The judge fixtures (plan section 4.5.1): analytic yarn in the hook's frame (mm, then m), with no simulation. The hook lies along +z from the
+// origin, its mouth toward +x, the work below it toward -y. The true stitch: the new loop N is a circle round the shaft in the plane z = 12 mm, at
+// radius R + 0.6r + 0.2 mm. Its two legs run down from the circle's lowest point, 2r apart in x, through the old loop O (a ring in the plane
+// y = -7 mm round both legs). The yarn runs earlier work -> O -> the first leg up through O -> N -> the second leg down through O -> the finger.
+// Each negative changes one thing; the note names it.
+namespace {
+
+// The particle nearest to `p`, searching forward from `from`: the yarn is built in path order, so each marker lies after the one before it.
+int nearestFrom(const YarnSim& sim, const Vec3& p, int from) {
+    int best = std::max(0, from);
+    Real bd = 1e9;
+    for (int i = best; i < sim.rs.particleCount(); ++i) {
+        const Real d = length(sim.rs.x[i] - p);
+        if (d < bd) {
+            bd = d;
+            best = i;
+        }
+    }
+    return best;
+}
+
+}  // namespace
+
+StitchFixture buildStitchFixture(const std::string& name) {
+    StitchFixture f;
+    YarnSim& sim = f.sim;
+    static const char* const kNames[] = {"true", "beside", "beside-far", "old-on-shaft", "neck", "loose", "contact", "fresh"};
+    bool known = false;
+    for (const char* k : kNames) known = known || name == k;
+    if (!known) {
+        f.note = "unknown fixture " + name;
+        return f;
+    }
+    sim.hook = hookPose(Vec3{}, Vec3{0, 0, -1}, Vec3{1, 0, 0});   // the hook's frame is the world frame
+    const Real R = sim.shape.R / kMm, r = sim.params.radius / kMm;   // mm
+    const Real zc = 12.0, legX = 1.1;                                  // the legs sit 2r apart, 12 mm along the shaft
+    // The new loop's centreline radius round the shaft. The plan's 0.2 mm of slack leaves the loop 18.9 mm long, under the 19 mm floor with 2r
+    // between the legs; 0.5 mm of slack gives 19.4 mm.
+    Real rN = R + 0.6 * r + 0.5;
+    Real yO = -7.0, cxO = 0.0;                                         // the old loop's plane and the x of its centre
+    const Real rhoO = 3.3;                                             // the old loop: clear of both legs by 2r (3.3 - 1.1 = 2.2 mm)
+    if (name == "beside" || name == "beside-far") cxO = -7.6;          // the old loop moved off to the side of the legs
+    if (name == "neck") {                                              // a small loop with its legs through a low old loop
+        rN = 1.4;
+        yO = -3.5;
+    }
+    if (name == "loose") rN = 5.6;
+    const bool shaftRing = name == "old-on-shaft";                     // the old loop still round the shaft, at z = 8 mm
+    const Real yTop = -std::sqrt(rN * rN - legX * legX), yBot = yO - 0.5;
+
+    // Points in mm; add() converts them to m.
+    std::vector<Vec3> path;
+    auto add = [&](const Vec3& p) { path.push_back(p * kMm); };
+    auto ringPt = [&](Real th) -> Vec3 {
+        if (shaftRing) return Vec3{rN * std::cos(th), rN * std::sin(th), 8.0};
+        return Vec3{cxO + rhoO * std::cos(th), yO, zc + rhoO * std::sin(th)};
+    };
+    // The old loop: 300 degrees, with its gap at the bottom where the yarn comes in. A 60 degree gap keeps the ends 3.3 mm apart, so the ring is
+    // not a closed loop of its own (a 340 degree ring closes on itself and the judge takes it for the final loop).
+    const Real thS = -60.0 * kPi / 180.0, span = 300.0 * kPi / 180.0;
+    const int nO = 30;
+    const Vec3 S = ringPt(thS), E0{4.85, -26, 4.8};   // the earlier work comes up from below, from the same place for every fixture
+    add(E0);
+    add((E0 + S) * 0.5);   // earlier work, from below
+    for (int k = 0; k <= nO; ++k) add(ringPt(thS + span * k / nO));
+    const Vec3 Oend = ringPt(thS + span);
+    add(Vec3{Oend.x, yO - 3.5, Oend.z});   // the connection runs 3.5 mm below the old loop's plane, clear of its ring
+    add(Vec3{-legX, yO - 3.5, zc});
+    add(Vec3{-legX, yBot, zc});   // the first leg's foot, below the old loop
+    add(Vec3{-legX, yTop, zc});   // up through the old loop, to the circle
+    const Real phi0 = std::atan2(yTop, -legX), phiE = std::atan2(yTop, legX);
+    const Real arc = phi0 - phiE + 2 * kPi;   // round the shaft, the long way, from the first leg to the second
+    const int nN = 32;
+    for (int k = 1; k <= nN; ++k) {
+        const Real phi = phi0 - arc * k / nN;
+        add(Vec3{rN * std::cos(phi), rN * std::sin(phi), zc});
+    }
+    add(Vec3{legX, yBot, zc});   // down through the old loop again
+    add(Vec3{legX, -13.0, zc});  // on down, clear of the old loop, before the yarn turns for the finger
+    if (name == "beside-far") {
+        // the yarn after the stitch runs back through the old loop's disc, well beyond the window the judge reads (hi+6)
+        add(Vec3{cxO, -13.0, zc});
+        add(Vec3{cxO, yO, zc});
+        add(Vec3{cxO, yO + 4.0, zc});
+    }
+    add(Vec3{20, -5, 40});   // on to the finger
+
+    // Catmull-Rom through sharp corners overshoots by about 2 mm; a dense polyline keeps the legs straight.
+    std::vector<Vec3> dense;
+    for (size_t i = 0; i + 1 < path.size(); ++i) {
+        const Real n = std::max(1.0, std::ceil(length(path[i + 1] - path[i]) / (0.25 * kMm)));
+        for (int k = 0; k < (int)n; ++k) dense.push_back(path[i] + (path[i + 1] - path[i]) * (k / n));
+    }
+    dense.push_back(path.back());
+    sim.build(dense);
+    const Vec3 Smm = S * kMm, Oendm = Oend * kMm;
+    const int oldLo = nearestFrom(sim, Smm, 0), oldHi = nearestFrom(sim, Oendm, oldLo);
+    f.chain.ok = true;
+    f.chain.oldLo = oldLo;
+    f.chain.oldHi = oldHi;
+    f.chain.prevHi = -1;
+    sim.chains = 1;   // the old loop is the first stitch's; the fixture's stitch is the second
+
+    if (name == "contact") {
+        // one particle of the first leg moved 1.5 mm into the second leg: the yarn passes within 0.4 r of itself
+        const int p = nearestFrom(sim, Vec3{-legX, -6.0, zc} * kMm, 0);
+        sim.rs.x[p].x += 1.5 * kMm;
+    }
+    sim.worstGap = sim.minGap();
+    sim.worstPen = sim.hookPenetration();
+    if (name == "fresh") {
+        // the new loop built from the old loop's own yarn: the judge's old loop covers 60% of the stitch's stretch
+        int lo = -1, hi = -1;
+        hookLoop(sim, &lo, &hi, -1, kJudgeTouchRadii);
+        f.chain.oldLo = lo + 1;
+        f.chain.oldHi = lo + (hi - lo) * 6 / 10;
+    }
+    static const char* const kNotes[] = {
+        "the true stitch: O round both legs in y=-7 mm, N on the shaft, both legs through O",
+        "O moved 6 mm to the side, so the legs pass beside it",
+        "as beside, and the yarn beyond hi+6 runs back through O's disc (the judge reads only to hi+6)",
+        "O still round the shaft at z=8 mm, N in front of it",
+        "N is a small loop (r 1.4 mm), its legs through a low old loop: the stretch is about 13 mm",
+        "N is a 35 mm loose loop (r 5.6 mm)",
+        "the true stitch with one leg particle moved 1.5 mm into the other leg",
+        "the true stitch with the old loop covering 60% of N's stretch",
+    };
+    for (size_t i = 0; i < sizeof kNames / sizeof kNames[0]; ++i)
+        if (name == kNames[i]) f.note = kNotes[i];
+    return f;
 }
 
 void makeChain(YarnSim& sim) {

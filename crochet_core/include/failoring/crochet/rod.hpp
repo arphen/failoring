@@ -82,6 +82,7 @@ struct SdfBody {
     Vec3 t{}, tPrev{};
     Real squash = 1.0, friction = 0.0, reach = 0.02;   // reach: a bounding radius round t (segments farther away are skipped)
     bool started = false;
+    Real impulse = 0;   // |lambda| delivered in the last frame, for the guide report
 };
 
 // A ring the yarn runs through: the yarn passes through `at` (it may slide along itself through it, but not leave it). `seg` is the segment
@@ -92,6 +93,17 @@ struct SlideRing {
     Real stiffness = 1.0;   // the fraction of the error corrected per iteration
     Vec3 from_{};
     bool started_ = false;
+    Real impulse = 0;       // |lambda| delivered in the last frame, for the guide report
+};
+
+// A soft pin for a guide: one particle is pulled to `target` by an XPBD spring of stiffness k (N/m). It is solved before contact, like a
+// ring, so it can never drag yarn through yarn. `lambda` is the XPBD multiplier of the last step.
+struct GuideSpring {
+    int particle = 0;
+    Vec3 target{};
+    Real k = 0;
+    int kind = 0;   // 0: a loop pin, 1: the throat grip (for the verdict's impulse report)
+    Vec3 lambda{};
 };
 
 struct RodChain {
@@ -129,6 +141,8 @@ public:
     std::vector<StaticCapsule> statics;
     std::vector<SlideRing> rings;
     std::vector<SdfBody> bodies;
+    std::vector<GuideSpring> guideSprings;
+    Real lastStaticsImpulse = 0;   // |lambda| the static capsules delivered in the last frame
 
     // Adds a chain through `pts` (>= 2 points; >= 3 when closed). The frames are parallel transported along it. `restFromShape`: the
     // bend of the given shape is the rest bend (a ring that stays a ring); otherwise the rest is straight. Returns the chain index.
@@ -187,6 +201,7 @@ public:
     int lastContacts = 0;
 
 private:
+    friend class YarnSim;   // checkpoints serialize the solver's private caches
     struct Pair { int a, b; };
     std::vector<Pair> pairs_;
     Real rotInertiaScale_ = 1.0, massScale_ = 1.0;
@@ -201,9 +216,10 @@ private:
     void solveBendTwist(int j, Real h2inv);
     void solveContacts(Real h);
     void solveFloor(Real h);
-    void solveStatics(const std::vector<StaticCapsule>& cur, const std::vector<StaticCapsule>& before);
-    void solveRings(Real frac);
-    void solveBodies(Real frac0, Real frac1);
+    void solveStatics(const std::vector<StaticCapsule>& cur, const std::vector<StaticCapsule>& before, Real h);
+    void solveRings(Real frac, Real h);
+    void solveGuideSprings(Real h2inv);
+    void solveBodies(Real frac0, Real frac1, Real h);
     std::vector<StaticCapsule> staticsPrev_;   // where the statics were at the end of the last step
     void solveAnchors(Real h2inv);
     bool skipPair(int a, int b) const;

@@ -61,9 +61,12 @@ int main(int argc, char** argv) {
     int every = 30;
     Real rad = 1.1, segMm = 1.0, topDist = 0.07, massScale = 100, damp = 20;
     int fa = -1, fb = -2, fstep = 1, chains = 0;
+    std::string savePath, loadPath, saveAfter, diffSpec;
+    bool keepGoing = false;
     for (int i = 1; i + 1 < argc; i += 2) {
         const std::string k = argv[i];
         if (k == "--out") out = argv[i + 1];
+        else if (k == "--keep-going") keepGoing = std::atoi(argv[i + 1]) > 0;   // diagnostics: run on past a failed stitch (default: stop)
         else if (k == "--every") every = std::atoi(argv[i + 1]);
         else if (k == "--rad") rad = std::atof(argv[i + 1]);
         else if (k == "--seg") segMm = std::atof(argv[i + 1]);
@@ -72,6 +75,10 @@ int main(int argc, char** argv) {
         else if (k == "--chains") chains = std::atoi(argv[i + 1]);
         else if (k == "--mass") massScale = std::atof(argv[i + 1]);
         else if (k == "--damp") damp = std::atof(argv[i + 1]);
+        else if (k == "--save") savePath = argv[i + 1];
+        else if (k == "--load") loadPath = argv[i + 1];
+        else if (k == "--save-after") saveAfter = argv[i + 1];
+        else if (k == "--statediff") diffSpec = argv[i + 1];
     }
     YarnSim sim;
     // The hook's shape: SIM_SDF=1 is the smooth barbed hook; the capsule hook is kept for comparing with the old tests.
@@ -84,6 +91,18 @@ int main(int argc, char** argv) {
     if (std::getenv("SIM_NECKX")) sim.shape.neckX = std::atof(std::getenv("SIM_NECKX"));
     if (std::getenv("SIM_NECKR")) sim.shape.neckR = std::atof(std::getenv("SIM_NECKR"));
     if (std::getenv("SIM_FLATBACK")) sim.shape.flatBack = std::atoi(std::getenv("SIM_FLATBACK"));
+    if (!diffSpec.empty()) {
+        const size_t comma = diffSpec.find(',');
+        if (comma == std::string::npos) {
+            std::printf("--statediff needs two files: --statediff a,b\n");
+            return 2;
+        }
+        YarnSim a, b;
+        if (!a.loadState(diffSpec.substr(0, comma), false) || !b.loadState(diffSpec.substr(comma + 1), false)) return 2;
+        const std::string d = a.stateDiff(b);
+        std::printf("statediff: %s\n", d.c_str());
+        return d == "identical" ? 0 : 1;
+    }
     if (std::getenv("SIM_HOOKSHOT")) {   // the hook alone, close up: from the throat side, from the side, from above, at a slant
         const HookPose hp = hookPose(Vec3{}, Vec3{-1, 0, 0}, Vec3{0, 1, 0});
         const YarnMesh hm = hookMesh(hp, sim.shape, 0.1e-3);
@@ -191,10 +210,16 @@ int main(int argc, char** argv) {
     // (radiusScale is applied after build: YarnSim::build resets it)
     const bool rig = std::getenv("SIM_RIG") != nullptr;
     sim.rig = rig;
-    if (rig) buildLoopRig(sim, Vec3{-0.02, 0, 0.02});
-    else sim.build(slipKnotLayout(sim.params.radius));
-    if (std::getenv("SIM_RSCALE")) sim.rs.params.radiusScale = std::atof(std::getenv("SIM_RSCALE"));
-    std::printf("%d particles\n", sim.rs.particleCount());
+    if (!loadPath.empty()) {
+        if (!sim.loadState(loadPath)) return 2;
+        std::printf("loaded %s: %d particles, %d chains, frame %d\n", loadPath.c_str(), sim.rs.particleCount(), sim.chains, sim.frame);
+        if (std::getenv("SIM_LOADDBG")) std::fprintf(stderr, "main: loaded\n");
+    } else {
+        if (rig) buildLoopRig(sim, Vec3{-0.02, 0, 0.02});
+        else sim.build(slipKnotLayout(sim.params.radius));
+        if (std::getenv("SIM_RSCALE")) sim.rs.params.radiusScale = std::atof(std::getenv("SIM_RSCALE"));
+        std::printf("%d particles\n", sim.rs.particleCount());
+    }
     int shot = 0;
     Real worstGap = 1e9, worstStrain = 0, worstPen = 0;
     const auto t0 = std::chrono::steady_clock::now();
@@ -377,9 +402,23 @@ int main(int argc, char** argv) {
             snap("f");
         }
     };
-    snap("start");
+    if (every > 0) snap("start");
     if (std::getenv("SIM_DEBUG")) for (int i = 136; i <= 150; ++i) std::printf("  p%d (%.1f %.1f %.1f) w %.3g\n", i, sim.rs.x[i].x * 1e3, sim.rs.x[i].y * 1e3, sim.rs.x[i].z * 1e3, sim.rs.w[i]);
-    if (!rig) makeSlipKnot(sim);
+    if (saveAfter == "knot") {
+        if (!loadPath.empty() || rig) {
+            // already past the knot (a loaded state or the rig's loop)
+        } else {
+            makeSlipKnot(sim);
+        }
+        if (savePath.empty()) {
+            std::printf("--save-after knot needs --save <file>\n");
+            return 2;
+        }
+        if (!sim.saveState(savePath)) return 2;
+        std::printf("saved %s at frame %d, %d particles\n", savePath.c_str(), sim.frame, sim.rs.particleCount());
+        return 0;
+    }
+    if (!rig && loadPath.empty()) makeSlipKnot(sim);
     auto loopSize = [&] {
         const Vec3 ax = sim.hook.axis();
         Real mx = 0;
@@ -399,7 +438,11 @@ int main(int argc, char** argv) {
             if (rr < 0.01 && l.z > -0.005 && l.z < 0.06) std::printf("  p%d z %.1f r %.1f ang %.0f\n", i, l.z * 1e3, rr * 1e3, std::atan2(l.y, l.x) * 180 / kPi);
         }
     }
-    std::printf("loop reaches %.1f mm from the axis; the yarn closes %d degrees round the shaft when pulled\n", loopSize() * 1e3, carriedRound(sim));
+    if (std::getenv("SIM_LOADDBG")) std::fprintf(stderr, "main: loopSize\n");
+    const Real ls = loopSize();
+    if (std::getenv("SIM_LOADDBG")) std::fprintf(stderr, "main: carriedRound\n");
+    const int cr = carriedRound(sim);
+    std::printf("loop reaches %.1f mm from the axis; the yarn closes %d degrees round the shaft when pulled\n", ls * 1e3, cr);
     if (std::getenv("SIM_SNUG")) {
         const bool tail = std::string(std::getenv("SIM_SNUG")) == "tail";
         const Vec3 t0 = sim.tail.target;
@@ -530,11 +573,23 @@ int main(int argc, char** argv) {
         return 0;
     }
     std::vector<std::pair<int, int>> links;
-    for (int c = 0; c < chains; ++c) {
+    int saveAfterChain = -1;
+    if (!saveAfter.empty() && saveAfter != "knot") saveAfterChain = std::atoi(saveAfter.c_str());
+    if (saveAfterChain > chains) chains = saveAfterChain;
+    for (int c = sim.chains; c < chains; ++c) {
         const ChainStart cs = prepareChain(sim);
         if (cs.ok) finishChain(sim, cs);
         const ChainResult r = judgeChain(sim, cs);
-        judgeStitch(sim, cs);
+        const StitchVerdict v = judgeStitch(sim, cs);
+        if (!cs.ok || !v.pass) {
+            if (!keepGoing || !cs.ok) {
+                snap("end");
+                if (!savePath.empty() && !sim.saveState(savePath)) return 2;
+                std::printf("chain_check: stitch %d failed; stopping\n", sim.chains + (cs.ok ? 0 : 1));
+                return 1;
+            }
+            std::printf("chain_check: stitch %d failed; continuing (--keep-going)\n", sim.chains + 1);
+        }
         if (r.made) {
             sim.lastLinkHi = r.linkHi;
             sim.lastLinkLo = r.linkLo;
@@ -567,9 +622,23 @@ int main(int argc, char** argv) {
             }
         }
         if (std::getenv("SIM_CHAINSHOT")) { char tag[16]; std::snprintf(tag, sizeof tag, "ch%d", c + 1); snap(tag); }
+        if (saveAfterChain >= 0 && sim.chains >= saveAfterChain) {
+            if (savePath.empty()) {
+                std::printf("--save-after %s needs --save <file>\n", saveAfter.c_str());
+                return 2;
+            }
+            if (!sim.saveState(savePath)) return 2;
+            std::printf("saved %s at frame %d, %d chains\n", savePath.c_str(), sim.frame, sim.chains);
+            return 0;
+        }
         continue;
         std::printf("chain %d: loops on hook %d (up) %d (front)\n", c + 1, sim.loopsOnHook(Vec3{0, 1, 0}), sim.loopsOnHook(Vec3{0, 0, 1}));
     }
+    if (!savePath.empty() && saveAfterChain < 0) {
+        if (!sim.saveState(savePath)) return 2;
+        std::printf("saved %s at frame %d, %d chains\n", savePath.c_str(), sim.frame, sim.chains);
+    }
+    if (std::getenv("SIM_LOADDBG")) std::fprintf(stderr, "main: snap end\n");
     snap("end");
     if (std::getenv("SIM_HOOKOFF")) {
         // Take the hook out of the work and let the yarn settle: a linked chain stays a chain; loops that were only hanging on

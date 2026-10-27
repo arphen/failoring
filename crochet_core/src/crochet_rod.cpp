@@ -806,7 +806,7 @@ StaticCapsule lerpCapsule(const StaticCapsule& a, const StaticCapsule& b, Real t
 
 // The fixed (or kinematically moved) capsules: the yarn is pushed out of them, and with staticFriction it does not slide along them while it is
 // pressed against them by less than mu times the push (Coulomb). `before` is where they were at the start of this substep: what they carry along.
-void RodSystem::solveStatics(const std::vector<StaticCapsule>& cur, const std::vector<StaticCapsule>& before) {
+void RodSystem::solveStatics(const std::vector<StaticCapsule>& cur, const std::vector<StaticCapsule>& before, Real h) {
     const Real mu = params.staticFriction;
     for (size_t ci = 0; ci < cur.size(); ++ci) {
         const StaticCapsule& cap = cur[ci];
@@ -822,6 +822,7 @@ void RodSystem::solveStatics(const std::vector<StaticCapsule>& cur, const std::v
             const Real w1 = (1 - r.s) * (1 - r.s) * w[ia] + r.s * r.s * w[ib];
             if (w1 <= 0) continue;
             const Real lam = pen / w1;
+            lastStaticsImpulse += lam / std::max(1e-9, h);   // positional correction -> N s
             x[ia] += n * ((1 - r.s) * w[ia] * lam);
             x[ib] += n * (r.s * w[ib] * lam);
             if (mu <= 0) continue;
@@ -847,7 +848,7 @@ Quat nlerpQ(const Quat& a, Quat b, Real t) {
 }  // namespace
 
 // Every SDF body: points along every segment near it are pushed out to the yarn's (squashed) radius; friction against the body's motion this substep.
-void RodSystem::solveBodies(Real frac0, Real frac1) {
+void RodSystem::solveBodies(Real frac0, Real frac1, Real h) {
     const int S = segmentCount();
     for (SdfBody& b : bodies) {
         if (!b.started) { b.qPrev = b.q; b.tPrev = b.t; b.started = true; }
@@ -871,6 +872,7 @@ void RodSystem::solveBodies(Real frac0, Real frac1) {
                 const Real w1 = (1 - u) * wa + u * wb;
                 if (w1 <= 0) continue;
                 const Real pen = -d;
+                b.impulse += (pen / w1) / std::max(1e-9, h);   // positional correction -> N s
                 x[ia] += n * (wa * pen / w1);
                 x[ib] += n * (wb * pen / w1);
                 if (b.friction <= 0) continue;
@@ -890,7 +892,7 @@ void RodSystem::solveBodies(Real frac0, Real frac1) {
 }
 
 // Every ring: the closest point of the yarn near its segment is moved onto the ring's point (the yarn runs through it).
-void RodSystem::solveRings(Real frac) {
+void RodSystem::solveRings(Real frac, Real h) {
     const int S = segmentCount();
     for (SlideRing& r : rings) {
         if (!r.started_) { r.from_ = r.at; r.started_ = true; }
@@ -915,6 +917,20 @@ void RodSystem::solveRings(Real frac) {
         if (den <= 0) continue;
         x[ia] += d * (wa / den);
         x[ib] += d * (wb / den);
+        r.impulse += length(d) / den / std::max(1e-9, h);   // positional correction -> N s
+    }
+}
+
+// The guide springs: one XPBD constraint per particle, x - target = 0, stiffness k. Solved before contact, like a ring, so it cannot pull yarn
+// through yarn. At large k the correction is a pin; the SIM_ASSIST scaling of k makes the same code a weak or a strong guide.
+void RodSystem::solveGuideSprings(Real h2inv) {
+    for (GuideSpring& g : guideSprings) {
+        if (g.particle < 0 || g.particle >= particleCount() || w[g.particle] <= 0 || g.k <= 0) continue;
+        const Real alpha = h2inv / g.k;
+        const Vec3 C = x[g.particle] - g.target;
+        const Vec3 dl = (-C - g.lambda * alpha) / (w[g.particle] + alpha);
+        g.lambda += dl;
+        x[g.particle] += dl * w[g.particle];
     }
 }
 
@@ -964,6 +980,10 @@ void RodSystem::step(Real dt) {
     const Real damp = std::exp(-params.damping * h);
     std::vector<Vec3> pinStart(x);
     lastContacts = 0;
+    lastStaticsImpulse = 0;
+    for (SlideRing& r : rings) r.impulse = 0;
+    for (SdfBody& b : bodies) b.impulse = 0;
+    for (GuideSpring& g : guideSprings) g.lambda = Vec3{};
 
     // the statics move from where they were at the end of the last step to where they are now, a little every substep
     if (staticsPrev_.size() != statics.size()) staticsPrev_ = statics;
@@ -1012,11 +1032,12 @@ void RodSystem::step(Real dt) {
                 for (int k = 0; k < ch.joints; ++k) solveBendTwist(ch.firstJoint + (rev ? ch.joints - 1 - k : k), h2inv);
             }
             if (params.shapeStiffness > 0) solveAnchors(h2inv);
-            if (!rings.empty()) solveRings(frac);   // before contact: a ring never drags yarn through yarn
-            if (!bodies.empty()) solveBodies((Real)sstep / sub, frac);
+            if (!rings.empty()) solveRings(frac, h);   // before contact: a ring never drags yarn through yarn
+            if (!guideSprings.empty()) solveGuideSprings(h2inv);
+            if (!bodies.empty()) solveBodies((Real)sstep / sub, frac, h);
             if (params.contact) solveContacts(h);
             if (params.floorOn) solveFloor(h);
-            if (!statics.empty()) solveStatics(staticsNow, staticsBefore);
+            if (!statics.empty()) solveStatics(staticsNow, staticsBefore, h);
         }
         // 3. velocities
         for (int i = 0; i < n; ++i) v[i] = w[i] > 0 ? (x[i] - xPrev[i]) / h : Vec3{};

@@ -181,6 +181,37 @@ The fixtures run in under a second and join CTest. From now on they are part of 
 runs with shared knots and stops at first failures; the guide table is in this file; `SIM_ASSIST=1` reproduces today's three-chain test
 result, and `SIM_ASSIST=0` runs (expect failures). Commit.
 
+#### 4.6.1 Guide inventory (written 2026-10-27; line numbers in `crochet_core/src/yarn_sim.cpp`)
+
+Every place that pins, rings, pushes or grips yarn particles, or adds a force to them. "Hand" and "tail" are section 3.1's allowed kinds.
+"Guide" rows are scaled by `SIM_ASSIST` or their own `SIM_ASSIST_<NAME>`; an unscaled guide is a bug.
+
+| # | Where | What it acts on | Class | Scale |
+| --- | --- | --- | --- | --- |
+| G1 | `setThroatRing` (400), calls at 1567, 1773, 1795, 2029, 2034, 2133 | a slide ring at the throat's middle, stiffness `throatStiffness` | guide (ring) | `SIM_ASSIST_RING` (stiffness x scale; 0 creates no ring) |
+| G2 | `gripThroat` (418), call at 1714 | a spring on the particle the barb holds, `k = 2000 N/m` x scale, kind 1 (grip) | guide (grip) | `SIM_ASSIST_GRIP` (`k` x scale) |
+| G3 | `step`, the `catchK` block (499-512) | pulls yarn within `catchReach` toward the throat | guide (catch) | `SIM_ASSIST_CATCH`. No caller sets `catchK`: dead code, delete in Phase 4 |
+| G4 | `feedHand`, `reelForce` (355-361) | draws slack yarn near the hand in along itself | guide (reel) | `SIM_ASSIST_REEL` (force x scale). Off: `reelForce` is 0 unless `SIM_REEL` sets it |
+| G5 | `SEAT_HOLD` springs (1406-1412) | springs on the compact loop while the hook slides through | guide (pins) | `SIM_ASSIST_PINS` (`k` x scale). Env, off |
+| G6 | `PREP_HOLD` springs (1443-1460), released at 1813 when `PREP_HOLD=2` | springs on the old loop's front through the yarn over | guide (pins) | `SIM_ASSIST_PINS`. Env, off |
+| G7 | `PU_SPREAD` springs (1839-1866) | springs spreading the old loop during the pull | guide (pins) | `SIM_ASSIST_PINS`. Env, off |
+| G8 | `PU_SLIP` springs (1981-1995) | springs on the old loop's front while the left hand slips it off the tip | guide (pins) | `SIM_ASSIST_PINS`. Env, off |
+| G9 | `SLIP_GAUGE` capsule (1124, removed 1144) | a body the loop is held against while the knot comes snug | guide (pushes yarn) | `SIM_ASSIST_PINS`: not created at 0. Env, off. A capsule has no strength scale, so it is on or off |
+| H1 | `grab` in `makeSlipKnot` (1085), released at 1109 | the left hand pinches the crossing | hand | n/a |
+| H2 | the work grip `c.hold` (1360-1366), moved in the seat (1370-1374, 1397-1398) and during the pull (1539-1540) | the left hand holds the work below the loop; the grip lies from 4 mm below the loop's first particle | hand | n/a. The 5 mm rule (section 3.1) is not checked yet: the nearest grip particle is 4 mm below the loop |
+| H3 | `putFinger` (370), call at 1381; the finger eyelet | the left index finger the working yarn runs over | hand | n/a (the eyelet is the hand, per the plan) |
+| H4 | `controlEnd`, `feedHand` (302-361, the tension at 348) | the tail (pinned), the working yarn's end at the hand, the hand's pull | tail / hand | n/a |
+| H5 | `SEAT_HAND` (1388-1398) | the hand slides the work and the hand together | hand | n/a |
+| H6 | `PU_FIX` (1969-1972) and the pull (1927) | the hand follows the hook along the axis while the old loop is still on the hook | hand | n/a |
+| H7 | `release`, `setThroatRing(false)` (2034-2035) | the hand lets go; the ring is removed | hand | n/a |
+| S1 | `relaxStraight` (902) | the curl the yarn was laid with, released from a joint on | setup, not a force on a chosen particle | n/a |
+| S2 | the hook body (`rs.statics`, `rs.bodies`, 452-480) | contact with friction | hook body (allowed) | n/a |
+
+**Hard pins that remain:** the tail (292), the ball end (297), the hand's end (327, 335) and the work grip (H2). All are section 3.1's allowed kinds.
+**Hard pins converted to springs:** the loop pins G5-G8 and the throat grip G2 are springs with `k = 2000 N/m` scaled by `SIM_ASSIST`
+(`addGuideSpring`). The value 2000 N/m is not calibrated against the old pinned behaviour yet (4.6.2). The three-chain test (`test_crochet_yarn_sim`)
+is red in the current tree (section 7), so the calibration check cannot run yet.
+
 ## 5. The phases
 
 The guide ladder: each phase's gate has a highest scale any guide may have.
@@ -385,3 +416,50 @@ Known decision points the user will want to hear about, not decide around:
   defaults: every point reads 0/3 in a row. Renders in `build/chain_runs/p0/base/`. Commit f675371.
 - 2026-10-27 plan review: Phase 0 left out section 4.4 (checkpoints, stop at the first failure). The judge's `contact` reads only the end
   state, `through ≥ 1` counts any crossing, and the 33 mm loop of test A's chain 3 passed `onShaft`. Phase 0b added.
+- 2026-10-27 Phase 0b (judge fixes, fixtures, checkpoints, shared knots, guide inventory): Gate 0b not passed; stuck, see "Phase 0b: stuck".
+  Passed: the judge fixtures (true PASS; each of seven negatives fails its named column), the bit-exact save/load check through a failing
+  stitch (`statediff: identical`, frame 684), the shared-knot harness (smoke run), the guide inventory (4.6.1). Not passed: the simulated judge
+  checks (chain 1 fails in this tree), and the spring calibration (4.6.2). Numbers and renders in `build/chain_runs/LOG.md` (Phase 0b).
+  Commit: see the git log for "Phase 0b".
+
+## Phase 0b: stuck
+
+Failing check: Gate 0b's simulated judge checks cannot run. In this tree the slip knot gives no loop on the hook, so chain 1 fails in
+`prepareChain`. Judge test A (`CH_PREV=2`) reads `stitch 1 FAIL onHook=0` (not the expected chain 2 `through`-only failure). Judge test B
+(old neck loop) reads `stitch 1 FAIL onHook=0` (not the expected `onShaft=4.3/17.0`). The three-chain test reads 4 failures (`testCarry` near
+1.5 mm; `testSlipKnot` 0 loops; chain 1 not prepared); committed HEAD reads 10. `SIM_ASSIST=1`, `SIM_ASSIST=0` and the default give the
+same 4 failures, identical text: chain 1 fails before the yarn over, so no guide acts and the scale is untested here.
+
+Numbers at the baseline (`tools/chain_check.sh p0b 3 slip`): every grid point reads `s1 F`, 0/3 in a row, stopping at stitch 1, as the
+harness is meant to on a failing setting. Guide report: all zero (`assist grip 1.00:0.00 ring 1.00:0.00 ...`), because no guide acted before
+the failure. Lowest alpha reached: 1 (the default); no lower scale was run, since the failure comes before any guide acts.
+
+Renders: `build/chain_runs/p0b/base/sim_000_end_{front,obl,top}.png`, `build/chain_runs/p0b/judge/A/sim_000_end_*.png`,
+`build/chain_runs/p0b/judge/B/sim_000_end_*.png`. Judge A's oblique render (end of stitch 1) shows one yarn loop round the shaft, with the
+working yarn running up from it, while `prepareChain` counts 0 loops by the half plane and `hookLoop` finds no stretch. So the loop is visible
+on the shaft in the picture and not found by the chain's own loop finder. Which of the two is right is not settled.
+
+Hypotheses tried:
+- The judge is wrong about the stitches. Disproved for the judge's own checks: the fixtures pass the true stitch and fail each negative on its
+  named column. The judge bugs found on the way are fixed (LOG.md, J1-J5); none of them changes the simulator's own loop finder.
+- `hookLoop`'s 5-radii touch test (the judge's false loop, J1) is what breaks the chain. Disproved: the simulator's `hookLoop` is unchanged at
+  5 radii; a global 2.5-radii change left the three-chain test at the same 4 failures (chain 1 not prepared), so it is not the cause.
+- The guides (springs at `k = 2000 N/m`) break the chain. Disproved for chain 1: `SIM_ASSIST=0` gives the same failures, identical text.
+
+Physical reason, as far as I can tell: the uncommitted hook geometry (groove on by default, `shaftZ`, `headBack`, `neckX -0.2`, `barbX 0.55`)
+differs from the committed hook's SDF (`hookSdfRaw`), and the slip knot forms no loop the chain can use with it. `LOG.md` records the same
+result for this shape under Phase 1 ("the first yarn over is lost; the slip knot ends with no loop on the shaft"). The env settings in tests A
+and B do not restore the committed hook.
+
+Decision for the user (not decided here):
+1. Keep the uncommitted hook geometry as the default and take it through Phase 1 (section 1.1 check). Then Gate 0b's simulated judge checks
+   must be rerun after Phase 1 makes the knot again, not now.
+2. Or restore the committed hook's SDF as the default (keep the new code behind an env flag), run the simulated judge checks on it, and then
+   return to the groove work.
+
+The fixtures, the judge fixes, the save/load and the shared-knot harness do not depend on that choice. The spring calibration (4.6.2) does
+depend on it: the three-chain test has to pass before `k = 2000 N/m` can be checked against pinned behaviour.
+
+Committed with this section: the Phase 0b code (judge, fixtures, checkpoint, harness, the gauge gate), the uncommitted hook changes as they
+stood (not separated from the Phase 0b commit), and this section. Not committed: `godot/bin/libfailoring.dylib`, `Makefile`.
+

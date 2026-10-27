@@ -31,20 +31,22 @@ struct HookShape {
     bool sdf = true;        // the hook as one smooth body (a round head with a barb, a neck, a taper and the shaft) instead of capsules
     // Where the barb sits: x out from the axis and half its length across the throat, in shaft radii. A barb outside the head's 1R
     // envelope blocks old loops; one set inside the mouth still blocks yarn in the throat (x ~0.3-0.6R) without standing in their way.
-    Real barbX = 0.85;
-    Real barbHalfWidth = 1.0;
-    Real barbR = 0.20;
-    // The head's dome and the spine behind the throat, in shaft radii. A thin neck lets a snug old loop settle into a waist that the
-    // wider head then cannot climb; a real hook's head is barely wider than its shaft, so the loop rides over it.
-    Real headR = 1.00;
-    Real neckX = -0.50, neckR = 0.50;
+    Real barbX = 0.55;
+    Real barbHalfWidth = 0.75;
+    Real barbR = 0.18;
+    // The head's dome, the back wall of the throat, and the spine behind the mouth, in shaft radii. A real hook's head is barely wider than
+    // its shaft, so a loop opened on the shaft rides over it; the throat is a groove in the shaft with a thick spine behind it, not a thin neck.
+    Real headR = 1.0;
+    Real headBack = 2.05;
+    Real shaftZ = 3.5;
+    Real neckX = -0.20, neckR = 0.80;
     // The flat wall across the back of the head stops a yarn drawn toward the tip (the first yarn over leans on it), and with a head as
     // wide as the shaft it also stops an old loop from riding off the tip. The groove and the grip can hold the new yarn without it.
     int flatBack = 1;   // 0: round back, 1: full wall, 2: wall only on the mouth side (the barb's back face)
-    // An open throat groove cut across the mouth side of the head (off by default: the old head is a closed bulb whose throat point a
-    // full-radius yarn cannot reach). Where its centre sits and its radius, in shaft radii; it runs across the hook in y.
-    bool groove = false;
-    Real grooveX = 0.70, grooveZ = 1.55, grooveR = 0.55;
+    // The open throat groove cut across the mouth side of the shaft, one diameter long and just behind the head's back wall. Where its
+    // centre sits and its radius, in shaft radii; it runs across the hook in y.
+    bool groove = true;
+    Real grooveX = 0.55, grooveZ = 2.80, grooveR = 0.60;
     // A low rim round the back and sides of the head's rear edge, open at the mouth: the old loop cannot slip off sideways, so it has
     // to ride over the tip (where the new yarn, caught in the throat, goes through it).
     bool rim = false;
@@ -101,6 +103,19 @@ public:
     // freely. While `catchK` > 0 the yarn within `catchReach` of the middle of the throat is pulled toward it, square to its own direction (N/m).
     Real catchK = 0.0, catchReach = 3.5e-3;
     int catchFrom = 0;   // only yarn from this particle on (the yarn just laid over the hook, not the loop it is drawn through)
+    // SIM_ASSIST scales every guide (section 4.6 of the plan): the throat's spring grip, the throat ring, catchK, the loop-holding springs
+    // and reelForce. At 0 no guide is created and the hook's body and the hand are the only things acting on the yarn.
+    Real assist = 1.0;
+    // One scale per guide (section 4.6): each defaults to SIM_ASSIST, and SIM_ASSIST_<NAME> overrides it. At 0 the guide is not created.
+    Real assistGrip = 1.0, assistRing = 1.0, assistCatch = 1.0, assistPins = 1.0, assistReel = 1.0;
+    void readAssist();   // SIM_ASSIST and SIM_ASSIST_<NAME>, called at the start of each stitch
+    // The stitch's running contact: reset by prepareChain, updated every second frame in step(). A stitch that passes through itself or the
+    // hook mid-pull and recovers still fails. (Every second frame keeps the O(S^2) gap check off half the frames; a crossing lasts longer than
+    // one frame at the stitch's speeds.)
+    Real worstGap = 1e9, worstPen = 0;
+    // The impulse each guide delivered during the stitch (N s), for the verdict line; the judge ignores them. `impulseHook` is the hook's own
+    // contact impulse, on the same line so the two can be compared.
+    Real impulseGrip = 0, impulseRing = 0, impulseCatch = 0, impulsePins = 0, impulseReel = 0, impulseHook = 0;
     // The left index finger: when `fingerOn`, the working yarn runs from the work over a finger (a capsule across the yarn at `hand`, radius
     // `fingerR`) and on to the spool, `spoolOff` from the finger: the yarn near the work is always taut over the finger, slack stays away from the
     // hook. Moving `hand` moves the finger and the spool together.
@@ -119,6 +134,12 @@ public:
     void gripThroat(int particle);
     void releaseThroatGrip();
     int throatGrip() const { return catchPin_; }
+    // A guide spring on one particle: the plan's replacement for a hard pin. It is solved inside the rod's XPBD loop with stiffness k, so it
+    // can be scaled by SIM_ASSIST; at a large k it acts as a pin. The caller updates `target` to move it.
+    int addGuideSpring(int particle, const Vec3& target, Real k, int kind = 0);
+    void moveGuideSpring(int s, const Vec3& target) { if (s >= 0 && s < (int)rs.guideSprings.size()) rs.guideSprings[s].target = target; }
+    void releaseGuideSpring(int s) { if (s >= 0 && s < (int)rs.guideSprings.size()) rs.guideSprings[s] = fl::GuideSpring{}; }
+    void releaseGuideSprings();
     bool fingerEyelet = true;
     Real throatX = 0.30;   // where the throat holds a caught yarn, out from the axis toward the throat's mouth (shaft radii)
     Real throatZ = 2.50;   // and how far from the tip, along the axis (shaft radii)
@@ -166,6 +187,13 @@ public:
     struct HookRun { int lo, hi; Real turns; };
     std::vector<HookRun> hookRuns(Real reach = 0.009, Real minTurns = 0.55) const;
     std::vector<Vec3> yarn() const { return rs.x; }
+    // Checkpoints: the whole simulator state, for exploring from "the slip knot is made" or "stitch k passed" without repeating it. The
+    // header carries the git hash, every HookShape and YarnSimParams field, the rod parameters, SIM_ASSIST and the environment knobs that were
+    // set. loadState refuses a file whose physics settings differ from this build's.
+    bool saveState(const std::string& path) const;
+    bool loadState(const std::string& path, bool checkHeader = true);
+    // The first state difference between two loaded checkpoints, for the bit-exact check; "identical" when every saved array matches.
+    std::string stateDiff(const YarnSim& other) const;
 
 private:
     void controlEnd(End& e);
@@ -177,7 +205,8 @@ private:
     std::vector<int> caught_;   // the particles the throat's grip pulls on
     std::vector<int> reeled_;   // the particles the hand draws in
     int throatRing_ = -1, fingerRing_ = -1;   // their indices in rs.rings
-    int catchPin_ = -1;                        // the particle the barb holds at the throat (a hard grip), -1 when none
+    int catchPin_ = -1;                        // the particle the barb holds at the throat, -1 when none
+    int catchSpring_ = -1;                     // its guide spring in rs.guideSprings (the barb's hold is a stiff spring, not a pin)
     Vec3 catchOffset_{};                       // where that particle sits in the hook's frame (it is carried rigidly, not pulled into the throat)
 public:
     Real reelSlack = 0.6, reelForce = 0.0;   // the hand takes in yarn lying within reelSlack of its length from it, drawing it with reelForce x tension (off)
@@ -200,7 +229,8 @@ struct ChainStart {
     int oldLo = -1, oldHi = -1;
     int prevHi = -1;            // the last valid chain's final linking stretch ended here (particle index); -1 for the first chain
     int loopsAtStart = 0, loopsBefore = 0, loopsAfterYo = 0;   // loopsOnHook(front) at the start and after the yarn over
-    std::vector<int> prepHeld;  // the old loop's front, pinned through the yarn over (PREP_HOLD=2)
+    std::vector<int> prepHeld;  // the old loop's front, held through the yarn over (PREP_HOLD=2)
+    std::vector<int> prepHeldSprings;   // their guide springs
     int catchParticle = -1;     // the working-yarn particle the throat caught
     bool catchGripped = false;  // the barb holds it (a hard grip) through the pull
     Real length = 0;            // the yarn between the tail and the hand (m) when the stitch began
@@ -234,12 +264,17 @@ struct StitchVerdict {
     bool newYarn = false;     // the final loop reaches the yarn drawn after the old loop
     bool sequential = false;  // the final loop ends at or after the last valid stitch's end
     Real oldOff = 0;          // the old loop's own winding round the hook outside the final loop (turns)
-    int through = 0;          // segments of the yarn drawn after the old loop that cross the old loop's spanning disc
+    int through = 0;          // signed crossings of the new loop's outer leg through the old loop's disc (the sum; printed with the sign)
+    int throughIn = 0;        // the inner leg's crossings (diagnostic: it starts on the old loop's edge)
+    int throughCount = 0;     // the outer leg's crossings whichever way they go; the pass test reads this (a leg may cross either way)
+    bool throughValid = true; // false when the old loop's ends are more than three yarn widths apart (its fan is not a disc)
     Real meanR = 0;           // the final loop's mean distance from the hook's axis (m)
     Real length = 0;          // the final loop's yarn length (m)
     Real gap = 0;             // the closest non-neighbour self-gap over the whole stitch (m)
     Real depth = 0;           // the deepest point of the yarn inside the hook (m)
     int linkLo = -1, linkHi = -1;   // the final loop
+    bool onShaftPass = false; // the final loop sits on the shaft: radius, length and the length cap
+    bool contactPass = false; // the running contact stayed clear: self-gap and hook depth
     bool pass = false;
 };
 StitchVerdict judgeStitch(const YarnSim& sim, const ChainStart& c);
@@ -247,7 +282,18 @@ int carriedRound(const YarnSim& sim);   // 360 with a loop on the hook, else 0
 // The loop on the hook: the shortest stretch of yarn, from particle `from` to `to` where the yarn touches itself, that the hook's axis passes
 // through (linking number 1 with the axis closed far away). False when there is none. Use this for the stitch, not loopsOnHook(front), which
 // also counts the chain's legs hanging beside the hook.
-bool hookLoop(const YarnSim& sim, int* from, int* to, int searchFrom = -1);
+// `touchRadii` is how close two strands of the loop must lie to count as touching, in yarn radii (the simulator uses 5, the judge 2.5).
+bool hookLoop(const YarnSim& sim, int* from, int* to, int searchFrom = -1, Real touchRadii = 5.0);
+
+// The judge fixtures (plan section 4.5.1): analytic yarn polylines in the hook's frame, no simulation. `name` is "true" or one of the seven
+// negatives ("beside", "beside-far", "old-on-shaft", "neck", "loose", "contact", "fresh"). The hook lies at the origin with its axis along +z
+// and its mouth toward +x. `note` says what the geometry is for the log.
+struct StitchFixture {
+    YarnSim sim;
+    ChainStart chain;
+    std::string note;
+};
+StitchFixture buildStitchFixture(const std::string& name);
 
 // A test rig for stitches: the hook lying tip to the left at `tip`, a loop snug on its shaft, its front leg running down to the work (the tail end,
 // held), its back leg up behind to the index finger and over it to the spool. Builds `sim` (finger on, hook posed).
