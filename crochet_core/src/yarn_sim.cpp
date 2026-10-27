@@ -2156,7 +2156,7 @@ static int loopCrossings(const std::vector<Vec3>& A, const std::vector<Vec3>& B,
     return sum;
 }
 
-bool hookLoop(const YarnSim& sim, int* from, int* to, int searchFrom, Real touchRadii) {
+bool hookLoop(const YarnSim& sim, int* from, int* to, int searchFrom, Real touchRadii, const std::function<bool(int, int)>& accept) {
     // the hook's axis, closed far away
     const Vec3 ax = sim.hook.axis();
     Vec3 u = Vec3{0, 0, 1} - ax * ax.z;
@@ -2174,6 +2174,7 @@ bool hookLoop(const YarnSim& sim, int* from, int* to, int searchFrom, Real touch
         for (int j = i + 12; j < n; ++j) {
             if (j - i >= bestSpan) break;
             if (length2(sim.rs.x[i] - sim.rs.x[j]) > touch2) continue;
+            if (accept && !accept(i, j)) continue;
             const std::vector<Vec3> P(sim.rs.x.begin() + i, sim.rs.x.begin() + j + 1);
             if (std::fabs(std::fabs(linkingNumber(P, H)) - 1.0) < 0.25) {
                 bestSpan = j - i;
@@ -2431,15 +2432,21 @@ static LegCrossings legCrossings(const std::vector<Vec3>& A, const std::vector<V
 // The judge's touch distance for the final loop (see hookLoop): 2.5 yarn radii first, where a true stitch's legs touch (2r apart). A loop whose
 // legs are looser has no touch that close, so the judge falls back to the simulator's 5 radii for it.
 const Real kJudgeTouchRadii = 2.5;
-bool judgeLoop(const YarnSim& sim, int* from, int* to) {
-    return hookLoop(sim, from, to, -1, kJudgeTouchRadii) || hookLoop(sim, from, to, -1, 5.0);
+// The old loop itself is not the final loop: a candidate that covers 80% or more of the old loop's yarn is refused.
+bool judgeLoop(const YarnSim& sim, const ChainStart& c, int* from, int* to) {
+    auto accept = [&](int i, int j) {
+        if (c.oldLo < 0 || c.oldHi < c.oldLo) return true;
+        const int a = std::max(i, c.oldLo), b = std::min(j, c.oldHi);
+        return (b - a + 1) < 0.8 * (c.oldHi - c.oldLo + 1);
+    };
+    return hookLoop(sim, from, to, -1, kJudgeTouchRadii, accept) || hookLoop(sim, from, to, -1, 5.0, accept);
 }
 
 StitchVerdict judgeStitch(const YarnSim& sim, const ChainStart& c) {
     StitchVerdict v;
     const Real R = sim.shape.R, r = sim.params.radius;
     int lo = -1, hi = -1;
-    v.onHook = judgeLoop(sim, &lo, &hi) && hi > lo;
+    v.onHook = judgeLoop(sim, c, &lo, &hi) && hi > lo;
     v.linkLo = lo;
     v.linkHi = hi;
     const int span = v.onHook ? hi - lo + 1 : 0;
@@ -2629,7 +2636,7 @@ StitchFixture buildStitchFixture(const std::string& name) {
     if (name == "fresh") {
         // the new loop built from the old loop's own yarn: the judge's old loop covers 60% of the stitch's stretch
         int lo = -1, hi = -1;
-        judgeLoop(sim, &lo, &hi);
+        judgeLoop(sim, f.chain, &lo, &hi);
         f.chain.oldLo = lo + 1;
         f.chain.oldHi = lo + (hi - lo) * 6 / 10;
     }

@@ -289,7 +289,9 @@ int carriedRound(const YarnSim& sim);   // 360 with a loop on the hook, else 0
 // through (linking number 1 with the axis closed far away). False when there is none. Use this for the stitch, not loopsOnHook(front), which
 // also counts the chain's legs hanging beside the hook.
 // `touchRadii` is how close two strands of the loop must lie to count as touching, in yarn radii (the simulator uses 5, the judge 2.5).
-bool hookLoop(const YarnSim& sim, int* from, int* to, int searchFrom = -1, Real touchRadii = 5.0);
+// `accept(i, j)` (when set) can refuse a candidate stretch; the judge uses it to skip the old loop itself.
+bool hookLoop(const YarnSim& sim, int* from, int* to, int searchFrom = -1, Real touchRadii = 5.0,
+              const std::function<bool(int, int)>& accept = nullptr);
 
 // The judge fixtures (plan section 4.5.1): analytic yarn polylines in the hook's frame, no simulation. `name` is "true" or one of the seven
 // negatives ("beside", "beside-far", "old-on-shaft", "neck", "loose", "contact", "fresh"). The hook lies at the origin with its axis along +z
