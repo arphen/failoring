@@ -463,3 +463,28 @@ depend on it: the three-chain test has to pass before `k = 2000 N/m` can be chec
 Committed with this section: the Phase 0b code (judge, fixtures, checkpoint, harness, the gauge gate), the uncommitted hook changes as they
 stood (not separated from the Phase 0b commit), and this section. Not committed: `godot/bin/libfailoring.dylib`, `Makefile`.
 
+
+### Decision on Phase 0b: stuck (user, 2026-10-27): option 2
+
+Gate 0b checks the judge and the guides against a simulator whose behaviour is known. Changing the hook belongs to Phase 1. Do it in this
+order:
+
+1. **Two hook presets, the old one the default.** Add `HookShape::legacy()` (the values at commit f19157a: `barbX 0.85`, `barbHalfWidth
+   1.0`, `barbR 0.20`, `headR 1.00`, `neckX -0.50`, `neckR 0.50`, `groove false`, `grooveX 0.70`, `grooveZ 1.55`, `grooveR 0.55`, and the
+   SDF the old `hookSdfRaw` drew, neck to 4.2R and taper to 5.4R) and `HookShape::inlineHook()` (the uncommitted shape from c522e31).
+   The default constructor gives `legacy()`. The CLI picks one with `--hook legacy|inline`. `chain_check.sh` passes it on and writes it into
+   the run's directory name and the checkpoint header. With `legacy()`, `hookSdfRaw` must give the same distances as at f19157a. Check 1000
+   random points against the f19157a code; the difference must be 0.
+2. **Re-run the Phase 0b simulated checks on `legacy()`.**
+   - `test_crochet_yarn_sim` must give the 10 failures HEAD gave before c522e31, with the same text.
+   - Judge test A must fail chain 2 on `through` only. Judge test B must fail on `onShaft` (4.3/17.0).
+3. **Spring calibration (4.6.2), against known runs, not a green test.** The pinned code is red, so "matches" means:
+   - The guide-spring code at scale 1 gives the same PASS/FAIL per column, for every stitch, as the pinned code. Each number is within 10%.
+   - Check it on two runs: the three-chain slip test, and the rig run `SIM_RIG=1 PU_HOLDREL=0 PU_FIX=1 PU_RELEASE_LATE=0 HOLD_BELOW=10
+     YO_L=-5 YO_MODE=2 YO_ROLLMAX=1.2 ./yarn_sim --chains 5 --damp 15`. That rig run is the best old row; the handoff records chains 1–4 made.
+   - Raise `k` until both match. If no `k` up to 10× the first try matches, report the column that differs and stop.
+4. **A loop-finder fixture.** Judge A's render showed a loop on the shaft that `hookLoop` didn't find. Add to `test_chain_judge`: a
+   22 mm loop round the shaft of each preset, at z = 12 mm and at z = 6 mm, with both legs down. `hookLoop` must find it on both presets,
+   and `loopsOnHook(front)` must read 1. If either fails, fix the finder now (it is part of the judge) and log it.
+5. Gate 0b, then Phase 1 starts with `--hook inline` as its starting shape. The slip knot breaking on it is the expected A/B failure in
+   table 1.8 ("the first yarn over is lost"). Phase 1's rigs make `inline` pass; Gate 1 then makes it the default.
