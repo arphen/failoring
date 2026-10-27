@@ -1,5 +1,7 @@
 # Chain stitch: the plan to finish it
 
+Parked 2026-10-27: the active plan is `docs/CHAIN_DRIVEN_PLAN.md`. The judge, the harness and the checkpoints below stay in use.
+
 Read this first. `docs/YARN_SIM_HANDOFF.md` is the background (what was tried, the solver facts, the tools); this file is the
 order of work, the rules, and the gates. When the two disagree, this file wins.
 
