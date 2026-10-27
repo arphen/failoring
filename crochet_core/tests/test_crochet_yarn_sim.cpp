@@ -214,7 +214,7 @@ void testRingDrive(const char* preset, const HookShape& shape) {
     }
     c1 = c1 / (Real)(hi - lo + 1);
     const Real moved = length(c1 - c0);
-    CHECK_MSG(moved >= 5 * m, "%s: released, the stretch moves at least 5 mm in 60 frames (%.1f mm)", preset, moved * 1e3);
+    CHECKP(moved >= 5 * m, "%s: released, the stretch falls at least 5 mm in 60 frames under gravity (%.1f mm)", preset, moved * 1e3);
     CHECKP(finite, "%s: no NaN after the release", preset);
 }
 
