@@ -4,6 +4,7 @@
 // particles of the yarn. Nothing is placed: the slip knot and every stitch are made by moving the hook, and the geometry is whatever the yarn does.
 // The yarn cannot pass through itself (capsule contact at its true radius) or through the hook.
 #include <functional>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -175,8 +176,15 @@ public:
     // height z (m, along the axis from the tip toward the handle) and sliding from zFrom to zTo over `frames` frames, then held. The ring's
     // radius is the hook's section plus 0.6 r + 0.2 mm; its gap is where the legs leave it. `step` moves the pins every frame until
     // releaseRing. Nothing is driven outside the window the caller opens.
-    void driveRing(int lo, int hi, Real zFrom, Real zTo, int frames);
+    // `gapAngle` (radians in the hook's frame, round its axis from its x axis) puts the gap there instead of where the legs point.
+    // `shift` (hook frame, x and y only) moves the ring's centre off the axis over the window (a loop past the tip let down below the hook).
+    void driveRing(int lo, int hi, Real zFrom, Real zTo, int frames, Real gapAngle = std::numeric_limits<Real>::quiet_NaN(),
+                   Vec3 shift = Vec3{});
     void releaseRing();
+    // Ends the window but leaves its particles pinned where the ring put them (the yarn over is held while the old loop is driven over it);
+    // the returned range is unpinned with unpinRange.
+    std::pair<int, int> holdRing();
+    void unpinRange(std::pair<int, int> r);
     bool driving() const { return driveOn_; }
     Vec3 driveTarget(int i) const;   // the pin's target this frame (for the test)
     void relaxStraight(Real f, int fromJoint = 0);   // the curl the yarn was laid with, times f (it lets go of it), from a joint on
@@ -225,7 +233,8 @@ private:
     // ring driver state
     bool driveOn_ = false;
     int driveLo_ = 0, driveHi_ = -1, driveRingLo_ = 0, driveRingHi_ = -1, driveFrame_ = 0, driveFrames_ = 1;   // held range, ring range
-    Real driveZ0_ = 0, driveZ1_ = 0, driveGapLeg_ = 0;   // gapLeg: the angle (hook frame) of the direction the legs leave the ring
+    Real driveZ0_ = 0, driveZ1_ = 0, driveGapLeg_ = 0;
+    Vec3 driveShift_{};   // gapLeg: the angle (hook frame) of the direction the legs leave the ring
     std::vector<Vec3> driveStart_, driveStartLocal_, driveTargets_;   // world and hook-frame positions when the window opened; this frame's targets
     void applyRing();
 public:

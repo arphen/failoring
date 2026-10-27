@@ -975,7 +975,7 @@ static Real hookSectionRadius(const HookShape& s, Real z) {
 // The particles beyond each end that the ring driver holds with the stretch (0: the legs are free).
 static const int kDriveLegHold = 0;
 
-void YarnSim::driveRing(int lo, int hi, Real zFrom, Real zTo, int frames) {
+void YarnSim::driveRing(int lo, int hi, Real zFrom, Real zTo, int frames, Real gapAngle, Vec3 shift) {
     releaseRing();   // a new window starts from the pins where they are now
     if (lo < 6 || hi < lo || hi + 6 >= rs.particleCount()) return;
     driveOn_ = true;
@@ -985,6 +985,7 @@ void YarnSim::driveRing(int lo, int hi, Real zFrom, Real zTo, int frames) {
     driveFrames_ = std::max(1, frames);
     driveZ0_ = zFrom;
     driveZ1_ = zTo;
+    driveShift_ = Vec3{shift.x, shift.y, 0};
     // the stretch and three particles of each leg (plan 3.1: the loop involved plus its legs up to 3 mm) are held
     driveLo_ = lo - kDriveLegHold;
     driveHi_ = hi + kDriveLegHold;
@@ -1001,7 +1002,17 @@ void YarnSim::driveRing(int lo, int hi, Real zFrom, Real zTo, int frames) {
     // (5 particles beyond each end, not 1: the first particle beyond the stretch is at the stretch's own end, which says nothing about where the legs go)
     const Vec3 mid = (rs.x[lo - 5] + rs.x[hi + 5]) * 0.5;
     const Vec3 lm = rotate(conj(hook.q), mid - hook.tip);
-    driveGapLeg_ = std::hypot(lm.x, lm.y) > 1e-9 ? std::atan2(lm.y, lm.x) : kPi / 2;
+    driveGapLeg_ = std::isfinite(gapAngle) ? gapAngle : std::hypot(lm.x, lm.y) > 1e-9 ? std::atan2(lm.y, lm.x) : kPi / 2;
+}
+
+std::pair<int, int> YarnSim::holdRing() {
+    if (!driveOn_) return {0, -1};
+    driveOn_ = false;
+    return {driveLo_, driveHi_};
+}
+
+void YarnSim::unpinRange(std::pair<int, int> r) {
+    for (int i = r.first; i <= r.second; ++i) rs.unpin(i);
 }
 
 void YarnSim::releaseRing() {
@@ -1048,7 +1059,10 @@ void YarnSim::applyRing() {
             for (int k = 0; k < n; ++k) target[k] = tt[k] + shift;
         }
     }
-    const Real ta = std::min(1.0, (Real)driveFrame_ / 4.0), tb = std::clamp((Real)(driveFrame_ - 4) / 4.0, 0.0, 1.0);
+    // each stage takes a quarter of the window (at least 4 frames), smoothed, so the yarn is led in rather than thrown
+    const Real stage = std::max<Real>(4, driveFrames_ / 4);
+    const auto ease = [](Real u) { u = std::clamp(u, 0.0, 1.0); return u * u * (3 - 2 * u); };
+    const Real ta = ease(driveFrame_ / stage), tb = ease((driveFrame_ - stage) / stage);
     std::vector<Vec3> ringNow(n);
     for (int k = 0; k < n; ++k) {
         const Vec3& s0 = driveStartLocal_[off + k];
@@ -1057,7 +1071,7 @@ void YarnSim::applyRing() {
         const Real a = start[k] + (target[k] - start[k]) * ta;
         const Real rad = rClear + (rho - rClear) * tb;
         const Real zk = s0.z + (z - s0.z) * ta;
-        ringNow[k] = hook.tip + rotate(hook.q, Vec3{rad * std::cos(a), rad * std::sin(a), zk});
+        ringNow[k] = hook.tip + rotate(hook.q, Vec3{rad * std::cos(a), rad * std::sin(a), zk} + driveShift_ * t);
     }
     // every held particle: the ring's particles at their places, and the legs follow the nearest ring end by a share that falls off
     // (0.75, 0.5, 0.25 of its move for the first, second and third particle beyond the end)
@@ -2777,24 +2791,249 @@ StitchFixture buildStitchFixture(const std::string& name) {
     return f;
 }
 
+namespace {
+// Hook-frame helpers for the driven chain: local coordinates have the hook's axis along z (tip at 0, the handle at +z) and its mouth toward +x.
+Vec3 toHook(const YarnSim& sim, const Vec3& w) { return rotate(conj(sim.hook.q), w - sim.hook.tip); }
+Vec3 fromHook(const YarnSim& sim, const Vec3& l) { return sim.hook.tip + rotate(sim.hook.q, l); }
+Real angleOf(const Vec3& l) { return std::atan2(l.y, l.x); }
+// The stretch's mean distance from the axis and its height range along it (hook frame, m).
+void stretchStats(const YarnSim& sim, int lo, int hi, Real* meanR, Real* z0, Real* z1) {
+    Real r = 0;
+    *z0 = 1e9;
+    *z1 = -1e9;
+    for (int i = lo; i <= hi; ++i) {
+        const Vec3 l = toHook(sim, sim.rs.x[i]);
+        r += std::hypot(l.x, l.y);
+        *z0 = std::min(*z0, l.z);
+        *z1 = std::max(*z1, l.z);
+    }
+    *meanR = r / std::max(1, hi - lo + 1);
+}
+void driveFor(YarnSim& sim, int frames) {
+    for (int f = 0; f < frames; ++f) {
+        sim.step(sim.hook);
+        if (sim.onFrame) sim.onFrame();
+    }
+}
+}  // namespace
+
 ChainStart makeChainDriven(YarnSim& sim) {
-    // docs/CHAIN_DRIVEN_PLAN.md D2: the solver seats the old loop and makes the yarn over (prepareChain); then the old loop is driven off the
-    // head, the new loop (the stretch round the hook after the old loop) is driven onto the shaft, and the solver snugs the work. The hook
-    // stays where it is through the driven windows.
-    const ChainStart c = prepareChain(sim);
-    if (!c.ok) return c;
-    const Real m = kMm;
-    sim.driveRing(c.oldLo, c.oldHi, 12 * m, -3 * m, 30);   // loop off: the old loop slides over the head
-    for (int f = 0; f < 30; ++f) sim.step(sim.hook);
-    sim.releaseRing();
-    sim.settle(10);
-    int nl = -1, nh = -1;
-    if (hookLoop(sim, &nl, &nh, c.oldHi + 1) && nh > nl) {   // seat: the new loop is the stretch round the hook after the old loop
-        sim.driveRing(nl, nh, 12 * m, 12 * m, 30);
-        for (int f = 0; f < 30; ++f) sim.step(sim.hook);
+    // docs/CHAIN_DRIVEN_PLAN.md D2. The hook stays still; the left hand holds the work below it and the working yarn runs to the index finger in
+    // front of the tip (the hook's tip points at the left hand). The yarn's topology comes from three driven windows, each the yarn's real
+    // motion at that moment; between them the solver does the rest:
+    //   1. yarn over: the working yarn just after the old loop wraps the hook at the throat (a ring, its gap facing the work);
+    //   2. pull through: the old loop, opened wide enough to pass over the yarn over, slides off over the head and past the tip, while the
+    //      yarn over is held; both legs of the yarn over then run through it;
+    //   3. seat: the yarn over (the new loop) slides back onto the full shaft.
+    // Then the hand's tension draws the work snug.
+    ChainStart c;
+    sim.readAssist();
+    sim.worstGap = 1e9;
+    sim.worstPen = 0;
+    sim.impulseGrip = sim.impulseRing = sim.impulseCatch = sim.impulsePins = sim.impulseReel = sim.impulseHook = 0;
+    sim.releaseGuideSprings();
+    c.prevHi = sim.lastLinkHi;
+    const Real m = kMm, r = sim.params.radius, seg = sim.params.segment;
+    const Real zSeat = envOr("DR_ZSEAT", 16) * m;                      // on the full shaft (the legacy hook is full from 5.2 R)
+    const Real zYo = toHook(sim, sim.throatPoint()).z;                 // the yarn over lies at the throat
+    const Real zOff = envOr("DR_ZOFF", -5) * m;                        // the old loop is let go this far in front of the tip
+    const Real down = angleOf(rotate(conj(sim.hook.q), Vec3{0, -1, 0}));   // the work hangs this way round the axis
+    const bool dbg = envOr("SIM_STAGES", 0) > 0 || true;
+    auto report = [&](const char* what, int lo, int hi) {
+        Real mr, z0, z1;
+        stretchStats(sim, lo, hi, &mr, &z0, &z1);
+        if (dbg) std::printf("driven [%d] %s: yarn %d..%d (%.1f mm), %.1f mm out, z %.1f..%.1f mm; gap %.2f mm, in hook %.2f mm\n", sim.frame, what, lo,
+                             hi, (hi - lo) * seg / m, mr / m, z0 / m, z1 / m, sim.minGap() / m, sim.hookPenetration() / m);
+    };
+
+    // the old loop: the compact stretch that winds round the shaft (the slip knot's whole ring also links the axis, with the knot in it),
+    // widened to a loop's length round its middle
+    const int loopN = (int)std::lround(envOr("DR_LOOPLEN", 23) * m / seg);
+    int lo = -1, hi = -1;
+    auto findOld = [&]() {
+        if (!loopRange(sim, 9 * m, 0.6, &lo, &hi) && !(hookLoop(sim, &lo, &hi) && hi > lo)) return false;
+        if (hi - lo < loopN) {
+            const int mid = (lo + hi) / 2;
+            lo = mid - loopN / 2;
+            hi = lo + loopN;
+        }
+        return true;
+    };
+    if (!findOld()) {
+        std::printf("driven: no loop on the hook\n");
+        return c;
+    }
+    for (int s = 0; s + 1 < sim.rs.segmentCount(); ++s) c.length += sim.rs.restLen[s];
+    c.tip0 = sim.hook.tip;
+    report("old loop found", lo, hi);
+
+    // 0. the old loop seated on the full shaft (the slip knot leaves it loose; a stitch leaves it seated already)
+    sim.phase = "The old loop sits on the shaft";
+    {
+        Real mr, z0, z1;
+        stretchStats(sim, lo, hi, &mr, &z0, &z1);
+        if (mr > 4.5 * m || z0 < zSeat - 5 * m) {
+            const int frames = (int)envOr("DR_SEAT0F", 90);
+            sim.driveRing(lo, hi, zSeat, zSeat, frames, down);
+            driveFor(sim, frames);
+            sim.releaseRing();
+            driveFor(sim, 10);
+            // the driven particles are the loop now: it was put round the shaft, so it is not looked for again
+        }
+    }
+    report("old loop seated", lo, hi);
+    c.oldLo = lo;
+    c.oldHi = hi;
+    for (int i = lo; i <= hi; ++i) c.oldLoop.push_back(i);
+    c.loopsAtStart = sim.loopsOnHook(Vec3{0, 0, 1});
+
+    // the left hand: thumb and middle finger pinch the work a little way before the loop, and hold it below the hook
+    {
+        YarnSim::Grip g;
+        // the pinch leaves enough yarn free before the loop for it to open over the yarn over (step 2)
+        const int from = std::max(1, lo - (int)envOr("HOLD_N", 22) - (int)envOr("DR_HOLDGAP", 6)), to = lo - (int)envOr("DR_HOLDGAP", 6);
+        const Vec3 ax = sim.hook.axis();
+        Vec3 at{};
+        int n = 0;
+        for (int i = from; i <= to; ++i) { at += sim.rs.x[i]; ++n; }
+        g.at = n > 0 ? at / (Real)n : sim.rs.x[std::max(0, lo - 1)];
+        for (int i = from; i <= to; ++i) {
+            const Vec3 d = sim.rs.x[i] - sim.hook.tip;
+            const Real a = dot(d, ax);
+            if (a > -2 * sim.shape.R && a < 14 * sim.shape.R && length(d - ax * a) < sim.shape.R + 2.0 * r) continue;
+            g.particles.push_back(i);
+            g.offset.push_back(sim.rs.x[i] - g.at);
+            sim.rs.pin(i);
+        }
+        sim.grips.push_back(g);
+        c.hold = (int)sim.grips.size() - 1;
+        const Vec3 hTo = fromHook(sim, Vec3{std::cos(down), std::sin(down), 0} * (sim.shape.R + envOr("HOLD_BELOW", 10) * m) + Vec3{0, 0, zSeat});
+        const Vec3 hFrom = sim.grips[c.hold].at;
+        const int hn = (int)(0.4 / sim.params.dt);
+        for (int k = 1; k <= hn; ++k) {
+            const Real t = (Real)k / hn;
+            sim.grips[c.hold].at = hFrom + (hTo - hFrom) * (t * t * (3 - 2 * t));
+            sim.step(sim.hook);
+            if (sim.onFrame) sim.onFrame();
+        }
+    }
+    // the index finger in front of the tip, a little above the hook: the working yarn runs to it
+    sim.phase = "The working yarn runs over the left index finger, in front of the hook";
+    if (!sim.fingerOn) sim.putFinger(sim.rs.particleCount() - 6, Vec3{0, -1, 0});
+    moveHandTo(sim, fromHook(sim, Vec3{std::cos(down + kPi), std::sin(down + kPi), 0} * (envOr("DR_FUP", 8) * m) +
+                                      Vec3{0, 0, envOr("DR_FZ", -40) * m}),
+               0.4);
+
+    // 1. yarn over: the working yarn from a little after the old loop (its leg back down to the work) wraps the hook at the throat
+    sim.phase = "Yarn over: the yarn goes round the hook into its throat";
+    const int legN = (int)std::lround(envOr("DR_LEG", 22) * m / seg);
+    const int yoN = (int)std::lround(envOr("DR_YOLEN", 23) * m / seg);
+    const int ylo = hi + legN, yhi = ylo + yoN;
+    if (yhi + 8 >= sim.rs.particleCount()) {
+        std::printf("driven: %d particles after the old loop, %d wanted for the yarn over\n", sim.rs.particleCount() - hi, legN + yoN + 8);
+        return c;
+    }
+    sim.driveRing(ylo, yhi, zYo, zYo, (int)envOr("DR_YOF", 40), down);
+    driveFor(sim, (int)envOr("DR_YOF", 40));
+    {
+        Real err = 0;
+        int worst = -1;
+        for (int i = ylo; i <= yhi; ++i) {
+            const Real e = length(sim.rs.x[i] - sim.driveTarget(i));
+            if (e > err) { err = e; worst = i; }
+        }
+        const Vec3 l = toHook(sim, sim.driveTarget(worst));
+        if (dbg) std::printf("driven: yarn over pins off by %.2f mm at %d (target %.1f out, z %.1f; w %g)\n", err / m, worst, std::hypot(l.x, l.y) / m, l.z / m, sim.rs.w[worst]);
+    }
+    const std::pair<int, int> yoHeld = sim.holdRing();
+    report("yarn over", ylo, yhi);
+    c.loopsAfterYo = sim.loopsOnHook(Vec3{0, 0, 1});
+
+    int borrowed = 0;
+    // 2. pull through: the old loop opens until it clears the yarn over, slides over the head and past the tip
+    sim.phase = "The old loop slides over the head and off the hook";
+    {
+        const Real rhoYo = (yoN * seg + 2 * (2 * 0.6 * r)) / (2 * kPi);
+        const Real rhoOld = rhoYo + 2 * 0.6 * r + envOr("DR_CLEAR", 0.5) * m;
+        const int want = (int)std::ceil((2 * kPi * rhoOld - 2 * (2 * 0.6 * r)) / seg);
+        int olo = lo, ohi = hi;
+        // the extra yarn comes from both legs: the work's side (up to the hand's pinch) and the leg to the yarn over (keeping 6 mm of it)
+        const int hiMax = ylo - (int)std::lround(6 * m / seg);
+        while (ohi - olo < want) {
+            const bool canLo = olo > 1 && sim.rs.w[olo - 2] > 0, canHi = ohi < hiMax;
+            if (!canLo && !canHi) break;
+            // from the leg to the yarn over first: when the new loop is drawn onto the shaft that leg pulls the yarn back out of the old loop
+            if (envOr("DR_BORROWLO", 0) > 0 ? !canHi || canLo : !canHi) --olo; else ++ohi;
+        }
+        if (ohi - olo < want) std::printf("driven: the old loop opens to %d of %d particles (the legs are short)\n", ohi - olo, want);
+        const int frames = (int)envOr("DR_OFFF", 60);
+        sim.driveRing(olo, ohi, zSeat, zOff, frames, down);
+        driveFor(sim, frames);
+        borrowed = lo - olo;
+        report("old loop off the tip", olo, ohi);
+        // past the tip it is let down below the hook, so it hangs round the yarn over's legs instead of round the line of the hook
+        const Real rhoOff = ((ohi - olo) * seg + 2 * (2 * 0.6 * r)) / (2 * kPi);
+        const Vec3 let = Vec3{std::cos(down), std::sin(down), 0} * (rhoOff + sim.shape.R + envOr("DR_LETDOWN", 2) * m);
+        const int lf = (int)envOr("DR_LETF", 30);
+        sim.driveRing(olo, ohi, zOff, zOff, lf, down, let);
+        driveFor(sim, lf);
+        report("old loop below the tip", olo, ohi);
         sim.releaseRing();
     }
-    sim.settle(30);   // snug: the solver holds the work
+
+    // 3. seat: the yarn over, now the new loop, slides back onto the full shaft; then the finger goes back up above the work, so the working
+    // yarn leaves the new loop upward instead of toward the tip
+    sim.phase = "The new loop slides onto the shaft";
+    const int nlo = ylo, nhi = yhi;
+    {
+        const int frames = (int)envOr("DR_SEATF", 40);
+        sim.driveRing(nlo, nhi, zYo, zSeat, frames, down);
+        driveFor(sim, frames);
+    }
+    report("new loop seated", nlo, nhi);
+    // held on the shaft while the finger goes up and the work is tugged (the hook's body would hold it there; the yarn is let go after)
+    const std::pair<int, int> seatHeld = sim.holdRing();
+    moveHandTo(sim, fromHook(sim, Vec3{std::cos(down + kPi), std::sin(down + kPi), 0} * (envOr("DR_FUP2", 25) * m) +
+                                      Vec3{0, 0, zSeat + envOr("DR_FZ2", 5) * m}),
+               envOr("DR_FT2", 0.3));
+    {
+    // the left hand tugs the work down by the yarn the loop borrowed from it: the old loop closes round the yarn over's legs
+    const Real tug = std::max(borrowed * seg, envOr("DR_TUGMM", 8) * m) * envOr("DR_TUG", 1.0);
+    const Vec3 gFrom = sim.grips[c.hold].at, gTo = gFrom + rotate(sim.hook.q, Vec3{std::cos(down), std::sin(down), 0}) * tug;
+    const int tn = (int)envOr("DR_TUGF", 30);
+    for (int k = 1; k <= tn; ++k) {
+        const Real t = (Real)k / tn;
+        sim.grips[c.hold].at = gFrom + (gTo - gFrom) * (t * t * (3 - 2 * t));
+        sim.step(sim.hook);
+        if (sim.onFrame) sim.onFrame();
+    }
+    report("old loop after the tug", lo - borrowed, hi);
+    }
+    sim.unpinRange(seatHeld);
+    sim.unpinRange(yoHeld);
+
+    // 4. snug: the hand draws the working yarn in while the work is held
+    sim.phase = "The yarn drawn snug";
+    sim.ball.tension = envOr("DR_SNUG", 2.0) * sim.params.tension;
+    driveFor(sim, (int)envOr("DR_SNUGF", 30));
+    sim.ball.tension = sim.params.tension;
+    driveFor(sim, 10);
+    {
+        int flo = -1, fhi = -1;
+        if (hookLoop(sim, &flo, &fhi, hi + 1)) report("new loop after the snug", flo, fhi);
+    }
+    report("old loop after the snug", c.oldLo, c.oldHi);
+    if (const char* dumpTo = std::getenv("DR_DUMP")) {
+        if (FILE* f = std::fopen(dumpTo, "w")) {
+            for (int i = 0; i < sim.rs.particleCount(); ++i) {
+                const Vec3 l = toHook(sim, sim.rs.x[i]);
+                std::fprintf(f, "%d %.3f %.3f %.3f\n", i, l.x / m, l.y / m, l.z / m);
+            }
+            std::fclose(f);
+        }
+    }
+    sim.release(c.hold);
+    c.ok = true;
     return c;
 }
 
