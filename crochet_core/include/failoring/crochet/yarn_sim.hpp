@@ -25,28 +25,34 @@ HookPose hookPose(const Vec3& tip, const Vec3& pointing, const Vec3& throat);
 HookPose lerpPose(const HookPose& a, const HookPose& b, Real t);
 
 struct HookShape {
+    // Which hook is drawn. Legacy is the hook committed at f19157a (a neck and a taper, the barb at 0.85R); inline is the groove hook (a shaft
+    // with a throat cut into it, the head's back wall at 2.05R). The default is legacy; the CLI picks with `--hook legacy|inline`.
+    enum class Form { Legacy, Inline };
+    Form form = Form::Legacy;
+    static HookShape legacy() { return HookShape{}; }
+    static HookShape inlineHook();
     Real R = 2.5e-3;        // shaft radius (a 5 mm hook)
     Real length = 0.075;    // tip to the end of what is simulated of the shaft
     Real squash = 0.6;      // the yarn's radius against the hook, as a fraction of its own: wool squashes into the throat
     bool sdf = true;        // the hook as one smooth body (a round head with a barb, a neck, a taper and the shaft) instead of capsules
     // Where the barb sits: x out from the axis and half its length across the throat, in shaft radii. A barb outside the head's 1R
     // envelope blocks old loops; one set inside the mouth still blocks yarn in the throat (x ~0.3-0.6R) without standing in their way.
-    Real barbX = 0.55;
-    Real barbHalfWidth = 0.75;
-    Real barbR = 0.18;
+    Real barbX = 0.85;
+    Real barbHalfWidth = 1.0;
+    Real barbR = 0.20;
     // The head's dome, the back wall of the throat, and the spine behind the mouth, in shaft radii. A real hook's head is barely wider than
     // its shaft, so a loop opened on the shaft rides over it; the throat is a groove in the shaft with a thick spine behind it, not a thin neck.
     Real headR = 1.0;
     Real headBack = 2.05;
     Real shaftZ = 3.5;
-    Real neckX = -0.20, neckR = 0.80;
+    Real neckX = -0.50, neckR = 0.50;
     // The flat wall across the back of the head stops a yarn drawn toward the tip (the first yarn over leans on it), and with a head as
     // wide as the shaft it also stops an old loop from riding off the tip. The groove and the grip can hold the new yarn without it.
     int flatBack = 1;   // 0: round back, 1: full wall, 2: wall only on the mouth side (the barb's back face)
     // The open throat groove cut across the mouth side of the shaft, one diameter long and just behind the head's back wall. Where its
     // centre sits and its radius, in shaft radii; it runs across the hook in y.
-    bool groove = true;
-    Real grooveX = 0.55, grooveZ = 2.80, grooveR = 0.60;
+    bool groove = false;
+    Real grooveX = 0.70, grooveZ = 1.55, grooveR = 0.55;
     // A low rim round the back and sides of the head's rear edge, open at the mouth: the old loop cannot slip off sideways, so it has
     // to ride over the tip (where the new yarn, caught in the throat, goes through it).
     bool rim = false;

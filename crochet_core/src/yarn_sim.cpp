@@ -117,7 +117,7 @@ Real capsuleDist(const Vec3& p, const Vec3& a, const Vec3& b, Real r) { return s
 // its real parts rather than a cylinder with a slot cut into it. A slot cut with max() is only sign-correct where it is cut: just outside the
 // un-cut cylinder it still returns the cylinder's distance, so a yarn wider than the blend is pushed out of a mouth that is really open. A union
 // of primitives is a true distance field and can be used with contact radii.
-Real hookSdfRaw(const Vec3& p, const HookShape& s) {
+Real hookSdfInline(const Vec3& p, const HookShape& s) {
     const Real R = s.R;
     auto W = [&](Real x, Real z) { return Vec3{x * R, 0, z * R}; };
     // shaft: a capsule whose full radius is reached at shaftZ; the rounded front of the capsule is the shoulder behind the throat
@@ -156,7 +156,67 @@ Real hookSdfRaw(const Vec3& p, const HookShape& s) {
     }
     return d;
 }
+// The committed hook of f19157a, verbatim (its comment above is the one it had there). The default shape; the check against f19157a's text is in
+// test_chain_judge.
+Real hookSdfLegacy(const Vec3& p, const HookShape& s) {
+    const Real R = s.R;
+    auto W = [&](Real x, Real z) { return Vec3{x * R, 0, z * R}; };
+    // shaft: a capsule along the axis beyond the taper
+    Real d = capsuleDist(p, W(0, 5.2), W(0, s.length / R), R);
+    // taper: three capsules of growing radius, so it reads as a cone from the neck up to the shaft
+    d = smin(d, capsuleDist(p, W(-0.10, 4.9), W(0, 5.4), 0.85 * R), 0.10 * R);
+    d = smin(d, capsuleDist(p, W(-0.22, 4.5), W(-0.12, 5.0), 0.65 * R), 0.10 * R);
+    d = smin(d, capsuleDist(p, W(-0.36, 4.2), W(-0.28, 4.6), 0.48 * R), 0.10 * R);
+    // neck: the spine of the hook, on the far side of the throat from the mouth; it leaves the groove open toward +x
+    d = smin(d, capsuleDist(p, W(s.neckX, 2.05), W(s.neckX, 4.2), s.neckR * R), 0.12 * R);
+    // head: a dome on the axis from the tip to a flat back at the front of the groove (the back edge is the barb: a wall a yarn drawn
+    // toward the tip is stopped by, while the mouth beside it stays open so the yarn can be laid in from the throat's side)
+    Real head = capsuleDist(p, W(0.0, 0.35), W(0.0, 1.0), 0.62 * R);
+    head = smin(head, capsuleDist(p, W(0.0, 0.9), W(0.0, 1.5), 0.92 * s.headR * R), 0.12 * R);
+    head = smin(head, capsuleDist(p, W(0.0, 1.4), W(0.0, 1.8), s.headR * R), 0.10 * R);
+    if (s.flatBack == 1) {
+        head = smax(head, p.z - 2.05 * R, 0.08 * R);
+    } else if (s.flatBack == 2) {
+        // The wall only where the throat is: the barb's back face stops the yarn over, the smooth far side lets an old loop ride off.
+        head = smax(head, std::max(p.z - 2.05 * R, -p.x), 0.08 * R);
+    }
+    // barb: a raised lip along the back edge on the mouth side. The neck pushes the yarn toward the mouth; without the lip it slips out round
+    // the head's edge (the hook passes it by), with it the yarn is held between the neck and the lip, in front of the head's back.
+    head = smin(head, capsuleDist(p, Vec3{s.barbX * R, -s.barbHalfWidth * R, 2.0 * R}, Vec3{s.barbX * R, s.barbHalfWidth * R, 2.0 * R}, s.barbR * R), 0.10 * R);
+    if (s.rim) {
+        const Real rr = 0.22 * R, zr = 2.15 * R;
+        head = smin(head, capsuleDist(p, Vec3{-0.95 * R, -0.90 * R, zr}, Vec3{-0.95 * R, 0.90 * R, zr}, rr), 0.06 * R);
+        head = smin(head, capsuleDist(p, Vec3{-0.95 * R, -0.90 * R, zr}, Vec3{0.90 * R, -0.90 * R, zr}, rr), 0.06 * R);
+        head = smin(head, capsuleDist(p, Vec3{-0.95 * R, 0.90 * R, zr}, Vec3{0.90 * R, 0.90 * R, zr}, rr), 0.06 * R);
+    }
+    d = smin(d, head, 0.15 * R);
+    if (s.groove) {
+        // cut an open channel across the mouth side, between the tip lobe and the barb: the yarn can then be laid into the throat
+        // with its centre inside the head's envelope, so the head and yarn together pass through the old loop instead of jamming.
+        const Real cut = capsuleDist(p, Vec3{s.grooveX * R, -1.30 * R, s.grooveZ * R}, Vec3{s.grooveX * R, 1.30 * R, s.grooveZ * R}, s.grooveR * R);
+        d = smax(d, -cut, 0.06 * R);
+    }
+    return d;
+}
+
+Real hookSdfRaw(const Vec3& p, const HookShape& s) { return s.form == HookShape::Form::Inline ? hookSdfInline(p, s) : hookSdfLegacy(p, s); }
+
 }  // namespace
+
+HookShape HookShape::inlineHook() {
+    HookShape s;
+    s.form = Form::Inline;
+    s.barbX = 0.55;
+    s.barbHalfWidth = 0.75;
+    s.barbR = 0.18;
+    s.neckX = -0.20;
+    s.neckR = 0.80;
+    s.groove = true;
+    s.grooveX = 0.55;
+    s.grooveZ = 2.80;
+    s.grooveR = 0.60;
+    return s;
+}
 
 Real hookSdf(const Vec3& p, const HookShape& s, Vec3* grad) {
     const Real d = hookSdfRaw(p, s);
@@ -588,21 +648,28 @@ bool rdVec(FILE* f, std::vector<T>& v) {
     return rdBytes(f, v.data(), (size_t)n * sizeof(T));
 }
 
+bool rdForm(FILE* f, HookShape::Form& form) {
+    int v = 0;
+    if (!rd(f, v)) return false;
+    form = v == 1 ? HookShape::Form::Inline : HookShape::Form::Legacy;
+    return true;
+}
 bool wrHook(FILE* f, const HookShape& s) {
     return wr(f, s.R) && wr(f, s.length) && wr(f, s.squash) && wr(f, s.sdf) && wr(f, s.barbX) && wr(f, s.barbHalfWidth) &&
            wr(f, s.barbR) && wr(f, s.headR) && wr(f, s.headBack) && wr(f, s.shaftZ) && wr(f, s.neckX) && wr(f, s.neckR) &&
-           wr(f, s.flatBack) && wr(f, s.groove) && wr(f, s.grooveX) && wr(f, s.grooveZ) && wr(f, s.grooveR) && wr(f, s.rim);
+           wr(f, s.flatBack) && wr(f, s.groove) && wr(f, s.grooveX) && wr(f, s.grooveZ) && wr(f, s.grooveR) && wr(f, s.rim) &&
+           wr(f, (int)s.form);
 }
 bool rdHook(FILE* f, HookShape& s) {
     return rd(f, s.R) && rd(f, s.length) && rd(f, s.squash) && rd(f, s.sdf) && rd(f, s.barbX) && rd(f, s.barbHalfWidth) &&
            rd(f, s.barbR) && rd(f, s.headR) && rd(f, s.headBack) && rd(f, s.shaftZ) && rd(f, s.neckX) && rd(f, s.neckR) &&
-           rd(f, s.flatBack) && rd(f, s.groove) && rd(f, s.grooveX) && rd(f, s.grooveZ) && rd(f, s.grooveR) && rd(f, s.rim);
+           rd(f, s.flatBack) && rd(f, s.groove) && rd(f, s.grooveX) && rd(f, s.grooveZ) && rd(f, s.grooveR) && rd(f, s.rim) && rdForm(f, s.form);
 }
 bool sameHook(const HookShape& a, const HookShape& b) {
     return a.R == b.R && a.length == b.length && a.squash == b.squash && a.sdf == b.sdf && a.barbX == b.barbX &&
            a.barbHalfWidth == b.barbHalfWidth && a.barbR == b.barbR && a.headR == b.headR && a.headBack == b.headBack &&
            a.shaftZ == b.shaftZ && a.neckX == b.neckX && a.neckR == b.neckR && a.flatBack == b.flatBack && a.groove == b.groove &&
-           a.grooveX == b.grooveX && a.grooveZ == b.grooveZ && a.grooveR == b.grooveR && a.rim == b.rim;
+           a.grooveX == b.grooveX && a.grooveZ == b.grooveZ && a.grooveR == b.grooveR && a.rim == b.rim && a.form == b.form;
 }
 bool wrYsp(FILE* f, const YarnSimParams& p) {
     return wr(f, p.radius) && wr(f, p.segment) && wr(f, p.dt) && wr(f, p.tension) && wr(f, p.massScale) && wr(f, p.damping) &&

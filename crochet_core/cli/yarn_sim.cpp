@@ -61,11 +61,12 @@ int main(int argc, char** argv) {
     int every = 30;
     Real rad = 1.1, segMm = 1.0, topDist = 0.07, massScale = 100, damp = 20;
     int fa = -1, fb = -2, fstep = 1, chains = 0;
-    std::string savePath, loadPath, saveAfter, diffSpec;
+    std::string savePath, loadPath, saveAfter, diffSpec, hookName = "legacy";
     bool keepGoing = false;
     for (int i = 1; i + 1 < argc; i += 2) {
         const std::string k = argv[i];
         if (k == "--out") out = argv[i + 1];
+        else if (k == "--hook") hookName = argv[i + 1];   // legacy (the committed hook, the default) or inline (the groove hook)
         else if (k == "--keep-going") keepGoing = std::atoi(argv[i + 1]) > 0;   // diagnostics: run on past a failed stitch (default: stop)
         else if (k == "--every") every = std::atoi(argv[i + 1]);
         else if (k == "--rad") rad = std::atof(argv[i + 1]);
@@ -80,7 +81,12 @@ int main(int argc, char** argv) {
         else if (k == "--save-after") saveAfter = argv[i + 1];
         else if (k == "--statediff") diffSpec = argv[i + 1];
     }
+    if (hookName != "legacy" && hookName != "inline") {
+        std::printf("--hook takes legacy or inline\n");
+        return 2;
+    }
     YarnSim sim;
+    if (hookName == "inline") sim.shape = HookShape::inlineHook();
     // The hook's shape: SIM_SDF=1 is the smooth barbed hook; the capsule hook is kept for comparing with the old tests.
     if (std::getenv("SIM_SDF")) sim.shape.sdf = std::atof(std::getenv("SIM_SDF")) > 0;
     if (std::getenv("SIM_SQUASH")) sim.shape.squash = std::atof(std::getenv("SIM_SQUASH"));

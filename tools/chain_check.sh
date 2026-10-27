@@ -42,7 +42,9 @@ if [ ! -x "$bin" ]; then
     exit 2
 fi
 
-outroot=build/chain_runs/$run
+# The hook is legacy (the committed hook) unless HOOK=inline is set; it is in the run's directory name and the checkpoints' headers.
+hook=${HOOK:-legacy}
+outroot=build/chain_runs/$run-$hook
 mkdir -p "$outroot"
 
 # name, HOLD_BELOW mm, damping, SIM_SEAT mm
@@ -68,7 +70,7 @@ make_knot() {
     local ckpt=$knotdir/d$damp.ckpt
     if [ -f "$ckpt" ]; then return 0; fi
     mkdir -p "$knotdir/d$damp"
-    env "${extra[@]}" "$bin" --save-after knot --save "$ckpt" --damp "$damp" --every 0 --out "$knotdir/d$damp/sim" \
+    env "${extra[@]}" "$bin" --hook "$hook" --save-after knot --save "$ckpt" --damp "$damp" --every 0 --out "$knotdir/d$damp/sim" \
         > "$knotdir/d$damp/log.txt" 2>&1
 }
 
@@ -77,7 +79,7 @@ run_point() {
     local dir=$outroot/$name
     mkdir -p "$dir"
     env "${extra[@]}" HOLD_BELOW="$hold" SIM_SEAT="$seat" \
-        "$bin" --load "$knotdir/d$damp.ckpt" --chains "$chains" --damp "$damp" --every 0 --out "$dir/sim" > "$dir/log.txt" 2>&1
+        "$bin" --hook "$hook" --load "$knotdir/d$damp.ckpt" --chains "$chains" --damp "$damp" --every 0 --out "$dir/sim" > "$dir/log.txt" 2>&1
 }
 
 # One knot per distinct damping, made before any grid point starts.
