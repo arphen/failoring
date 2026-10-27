@@ -28,7 +28,7 @@ void testCarry() {
     for (int i = 0; i <= 10; ++i) line.push_back(Vec3{0, -0.03 + 0.06 * i / 10.0, 0});
     sim.build(line);
     const Real R = sim.shape.R, m = 1e-3;
-    const Real deep = -sim.shape.grooveZ * R;   // the straight yarn lies in the throat's groove
+    const Real deep = -sim.params.radius - 3.4 * R;
     sim.hook = hookPose(Vec3{6 * m, 0, deep}, Vec3{0, 0, -1}, Vec3{-1, 0, 0});
     sim.moveHook(hookPose(Vec3{0.4 * m, 0, deep}, Vec3{0, 0, -1}, Vec3{-1, 0, 0}), 0.8);
     Real worst = 0;

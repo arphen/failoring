@@ -1146,7 +1146,8 @@ void makeSlipKnot(YarnSim& sim) {
     const Real m = kMm, R = sim.shape.R;
     const Real zb = std::max(3.3 * sim.params.radius, 3.6 * m);
     // the hook comes from the front, the tip pointing into the ring, the throat toward the yarn behind the ring
-    const Real deep = -zb - sim.shape.grooveZ * R;   // the tip this far back puts the yarn behind the ring in the mouth of the throat
+    // the tip this far back puts the yarn behind the ring in the mouth of the throat: 3.4R on the legacy hook, the groove's centre on the inline hook
+    const Real deep = -zb - (sim.shape.form == HookShape::Form::Inline ? sim.shape.grooveZ : 3.4) * R;
     // the left hand pinches the ring where it closes (over the tail) and holds the working yarn loosely: the ring keeps its shape
     sim.phase = "The yarn laid in a ring, the working yarn behind it; the left hand pinches where the ring crosses the tail";
     const int pinch = sim.grab(Vec3{2.8 * m, -14.5 * m, -0.3 * m}, 5.2 * m);
