@@ -5,6 +5,7 @@
 // The yarn cannot pass through itself (capsule contact at its true radius) or through the hook.
 #include <functional>
 #include <limits>
+#include <unordered_map>
 #include <string>
 #include <vector>
 
@@ -189,6 +190,12 @@ public:
     // the returned range is unpinned with unpinRange.
     std::pair<int, int> holdRing();
     void unpinRange(std::pair<int, int> r);
+    // A driven hold: a hard pin, or with holdK > 0 a guide spring of that stiffness (N/m), which contact can push against, so a driven stretch
+    // never passes through other yarn
+    Real holdK = 0;
+    void hold(int i, const Vec3& at);
+    void letGo(int i);
+    bool held(int i) const { return rs.w[i] <= 0 || holdSpring_.count(i) > 0; }
     bool driving() const { return driveOn_; }
     Vec3 driveTarget(int i) const;   // the pin's target this frame (for the test)
     void relaxStraight(Real f, int fromJoint = 0);   // the curl the yarn was laid with, times f (it lets go of it), from a joint on
@@ -245,6 +252,7 @@ private:
     bool driveAt_ = false;                        // the window is a driveRingAt ring (not the hook's axis)
     Vec3 driveC_{}, driveA_{}, driveGap_{};       // its centre, axis and gap direction (hook frame)
     Real driveRad_ = 0;                           // its minimum radius
+    std::unordered_map<int, int> holdSpring_;     // a held particle's guide spring (holdK > 0)
 public:
     Real reelSlack = 0.6, reelForce = 0.0;   // the hand takes in yarn lying within reelSlack of its length from it, drawing it with reelForce x tension (off)
 private:

@@ -278,3 +278,37 @@ and take the fallback. Each fallback brings half the phase's budget again.
   the loop perpendicular to the axis as in the judge fixture; then the old loop rides at about 7 mm from the axis, clear of the head, and the
   cinch needs no leg below the tip. This changes the finger placement before the yarn over; it needs its own gate run. Debt: gate D2 open,
   contact column (0.14 mm in the windows) open, final loop length open.
+
+- 2026-10-27, D2 (dress, pinch, spring holds). **Gate D2 passes: 7 of 7 points** (`HOOK=legacy CHAIN=driven tools/chain_check.sh d2a360 1 slip`).
+  The hook is legacy for D2 on (the knot works there); pass `HOOK=legacy`. What changed in `makeChainDriven`:
+  - Dress (`DR_DRESS`, on): after the seat, one driven window lays the finished stitch out in the judge's true-fixture shape, in the fixture's
+    frame turned to this hook's down direction: the old loop's own particles (`c.oldLo..c.oldHi`) on a 360 degree ring (`DR_ARC`), its plane
+    across the down direction, 7 mm below the axis (`DR_DRESSY`) at the new loop's height; the connection from the ring's end under the ring
+    and up through it as the first leg; the second leg straight down through it (`DR_LEG2` 16 particles); the work below toward the tip
+    (`DR_WORKN` 20). The legs sit `DR_LEGX` 0.6 mm either side of the middle under the loop. The finger goes 40 mm below the stitch in the same
+    window (`DR_FDOWN`, `DR_FX`, `DR_FDZ`). The cinch and the tug are off with the dress.
+  - Pinch (`DR_PINCH`, on): the left hand holds the finished stitch (the old loop, the connection and first leg, the work) between thumb and
+    middle finger, as a crocheter holds the last chain; only the new loop, the yarn over's hold and the working yarn are let go and snugged.
+    The pinch lets go at the end of the stitch.
+  - Spring holds (`DR_HOLDK`, 150 N/m): every driven window holds its particles with a guide spring (solved before contact) instead of a pin, so
+    contact pushes the driven yarn aside and nothing is pulled through anything. `YarnSim::hold` / `letGo`; `holdK = 0` keeps pins (the
+    ringDrive test). This took the running gap from 0.10-0.15 mm to 2.11-2.16 mm and the hook depth to 0.00-0.12 mm.
+  - `++sim.chains` at the end of a driven stitch: the judge line now reads `stitch 1` (the harness looks for it).
+  - Diagnostics: `DR_GAPDBG=1` prints the closest strand pair while the gap is under the limit; `DR_DUMPD` dumps the dressed state;
+    `DR_SETTLE`/`DR_TRACE` run and print extra free frames; `DR_KEEP=1` judges with every hold on.
+  Gate lines (through `+1/-1` and oldOff 0.00 everywhere):
+  | point | final | onShaft | contact |
+  | --- | --- | --- | --- |
+  | base | 202..229 | 4.3/27.0 | 2.14/0.01 |
+  | hold9 | 202..230 | 4.5/28.0 | 2.11/0.02 |
+  | hold11 | 202..229 | 4.3/27.0 | 2.16/0.00 |
+  | damp17 | 212..240 | 4.5/28.0 | 2.14/0.06 |
+  | damp23 | 186..213 | 4.1/27.0 | 2.12/0.12 |
+  | seat4 | 202..229 | 4.3/27.0 | 2.14/0.01 |
+  | seat6 | 202..229 | 4.3/27.0 | 2.14/0.01 |
+  Margins are thin: contact 2.11 against 2.09, onShaft 28 against 29.6. Render `build/chain_runs/me/a360_20/sim_*_end_*`: the new loop on the
+  shaft, the old loop closed round both legs just below it (looked at). What the runs showed on the way: the released old ring opens and its
+  yarn slides into the legs within 50 frames when nothing holds it (tugging the work draws yarn out of it); held by the pinch it stays
+  closed. Pins moved in straight lines pass yarn through yarn (gap 0.0-0.15 mm); springs at 150-200 N/m keep the gap, 300 N/m and up do not.
+  A 325 degree ring left a 6 mm hole and the free second leg swung across it on damp17 (final loop 31-34 mm); 360 degrees fixes that.
+  `test_crochet_yarn_sim`: all PASS. Next: D3, ten in a row. The next stitch's old loop is this stitch's new loop; its pinch replaces this one.
