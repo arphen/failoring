@@ -115,16 +115,21 @@ Real hookSdfRaw(const Vec3& p, const HookShape& s) {
     d = smin(d, capsuleDist(p, W(-0.22, 4.5), W(-0.12, 5.0), 0.65 * R), 0.10 * R);
     d = smin(d, capsuleDist(p, W(-0.36, 4.2), W(-0.28, 4.6), 0.48 * R), 0.10 * R);
     // neck: the spine of the hook, on the far side of the throat from the mouth; it leaves the groove open toward +x
-    d = smin(d, capsuleDist(p, W(-0.50, 2.05), W(-0.50, 4.2), 0.50 * R), 0.12 * R);
+    d = smin(d, capsuleDist(p, W(s.neckX, 2.05), W(s.neckX, 4.2), s.neckR * R), 0.12 * R);
     // head: a dome on the axis from the tip to a flat back at the front of the groove (the back edge is the barb: a wall a yarn drawn
     // toward the tip is stopped by, while the mouth beside it stays open so the yarn can be laid in from the throat's side)
     Real head = capsuleDist(p, W(0.0, 0.35), W(0.0, 1.0), 0.62 * R);
-    head = smin(head, capsuleDist(p, W(0.0, 0.9), W(0.0, 1.5), 0.92 * R), 0.12 * R);
-    head = smin(head, capsuleDist(p, W(0.0, 1.4), W(0.0, 1.8), 1.00 * R), 0.10 * R);
-    head = smax(head, p.z - 2.05 * R, 0.08 * R);
+    head = smin(head, capsuleDist(p, W(0.0, 0.9), W(0.0, 1.5), 0.92 * s.headR * R), 0.12 * R);
+    head = smin(head, capsuleDist(p, W(0.0, 1.4), W(0.0, 1.8), s.headR * R), 0.10 * R);
+    if (s.flatBack == 1) {
+        head = smax(head, p.z - 2.05 * R, 0.08 * R);
+    } else if (s.flatBack == 2) {
+        // The wall only where the throat is: the barb's back face stops the yarn over, the smooth far side lets an old loop ride off.
+        head = smax(head, std::max(p.z - 2.05 * R, -p.x), 0.08 * R);
+    }
     // barb: a raised lip along the back edge on the mouth side. The neck pushes the yarn toward the mouth; without the lip it slips out round
     // the head's edge (the hook passes it by), with it the yarn is held between the neck and the lip, in front of the head's back.
-    head = smin(head, capsuleDist(p, Vec3{s.barbX * R, -s.barbHalfWidth * R, 2.0 * R}, Vec3{s.barbX * R, s.barbHalfWidth * R, 2.0 * R}, 0.20 * R), 0.10 * R);
+    head = smin(head, capsuleDist(p, Vec3{s.barbX * R, -s.barbHalfWidth * R, 2.0 * R}, Vec3{s.barbX * R, s.barbHalfWidth * R, 2.0 * R}, s.barbR * R), 0.10 * R);
     if (s.rim) {
         const Real rr = 0.22 * R, zr = 2.15 * R;
         head = smin(head, capsuleDist(p, Vec3{-0.95 * R, -0.90 * R, zr}, Vec3{-0.95 * R, 0.90 * R, zr}, rr), 0.06 * R);
@@ -729,15 +734,45 @@ void makeSlipKnot(YarnSim& sim) {
         sim.step(sim.hook);
         if (sim.onFrame) sim.onFrame();
     }
+    // A slip knot's noose closes down onto the thin neck until its hole is narrower than the yarn. A crocheter holds the loop at the size it
+    // should be while the knot comes snug; a gauge round the shaft does that here, so the starting loop stays a loop the chain can use.
+    const Real gauge = std::getenv("SLIP_GAUGE") ? std::atof(std::getenv("SLIP_GAUGE")) : 0;
+    if (gauge > 0) {
+        const Vec3 ax = sim.hook.axis();
+        StaticCapsule g;
+        g.a = sim.hook.tip + ax * (3.0 * sim.shape.R);
+        g.b = sim.hook.tip + ax * (12.0 * sim.shape.R);
+        g.r = gauge * m;
+        sim.fixtures.push_back(g);
+        sim.phase = "The loop held at its size while the knot comes snug";
+        sim.settle(30);
+    }
     // snugged: the working yarn pulled firmly closes the loop on the shaft
     sim.phase = "The working yarn pulled firmly snugs the loop on the shaft: the slip knot";
     const Real snug = std::getenv("SLIP_SNUG") ? std::atof(std::getenv("SLIP_SNUG")) : 4.0;
     if (snug > 0) {
         sim.ball.tension = snug * sim.params.tension;
-        sim.settle(150);
+        const Real frames = std::getenv("SLIP_SNUGT") ? std::atof(std::getenv("SLIP_SNUGT")) : 150;
+        sim.settle((int)frames);
     }
     sim.ball.tension = tension0;
     sim.settle(20);
+    if (gauge > 0) {
+        sim.fixtures.pop_back();   // the gauge out: the loop stays at the size it was held
+        sim.ball.tension = 0.2 * tension0;
+        sim.settle(10);
+        sim.ball.tension = tension0;
+    }
+    // The slip knot's loop is a noose: closed on the hook it is short and tight, too short to ride over the head. A crocheter opens it by
+    // pulling the loop (the hook) away from the knot while the working yarn feeds; the loop gets longer and looser on the shaft.
+    const Real open = std::getenv("SLIP_OPEN") ? std::atof(std::getenv("SLIP_OPEN")) : 0;
+    if (open > 0) {
+        sim.phase = "The slip knot opened: the hook drawn away from the knot, the loop longer on the shaft";
+        sim.ball.tension = 0.3 * tension0;
+        sim.moveHook(hookPose(sim.hook.tip + Vec3{0, open * m, 0}, -sim.hook.axis(), sim.hook.throat()), 0.7);
+        sim.ball.tension = tension0;
+        sim.settle(25);
+    }
     if (std::getenv("SIM_CHAINDBG")) {
         int l = -1, h = -1;
         if (hookLoop(sim, &l, &h))
@@ -797,13 +832,21 @@ void seatLoop(YarnSim& sim, Real clear, const Vec3& lift = Vec3{}, int lo = 0, i
     const Vec3 ax = sim.hook.axis();
     const Real step = 0.25e-3, most = 0.02;
     const Vec3 dl = lift * (step / most);
-    for (Real moved = 0; moved < most; moved += step) {
+    Real moved = 0;
+    for (; moved < most; moved += step) {
         bool inThroat = false;
         for (int i : roundHook(sim, -sim.shape.R, clear))
             if (i >= lo && i <= hi) { inThroat = true; break; }   // only the loop's own yarn (the stitch below it hangs near the tip too)
         if (!inThroat) break;
         sim.step(hookPose(sim.hook.tip - ax * step + dl, ax * -1.0, sim.hook.throat()));
         if (sim.onFrame) sim.onFrame();
+    }
+    if (envOr("SIM_SEATDBG", 0) > 0) {
+        Real mn = 1e9;
+        for (int i = lo; i <= hi && i < sim.rs.particleCount(); ++i)
+            mn = std::min(mn, dot(sim.rs.x[i] - sim.hook.tip, sim.hook.axis()));
+        std::printf("  seat: clear %.1f mm, moved %.1f mm, loop front now %.1f mm (%d steps)\n", clear * 1e3, moved * 1e3, mn * 1e3,
+                    (int)std::lround(moved / step));
     }
 }
 
@@ -866,10 +909,14 @@ ChainStart prepareChain(YarnSim& sim) {
     const bool late = sim.chains >= 4;           // the work has grown: hold it a little farther below the hook for the fifth chain
     const Real holdBelow = envOr("HOLD_BELOW", 10) + (late ? envOr("HOLD_LATE", 2) : 0);
     const Real holdT = envOr("HOLD_T", 0.5) + (late ? envOr("HOLD_T_LATE", 0.05) : 0);
-    const Real reach = envOr("CH_REACH", 9) * m;
+    // The first loop comes from the slip knot and is the whole starting ring (CH_TURNS1/CH_REACH1); after that each loop is a stitch loop,
+    // and the usual compact winding test is right.
+    const bool firstLoop = sim.chains == 0;
+    const Real reach = (firstLoop ? envOr("CH_REACH1", envOr("CH_REACH", 9)) : 9.0) * m;
+    const Real turns = firstLoop ? envOr("CH_TURNS1", envOr("CH_TURNS", 0.6)) : 0.6;
     // the loop on the hook
     int lo = -1, hi = -1;
-    if (!loopRange(sim, reach, envOr("CH_TURNS", 0.6), &lo, &hi) &&
+    if (!loopRange(sim, reach, turns, &lo, &hi) &&
         !(sim.loopsOnHook(front) != 0 && loopRange(sim, 1.6 * reach, 0.4, &lo, &hi))) {
         // A loose stitch from the last chain may not close on itself tightly enough for loopRange, but the linking stretch still
         // identifies it; use that rather than treating the hook as empty (the half-plane count has already seen a loop).
@@ -880,13 +927,16 @@ ChainStart prepareChain(YarnSim& sim) {
     }
     // The winding test finds the shortest stretch that winds 0.6 of a turn, which can be one side of a closed loop. If the whole
     // closed loop encloses the shaft, that is the stitch loop the new yarn has to pass through; use it instead.
-    if (envOr("CH_PREFER", 0) > 0) {
+    int prefLo = -1, prefHi = -1;
+    if (envOr("CH_PREFER", 0) > 0 || envOr("CH_FULL", 0) > 0) {
         int hl = -1, hh = -1;
         if (hookLoop(sim, &hl, &hh) && hh > hl && originInsideLoop(sim, hl, hh) && (hh - hl) > (hi - lo)) {
             if (envOr("SIM_CHAINDBG", 0) > 0)
                 std::printf("chain: using the closed loop %d..%d that encloses the shaft (not %d..%d)\n", hl, hh, lo, hi);
             lo = hl;
             hi = hh;
+            prefLo = hl;
+            prefHi = hh;
         }
     }
     c.oldLo = lo;
@@ -927,13 +977,13 @@ ChainStart prepareChain(YarnSim& sim) {
         }
     }
     sim.stageLog += std::string("p") + std::to_string(sim.loopsOnHook(front)) + " ";
-    if (envOr("SIM_STAGES", 0) > 0) std::printf("  prep %s: %d loops (front)\n", "found", sim.loopsOnHook(front));
+    if (envOr("SIM_STAGES", 0) > 0) std::printf("  [%d] prep %s: %d loops (front)\n", sim.frame, "found", sim.loopsOnHook(front));
     if (!sim.fingerOn) {
         sim.putFinger(sim.rs.particleCount() - 6, up * -1.0);
         moveHandTo(sim, sim.hand, 0.1);
     }
     sim.stageLog += std::string("p") + std::to_string(sim.loopsOnHook(front)) + " ";
-    if (envOr("SIM_STAGES", 0) > 0) std::printf("  prep %s: %d loops (front)\n", "held", sim.loopsOnHook(front));
+    if (envOr("SIM_STAGES", 0) > 0) std::printf("  [%d] prep %s: %d loops (front)\n", sim.frame, "held", sim.loopsOnHook(front));
     // the loop slid back onto the shaft, clear of the throat
     if (envOr("SEAT_HAND", 1) > 0) {
         // the left hand slides the work (and the loop with it) back along the shaft until the loop is clear of the throat; the finger goes along
@@ -950,7 +1000,22 @@ ChainStart prepareChain(YarnSim& sim) {
             if (sim.onFrame) sim.onFrame();
         }
     } else {
+        // The seat pushes the hook forward through the loop; the work grip skips yarn near the hook, so without a thumb on it the loop
+        // simply travels with the hook and nothing is seated. Hold the compact loop itself while the hook slides through it.
+        std::vector<int> seatPins;
+        if (envOr("SEAT_HOLD", 0) > 0) {
+            for (int i = lo; i <= hi && i < sim.rs.particleCount(); ++i) {
+                const Vec3 d = sim.rs.x[i] - sim.hook.tip;
+                const Real a = dot(d, ax);
+                if (a > -R && a < 30 * R && length(d - ax * a) < R + 3 * sim.params.radius) {
+                    sim.rs.pin(i);
+                    seatPins.push_back(i);
+                }
+            }
+            if (envOr("SIM_CHAINDBG", 0) > 0) std::printf("  seat: holding %d particles of the loop while the hook slides through\n", (int)seatPins.size());
+        }
         seatLoop(sim, envOr("SIM_SEAT", 5.0) * R, up * (envOr("SEAT_UP", 0.0) * m), lo, hi);
+        for (int i : seatPins) sim.rs.unpin(i);
     }
     if (!sim.homeSet) { sim.home = sim.hook.tip; sim.homeSet = true; }
     if (envOr("HOME_RETURN", 1) > 0) {
@@ -958,29 +1023,94 @@ ChainStart prepareChain(YarnSim& sim) {
         if (length(to - sim.hook.tip) > 0.3 * m) sim.moveHook(hookPose(to, -ax, sim.hook.throat()), 0.4);
     }
     sim.stageLog += std::string("p") + std::to_string(sim.loopsOnHook(front)) + " ";
-    if (envOr("SIM_STAGES", 0) > 0) std::printf("  prep %s: %d loops (front)\n", "seated", sim.loopsOnHook(front));
+    if (envOr("SIM_STAGES", 0) > 0) std::printf("  [%d] prep %s: %d loops (front)\n", sim.frame, "seated", sim.loopsOnHook(front));
     // snug on the shaft
     sim.phase = "The yarn drawn snug";
+    if (envOr("SIM_CHAINDBG", 0) > 0) {
+        Real z0 = 1e9, z1 = -1e9;
+        for (int i = lo; i <= hi; ++i) {
+            const Vec3 l = rotate(conj(sim.hook.q), sim.rs.x[i] - sim.hook.tip);
+            z0 = std::min(z0, l.z);
+            z1 = std::max(z1, l.z);
+        }
+        std::printf("chain [%d]: before the snug the loop is yarn %d..%d at %.1f..%.1f mm behind the tip (throat %.1f)\n", sim.frame, lo, hi, z0 * 1e3, z1 * 1e3,
+                    dot(sim.throatPoint() - sim.hook.tip, ax) * 1e3);
+    }
+    // The tension that draws the working yarn snug also drags a compact loop forward, off the shaft and onto the throat. A crocheter's
+    // left hand keeps the work (and with it the old loop) back while the right hand pulls. Pin the old loop's front for the snug so it stays
+    // behind the throat where the new yarn can be laid in front of it (experimental: PREP_HOLD=0 keeps the old behaviour).
+    std::vector<int> heldLoop;
+    if (envOr("PREP_HOLD", 0) > 0) {
+        // The loop on the shaft is the compact stretch, not the whole carried loop the prep preferred (the slip knot's ring is much
+        // bigger than the stitch loop). Find it again here, ignoring the preferred full stretch, and hold its front while the yarn comes tight.
+        int plo = lo, phi = hi;
+        loopRange(sim, reach, turns, &plo, &phi);
+        std::vector<std::pair<Real, int>> byZ;
+        for (int i = plo; i <= phi; ++i) {
+            const Vec3 l = rotate(conj(sim.hook.q), sim.rs.x[i] - sim.hook.tip);
+            byZ.push_back({l.z, i});
+        }
+        std::sort(byZ.begin(), byZ.end());
+        int n = (int)envOr("PREP_HOLDN", 3);
+        if (n <= 0 || n > (int)byZ.size()) n = (int)byZ.size();
+        for (int k = 0; k < n; ++k) {
+            sim.rs.pin(byZ[k].second);
+            heldLoop.push_back(byZ[k].second);
+        }
+        if (envOr("SIM_CHAINDBG", 0) > 0)
+            std::printf("chain: holding %d of the compact loop %d..%d through the snug (%d..%d)\n", n, plo, phi, byZ.front().second,
+                        byZ.back().second);
+    }
     sim.ball.tension = envOr("PREP_SNUG", 4.0) * sim.params.tension;
     sim.settle((int)(0.6 / sim.params.dt));
     sim.ball.tension = sim.params.tension;
-    if (!loopRange(sim, reach, envOr("CH_TURNS", 0.6), &c.oldLo, &c.oldHi)) {
+    if (envOr("PREP_HOLD", 0) >= 2) c.prepHeld = heldLoop;   // hold it through the yarn over; finishChain releases it
+    else for (int i : heldLoop) sim.rs.unpin(i);
+    if (!loopRange(sim, reach, turns, &c.oldLo, &c.oldHi)) {
         if (sim.loopsOnHook(front) == 0) {
             std::printf("chain: the loop came off while it was snugged\n");
+            for (int i : c.prepHeld) sim.rs.unpin(i);
             sim.release(c.hold);
             return c;
         }
         c.oldLo = lo;   // still on the hook (the half plane says so), only looser than the winding test wants: keep what was found
         c.oldHi = hi;
     }
+    // A slip knot's loop can close down onto the thin neck, where its hole is narrower than the yarn; the whole starting ring is then the
+    // only loop the new yarn can pass through. Re-find it here, after the snug (CH_FULL=1, CH_FULL_CHAINS=1 default).
+    if (envOr("CH_FULL", 0) > 0 && sim.chains <= (int)envOr("CH_FULL_CHAINS", 1)) {
+        int fl = -1, fh = -1;
+        if (hookLoop(sim, &fl, &fh) && fh > fl && originInsideLoop(sim, fl, fh) && (fh - fl) > (c.oldHi - c.oldLo)) {
+            if (envOr("SIM_CHAINDBG", 0) > 0)
+                std::printf("chain: keeping the whole starting ring %d..%d as the old loop (the compact stretch %d..%d is too small)\n", fl,
+                            fh, c.oldLo, c.oldHi);
+            c.oldLo = fl;
+            c.oldHi = fh;
+            c.oldLoop.clear();
+            for (int i = fl; i <= fh; ++i) c.oldLoop.push_back(i);
+        }
+    }
     if (usePrev) {
-        // The stitch just made is a better loop than a fresh sub-stretch of it. Cover both it and the loop found on the hook, so
-        // the fan the new yarn is tested against starts before the whole stitch and ends past it.
-        const int ulo = std::min(c.oldLo, prevLo), uhi = std::max(c.oldHi, prevHi);
-        if (envOr("SIM_CHAINDBG", 0) > 0)
-            std::printf("chain: old loop union with the last stitch %d..%d -> %d..%d\n", prevLo, prevHi, ulo, uhi);
-        c.oldLo = ulo;
-        c.oldHi = uhi;
+        const int prevMode = (int)envOr("CH_PREV", 0);
+        if (prevMode >= 2 && originInsideLoop(sim, prevLo, prevHi)) {
+            // The stitch just made *is* the loop the new yarn has to pass through; the stretch found on the hook before it is earlier
+            // work, and unioning the two makes a long loop the new yarn is drawn through by accident (CH_PREV=2).
+            if (envOr("SIM_CHAINDBG", 0) > 0)
+                std::printf("chain: old loop is the last stitch %d..%d alone (the on-hook stretch %d..%d is earlier work)\n", prevLo,
+                            prevHi, c.oldLo, c.oldHi);
+            c.oldLo = prevLo;
+            c.oldHi = prevHi;
+            c.oldLoop.clear();
+            for (int i = prevLo; i <= prevHi; ++i) c.oldLoop.push_back(i);
+        } else {
+            // The stitch just made is a better loop than a fresh sub-stretch of it. Cover both it and the loop found on the hook, so
+            // the fan the new yarn is tested against starts before the whole stitch and ends past it.
+            const int ulo = std::min(c.oldLo, prevLo), uhi = std::max(c.oldHi, prevHi);
+            if (envOr("SIM_CHAINDBG", 0) > 0)
+                std::printf("chain: old loop union with the last stitch %d..%d -> %d..%d\n", prevLo, prevHi, ulo, uhi);
+            c.oldLo = ulo;
+            c.oldHi = uhi;
+        }
     }
     if (envOr("HOOK_SEAT_AFTER", 0) > 0) {
         // The snug pulls the loop forward onto the throat. Seat the hook forward again afterwards, with the work still held, so the
@@ -1006,15 +1136,19 @@ ChainStart prepareChain(YarnSim& sim) {
     }
     c.loopsAtStart = sim.loopsOnHook(front);
     // where the old loop sits on the shaft: the HOLD_T variants must leave it in the same place for the yarn over to be repeatable
-    Real loAx = 1e9, hiAx = -1e9, loRad = 0;
+    Real loAx = 1e9, hiAx = -1e9, loRad = 0, radMin = 1e9, radSum = 0;
     for (int i = c.oldLo; i <= c.oldHi; ++i) {
         const Vec3 l = rotate(conj(sim.hook.q), sim.rs.x[i] - sim.hook.tip);
         loAx = std::min(loAx, l.z);
         hiAx = std::max(hiAx, l.z);
-        loRad = std::max(loRad, std::hypot(l.x, l.y));
+        const Real rad = std::hypot(l.x, l.y);
+        loRad = std::max(loRad, rad);
+        radMin = std::min(radMin, rad);
+        radSum += rad;
     }
-    std::printf("chain: the loop on the hook is yarn %d..%d at %.1f..%.1f mm on the shaft (%.1f mm out); %d loops from the front, around %d\n",
-                c.oldLo, c.oldHi, loAx * 1e3, hiAx * 1e3, loRad * 1e3, c.loopsAtStart, originInsideLoop(sim, c.oldLo, c.oldHi) ? 1 : 0);
+    std::printf("chain [%d]: the loop on the hook is yarn %d..%d at %.1f..%.1f mm on the shaft (%.1f..%.1f, mean %.1f mm out); %d loops from the front, around %d\n", sim.frame,
+                c.oldLo, c.oldHi, loAx * 1e3, hiAx * 1e3, radMin * 1e3, loRad * 1e3, radSum / (Real)(c.oldHi - c.oldLo + 1) * 1e3,
+                c.loopsAtStart, originInsideLoop(sim, c.oldLo, c.oldHi) ? 1 : 0);
     sim.stageLog += std::string("p") + std::to_string(sim.loopsOnHook(front)) + " ";
     if (envOr("SIM_STAGES", 0) > 0) std::printf("  prep %s: %d loops (front)\n", "snug", sim.loopsOnHook(front));
     c.tip0 = sim.hook.tip;
@@ -1099,7 +1233,15 @@ ChainStart prepareChain(YarnSim& sim) {
             moveHandTo(sim, sim.hand - ax * ((aC - aT) * envOr("YO_GAIN", 0.7)), 0.35);
         }
         const Vec3 thrBack = normalized(back + up * envOr("YO_TU", 0.3));
-        const HookPose aimPose = hookPose(c.tip0, -ax, thrBack);
+        // The carried yarn leaves the old loop's back end and runs to the finger, which sits opposite that end. Turn the throat toward
+        // the finger, not to a fixed world direction, so the open mouth faces the yarn instead of the head standing in its way.
+        Vec3 aim = thrBack;
+        if (envOr("YO_AIMFINGER", 0) > 0) {
+            Vec3 toHand = sim.hand - sim.hook.tip;
+            toHand = toHand - ax * dot(toHand, ax);
+            if (length(toHand) > 1e-6) aim = normalized(toHand + up * envOr("YO_AIMUP", 0.2));
+        }
+        const HookPose aimPose = hookPose(c.tip0, -ax, aim);
         sim.moveHook(aimPose, 0.4);
         const Real step = envOr("YO_CSTEP", 0.1) * m;
         bool in = false;
@@ -1118,8 +1260,9 @@ ChainStart prepareChain(YarnSim& sim) {
                 const Real d = sim.shape.groove ? std::hypot(std::hypot(l.x - sim.shape.grooveX * R, l.z - sim.shape.grooveZ * R), dy)
                                                 : length(sim.rs.x[i] - sim.throatPoint());
                 if (d < closest) { closest = d; bi = i; bl = l; }
-                if (d < envOr("YO_CATCHR", 1.6) * m) { in = true; catchParticle = i; break; }
             }
+            in = bi >= 0 && closest < envOr("YO_CATCHR", 1.6) * m;
+            if (in) catchParticle = bi;
         };
         // The finger lays the working yarn into the groove: move the hand by the yarn's offset from the groove, and repeat. The
         // hook stays put, so the old loop is not pushed off the tip while the yarn is being caught.
@@ -1131,8 +1274,15 @@ ChainStart prepareChain(YarnSim& sim) {
                 const Real e = length(err);
                 if (e < 1e-9) break;
                 if (e > 2.5 * m) err = err * (2.5 * m / e);
-                Vec3& h = sim.fingerOn ? sim.hand : sim.ball.target;
-                h -= err * envOr("YO_SERVO_GAIN", 0.7);
+                if (envOr("YO_HOOKSERVO", 0) > 0) {
+                    // The crocheter's right hand takes the hook to the yarn: move the hook so the groove surrounds the yarn. This does
+                    // not pull the working yarn through the old loop the way moving the finger does; the hook (and the old loop with it)
+                    // comes to where the yarn already lies.
+                    sim.hook.tip += err * envOr("YO_SERVO_GAIN", 0.7);
+                } else {
+                    Vec3& h = sim.fingerOn ? sim.hand : sim.ball.target;
+                    h -= err * envOr("YO_SERVO_GAIN", 0.7);
+                }
                 sim.step(sim.hook);
                 if (sim.onFrame) sim.onFrame();
                 if (envOr("SIM_SERVODBG", 0) > 0)
@@ -1250,6 +1400,9 @@ ChainStart prepareChain(YarnSim& sim) {
 }
 
 void finishChain(YarnSim& sim, const ChainStart& c) {
+    // PREP_HOLD=2 lets the old loop slide from the pull on; PREP_HOLD=3 is the left hand holding it while the hook is drawn out: the loop
+    // stays where it is and the hook slides through it, instead of the two travelling together and no link forming.
+    if (envOr("PREP_HOLD", 0) == 2) for (int i : c.prepHeld) sim.rs.unpin(i);
     const Real m = kMm;
     const Vec3 ax = sim.hook.axis();
     const Vec3 up{0, 1, 0}, front{0, 0, 1};
@@ -1258,17 +1411,93 @@ void finishChain(YarnSim& sim, const ChainStart& c) {
         if (envOr("SIM_STAGES", 0) <= 0) return;
         const int n = sim.rs.particleCount();
         (void)n;
-        std::printf("  %s: %d loops on the hook (front), %d (up), throat %s\n", what, sim.loopsOnHook(front), sim.loopsOnHook(up),
+        std::printf("  [%d] %s: %d loops on the hook (front), %d (up), throat %s\n", sim.frame, what, sim.loopsOnHook(front), sim.loopsOnHook(up),
                     sim.throatRingOn() ? "holds" : "empty");
     };
     stage("caught");
     // the hook turned toward the crocheter until its throat faces down, the yarn caught in it
     sim.phase = "The hook turns toward you, its throat down, the yarn caught in it";
-    const Vec3 thrDown = normalized(front * envOr("PU_RF", 0.4) - up);
+    const Vec3 thrDown = normalized(front * envOr("PU_RF", 0.4) + up * envOr("PU_UP", -1.0));
     const Real rt = envOr("PU_RT", 0.6) / 2;
     sim.moveHook(hookPose(sim.hook.tip, -ax, normalized(front - up * 0.3)), rt);
     sim.moveHook(hookPose(sim.hook.tip, -ax, thrDown), rt);
     stage("turned");
+    // The old loop must stay where it is while the hook (and the new loop) goes through it; otherwise it is dragged along and the new loop
+    // never crosses it. The left hand holds it open at three points round its front, as a crocheter's thumb and finger do, and lets the hook
+    // slide through the hole. PU_SPREAD is how far each point is opened out; PU_HOLDMM is how far the hook goes before the hand lets go.
+    std::vector<int> spreadGrips;
+    {
+        const Real spread = envOr("PU_SPREAD", 0);
+        if (spread > 0 && c.oldLo >= 0 && c.oldHi > c.oldLo) {
+            const Vec3 ax0 = sim.hook.axis();
+            Real zmin = 1e9, zmax = -1e9;
+            for (int i = c.oldLo; i <= c.oldHi; ++i) {
+                const Real z = dot(sim.rs.x[i] - sim.hook.tip, ax0);
+                zmin = std::min(zmin, z);
+                zmax = std::max(zmax, z);
+            }
+            std::vector<std::pair<Real, int>> ang;
+            for (int i = c.oldLo; i <= c.oldHi; ++i) {
+                const Vec3 l = rotate(conj(sim.hook.q), sim.rs.x[i] - sim.hook.tip);
+                if (dot(sim.rs.x[i] - sim.hook.tip, ax0) <= zmin + envOr("PU_SPREADBAND", 6.0) * m)
+                    ang.push_back({std::atan2(l.y, l.x), i});
+            }
+            std::sort(ang.begin(), ang.end());
+            const int n = std::min((int)envOr("PU_SPREADN", 3), (int)ang.size());
+            std::vector<Vec3> base;
+            std::vector<Vec3> dir;
+            for (int k = 0; k < n; ++k) {
+                const int i = ang[(size_t)((Real)k * ang.size() / std::max(1, n))].second;
+                const Vec3 l = rotate(conj(sim.hook.q), sim.rs.x[i] - sim.hook.tip);
+                Vec3 d = rotate(sim.hook.q, Vec3{l.x, l.y, 0});
+                const Real len = std::sqrt(dot(d, d));
+                if (len < 1e-9) continue;
+                d = d / len;
+                base.push_back(sim.rs.x[i]);
+                dir.push_back(d);
+                YarnSim::Grip g;
+                g.particles.push_back(i);
+                g.offset.push_back(Vec3{});
+                g.at = sim.rs.x[i];
+                sim.rs.pin(i);
+                sim.grips.push_back(g);
+                spreadGrips.push_back((int)sim.grips.size() - 1);
+            }
+            const int steps = std::max(1, (int)(envOr("PU_SPREADT", 0.4) / sim.params.dt));
+            sim.phase = "The left hand holds the old loop open while the hook pulls through";
+            for (int s2 = 1; s2 <= steps; ++s2) {
+                for (size_t k = 0; k < spreadGrips.size(); ++k)
+                    sim.grips[spreadGrips[k]].at = base[k] + dir[k] * (spread * m * (Real)s2 / steps);
+                sim.step(sim.hook);
+                if (sim.onFrame) sim.onFrame();
+            }
+        }
+    }
+    // The throat (and the new bight in it) must face the old loop's opening as the hook draws back; with the throat at a fixed world
+    // direction it often faces the old loop's closed side, and the bight goes round it instead of through it. PU_ALIGN=1 rolls the hook
+    // so the throat faces the middle of the old loop's arc (2: the opposite side); the spread hold opens that arc into a gate.
+    Vec3 pullThroat = thrDown;
+    if (envOr("PU_ALIGN", 0) > 0 && c.oldLo >= 0 && c.oldHi > c.oldLo) {
+        const Vec3 tip0 = sim.hook.tip;
+        const Quat q0 = sim.hook.q;
+        Real sx = 0, sy = 0;
+        for (int i = c.oldLo; i <= c.oldHi; ++i) {
+            const Vec3 l = rotate(conj(q0), sim.rs.x[i] - tip0);
+            const Real a = std::atan2(l.y, l.x);
+            sx += std::cos(a);
+            sy += std::sin(a);
+        }
+        Real mid = std::atan2(sy, sx) + envOr("PU_ALIGN_OFF", 0) * kPi / 180;
+        if (envOr("PU_ALIGN", 0) >= 2) mid += kPi;
+        const Vec3 aim = rotate(q0, Vec3{std::cos(mid), std::sin(mid), 0});
+        pullThroat = normalized(aim + thrDown * envOr("PU_ALIGN_BLEND", 0.0));
+        if (envOr("SIM_CHAINDBG", 0) > 0)
+            std::printf("  pull: throat turned %.0f deg to face the old loop's arc\n", mid * 180 / kPi);
+    }
+    if (envOr("PU_ALIGN", 0) > 0) {
+        sim.moveHook(hookPose(sim.hook.tip, -ax, pullThroat), envOr("PU_ALIGN_T", 0.3));
+        if (sim.onFrame) sim.onFrame();
+    }
     // drawn back through the loop: the hook (and the finger with it) to the right a little each frame until the old loop no longer winds round it
     sim.phase = "Pull through: the hook draws the yarn through the loop on the hook";
     const Real pullTension0 = sim.ball.tension;
@@ -1277,19 +1506,49 @@ void finishChain(YarnSim& sim, const ChainStart& c) {
         const Real step = envOr("PU_V", 12) * m * sim.params.dt;
         const Real reach = envOr("CH_REACH", 9) * m;
         const int loopsBefore = sim.loopsOnHook(front);
+        const Real maxPull = envOr("PU_MAX", 50) * m;
         int clear = 0;
-        for (Real moved = 0; moved < 0.05 && clear < (int)envOr("PU_EXTRA", 6); moved += step) {
+        Real moved = 0;
+        bool prepReleased = false;
+        const Real spreadHold = envOr("PU_HOLDMM", 12) * m;
+        for (; moved < maxPull && clear < (int)envOr("PU_EXTRA", 6); moved += step) {
+            if (!spreadGrips.empty() && moved >= spreadHold) {
+                for (int k = (int)spreadGrips.size() - 1; k >= 0; --k) sim.release(spreadGrips[k]);
+                spreadGrips.clear();
+                if (envOr("SIM_CHAINDBG", 0) > 0) std::printf("  spread: the hand lets the loop go at %.1f mm\\n", moved / m);
+            }
             sim.hand += ax * (step * envOr("PU_FOLLOW", 1.0));
-            sim.step(hookPose(sim.hook.tip + ax * step, -ax, thrDown));
+            sim.step(hookPose(sim.hook.tip + ax * step, -ax, pullThroat));
             if (sim.onFrame) sim.onFrame();
+            if (!prepReleased && envOr("PREP_HOLD", 0) >= 3 && moved >= envOr("PU_HOLDMM", 12) * m) {
+                for (int i : c.prepHeld) sim.rs.unpin(i);
+                prepReleased = true;
+            }
             // The rig's clean first loop comes off when the half-plane count drops. From the slip knot the half-plane count also drops when a
             // chain leg leaves, so there the old loop is off only when its own yarn no longer winds round the shaft.
             const bool halfPlane = (sim.rig && envOr("PU_RIGWIND", 0) <= 0) || sim.chains < (int)envOr("PU_HALF_CHAINS", 0);
-            if (halfPlane)
+            if (envOr("PU_CLEAR", 0) > 0) {
+                // Winding round the hook's axis cannot tell a loop round the shaft from one that has slid off the tip: the axis line still
+                // passes through its bight. The loop is off the tip when every particle of it lies on the tip side of the tip.
+                Real aMax = -1e9, aMin = 1e9;
+                for (int i = c.oldLo; i <= c.oldHi; ++i) {
+                    const Real a = dot(sim.rs.x[i] - sim.hook.tip, ax);
+                    aMax = std::max(aMax, a);
+                    aMin = std::min(aMin, a);
+                }
+                clear = aMax < envOr("PU_CLEARMM", 0.5) * m ? clear + 1 : 0;
+                if (envOr("SIM_CHAINDBG", 0) > 0 && ((int)std::lround(moved / step)) % 20 == 0)
+                    std::printf("  pull %4.1f mm: the old loop sits %5.1f..%5.1f mm from the tip\n", moved * 1e3, aMin * 1e3, aMax * 1e3);
+            } else if (halfPlane) {
                 clear = std::abs(sim.loopsOnHook(front)) <= std::abs(loopsBefore) - 1 ? clear + 1 : 0;
-            else
+            } else {
                 clear = std::fabs(sim.windingNear(c.oldLo, c.oldHi, reach)) < envOr("PU_OLDWIND", 0.5) ? clear + 1 : 0;
+            }
         }
+        if (envOr("SIM_CHAINDBG", 0) > 0)
+            std::printf("  pull: the hook moved %.1f mm; the old loop is %s (clear %d)\n", moved * 1e3,
+                        clear >= (int)envOr("PU_EXTRA", 6) ? "off the tip" : "still on the hook", clear);
+        for (int i : c.prepHeld) sim.rs.unpin(i);   // the pull through done: the loop may hang freely again
         // The winding and half-plane signals can both say "off" while the final linked stretch is still the old loop (a leg left, or the
         // loop is open but still links the axis). If so, keep drawing the hook through until the judge's own stretch is no longer the old loop.
         auto oldStill = [&] {
@@ -1303,11 +1562,47 @@ void finishChain(YarnSim& sim, const ChainStart& c) {
         if (envOr("PU_FIX", 0) > 0)
             for (Real moved = 0; moved < envOr("PU_FIXMAX", 40) * m && oldStill(); moved += step) {
                 sim.hand += ax * (step * envOr("PU_FOLLOW", 1.0));
-                sim.step(hookPose(sim.hook.tip + ax * step, -ax, thrDown));
+                sim.step(hookPose(sim.hook.tip + ax * step, -ax, pullThroat));
                 if (sim.onFrame) sim.onFrame();
             }
     }
+    for (int k = (int)spreadGrips.size() - 1; k >= 0; --k) sim.release(spreadGrips[k]);
+    spreadGrips.clear();
     sim.ball.tension = pullTension0;
+    // The hook has drawn the new loop through; the old loop has not always slid off the head. The left hand then slips it forward off the tip
+    // (the hook stays still, the new loop stays in the throat), instead of dragging the whole work further.
+    const Real slip = envOr("PU_SLIP", 0);
+    if (slip > 0 && c.oldLo >= 0 && c.oldHi > c.oldLo) {
+        const Vec3 ax2 = sim.hook.axis();
+        std::vector<std::pair<Real, int>> ord;
+        for (int i = c.oldLo; i <= c.oldHi; ++i) ord.push_back({dot(sim.rs.x[i] - sim.hook.tip, ax2), i});
+        std::sort(ord.begin(), ord.end());
+        const int n = std::min((int)envOr("PU_SLIPN", 4), (int)ord.size());
+        YarnSim::Grip g;
+        Vec3 at{};
+        for (int k = 0; k < n; ++k) {
+            g.particles.push_back(ord[k].second);
+            at += sim.rs.x[ord[k].second];
+        }
+        at = at / (Real)n;
+        for (int k = 0; k < n; ++k) {
+            g.offset.push_back(sim.rs.x[g.particles[k]] - at);
+            sim.rs.pin(g.particles[k]);
+        }
+        g.at = at;
+        sim.grips.push_back(g);
+        const int gi = (int)sim.grips.size() - 1;
+        const int steps = std::max(1, (int)(envOr("PU_SLIPT", 0.3) / sim.params.dt));
+        sim.phase = "The left hand slips the old loop off the tip";
+        for (int k = 1; k <= steps; ++k) {
+            sim.grips[gi].at = at - ax2 * (slip * m * (Real)k / steps);
+            sim.step(sim.hook);
+            if (sim.onFrame) sim.onFrame();
+        }
+        sim.release(gi);
+        sim.settle(10);
+        if (envOr("SIM_CHAINDBG", 0) > 0) std::printf("  slip: moved the old loop's front %.1f mm toward the tip\n", slip);
+    }
     if (c.catchGripped && envOr("YO_GRIPREL", 0) <= 0) sim.releaseThroatGrip();
     stage("pulled");
     // the throat lets go; the yarn drawn snug at the finger; the work let go
@@ -1445,6 +1740,39 @@ int carriedRound(const YarnSim& sim0) {
     return carried * 45;
 }
 
+// Is a point inside the opening of a yarn loop, in the loop's own best-fit plane? A stitch needs the new loop inside the old
+// loop's opening and some of the old loop's yarn inside the new loop's; this is the direct geometric test, independent of closures.
+static bool pointInLoop(const std::vector<Vec3>& loop, const Vec3& p) {
+    if (loop.size() < 3) return false;
+    Vec3 c{};
+    for (const Vec3& q : loop) c += q;
+    c = c / (Real)loop.size();
+    Vec3 n{};
+    for (size_t i = 0; i < loop.size(); ++i) n += cross(loop[i] - c, loop[(i + 1) % loop.size()] - c);
+    const Real nl = std::sqrt(dot(n, n));
+    if (nl < 1e-12) return false;
+    n = n / nl;
+    Vec3 u = std::fabs(n.x) < 0.9 ? cross(n, Vec3{1, 0, 0}) : cross(n, Vec3{0, 1, 0});
+    const Real ul = std::sqrt(dot(u, u));
+    if (ul < 1e-12) return false;
+    u = u / ul;
+    const Vec3 v = cross(n, u);
+    const Real px = dot(p - c, u), py = dot(p - c, v);
+    int wn = 0;
+    for (size_t i = 0; i < loop.size(); ++i) {
+        const Vec3& a = loop[i];
+        const Vec3& b = loop[(i + 1) % loop.size()];
+        const Real ax = dot(a - c, u), ay = dot(a - c, v);
+        const Real bx = dot(b - c, u), by = dot(b - c, v);
+        if (ay <= py) {
+            if (by > py && (bx - ax) * (py - ay) - (by - ay) * (px - ax) > 0) ++wn;
+        } else if (by <= py && (bx - ax) * (py - ay) - (by - ay) * (px - ax) < 0) {
+            --wn;
+        }
+    }
+    return wn != 0;
+}
+
 ChainResult judgeChain(const YarnSim& sim, const ChainStart& c) {
     ChainResult r;
     const int front = sim.loopsOnHook(Vec3{0, 0, 1});
@@ -1528,14 +1856,33 @@ ChainResult judgeChain(const YarnSim& sim, const ChainStart& c) {
         const std::vector<Vec3> B(sim.rs.x.begin() + c.oldHi + 1, sim.rs.x.end());
         cross = loopCrossings(A, B, sim.params.radius);
     }
+    // The whole working yarn includes both legs of the new bight, whose crossings cancel; the clean stretch is the bight alone.
+    int crossClean = 0;
+    int inOld = 0, inNew = 0, nOld = 0, nNew = 0;
+    if (linked && c.oldLo >= 0 && c.oldHi >= c.oldLo) {
+        const std::vector<Vec3> A(sim.rs.x.begin() + c.oldLo, sim.rs.x.begin() + c.oldHi + 1);
+        const std::vector<Vec3> B(sim.rs.x.begin() + lo, sim.rs.x.begin() + hi + 1);
+        for (const Vec3& q : B) {
+            ++nNew;
+            if (pointInLoop(A, q)) ++inOld;
+        }
+        for (const Vec3& q : A) {
+            ++nOld;
+            if (pointInLoop(B, q)) ++inNew;
+        }
+        if (clo >= 0 && chi > clo) {
+            const std::vector<Vec3> Bc(sim.rs.x.begin() + clo, sim.rs.x.begin() + chi + 1);
+            crossClean = loopCrossings(A, Bc, sim.params.radius);
+        }
+    }
     const bool oldAround = originInsideLoop(sim, c.oldLo, c.oldHi);
     if (envOr("SIM_CHAINDBG", 0) > 0)
         std::printf("  judge: old %d..%d, final %d..%d (span %d, overlap %d, old %.0f%%, r mean/max %.1f/%.1f mm), front %d, after %d, "
                     "added %d, linked %d, new %d, newyarn %d, seq %d (prev %d), oldwind %.2f, old-final link %.2f, clean %d..%d link %.2f, "
-                    "cross %d, around %d\n",
+                    "cross %d, crossClean %d, inOld %d/%d, inNew %d/%d, around %d\n",
                     c.oldLo, c.oldHi, lo, hi, span, overlap, oldFraction * 100, r.linkMeanR * 1e3, r.linkMaxR * 1e3, r.frontLoops,
                     c.loopsAfterYo, added, linked ? 1 : 0, newLoop ? 1 : 0, newYarn ? 1 : 0, r.sequential ? 1 : 0, c.prevHi, r.oldWind,
-                    oldFinalLink, clo, chi, cleanLink, cross, oldAround ? 1 : 0);
+                    oldFinalLink, clo, chi, cleanLink, cross, crossClean, inOld, nNew, inNew, nOld, oldAround ? 1 : 0);
     if (envOr("SIM_CHAINDBG", 0) > 0 && !linked && c.oldLo >= 0) {
         int a = -1, b = -1;
         if (loopRange(sim, 9e-3, 0.5, &a, &b)) {

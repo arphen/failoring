@@ -33,6 +33,14 @@ struct HookShape {
     // envelope blocks old loops; one set inside the mouth still blocks yarn in the throat (x ~0.3-0.6R) without standing in their way.
     Real barbX = 0.85;
     Real barbHalfWidth = 1.0;
+    Real barbR = 0.20;
+    // The head's dome and the spine behind the throat, in shaft radii. A thin neck lets a snug old loop settle into a waist that the
+    // wider head then cannot climb; a real hook's head is barely wider than its shaft, so the loop rides over it.
+    Real headR = 1.00;
+    Real neckX = -0.50, neckR = 0.50;
+    // The flat wall across the back of the head stops a yarn drawn toward the tip (the first yarn over leans on it), and with a head as
+    // wide as the shaft it also stops an old loop from riding off the tip. The groove and the grip can hold the new yarn without it.
+    int flatBack = 1;   // 0: round back, 1: full wall, 2: wall only on the mouth side (the barb's back face)
     // An open throat groove cut across the mouth side of the head (off by default: the old head is a closed bulb whose throat point a
     // full-radius yarn cannot reach). Where its centre sits and its radius, in shaft radii; it runs across the hook in y.
     bool groove = false;
@@ -192,6 +200,7 @@ struct ChainStart {
     int oldLo = -1, oldHi = -1;
     int prevHi = -1;            // the last valid chain's final linking stretch ended here (particle index); -1 for the first chain
     int loopsAtStart = 0, loopsBefore = 0, loopsAfterYo = 0;   // loopsOnHook(front) at the start and after the yarn over
+    std::vector<int> prepHeld;  // the old loop's front, pinned through the yarn over (PREP_HOLD=2)
     int catchParticle = -1;     // the working-yarn particle the throat caught
     bool catchGripped = false;  // the barb holds it (a hard grip) through the pull
     Real length = 0;            // the yarn between the tail and the hand (m) when the stitch began

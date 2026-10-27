@@ -194,6 +194,39 @@ turn back, snug, release). `judgeChain` decides "made".
   The next two problems are the yarn over when the old loop is at the throat (3–4 mm) and the first stitch's final, which still contains
   the old loop.
 
+- **First chain from the slip knot: the loop is smaller than the hook (2026-10-22).** The prep's compact loop is 13–17 particles (~17 mm
+  of yarn) at 9.0–16.4 mm behind the tip, radial 0.9–5.1 mm (mean 2.6–3.0). The hook reaches its full 2.5 mm shaft radius only at `z=5.2R`
+  (13 mm); the neck is a 0.5R capsule at `x=-0.5R` from 2.05R to 4.2R, then a taper to 5.4R. A loop around the shaft (2.5 mm + 0.75 mm
+  contact radius) needs 20.4 mm of centreline yarn, so the 17 mm loop cannot have a hole wider than the yarn; it sits squeezed on the neck,
+  and the noose cannot feed enough yarn through the knot to open over the head. The pull stalls with the old loop on the head (front 3.8 mm,
+  back 10.2 mm) while the new loop forms beside it. This is the root cause of the red first chain, not the yarn over.
+- Levers tried this round with no repeatable link (1-chain runs, strict judges): `SLIP_SNUG=1/2/3`, `SLIP_SNUGT=40/80`, `SLIP_OPEN=2`,
+  `PREP_HOLD=1/2/3`, `SEAT_HOLD=1` with `SIM_SEAT=6/7/8`, `PU_MAX/PU_CLEAR/PU_UP`, `PU_FIX`, `SIM_MU=0.1`, `PU_TEN=0/0.2/0.5` (inert: the
+  frames and judges are identical to `PU_TEN=1`), hook friction 0–0.25, and the half-back/slim heads (`SIM_FLATBACK=2 SIM_NECKX=-0.30
+  SIM_NECKR=0.72 SIM_HEADR=0.86 SIM_BARBR=0.14 SIM_BARBX=0.75`). Lowering `SLIP_SNUG` does not lengthen the compact loop: it stays 13–17
+  particles.
+- `CH_FULL=1` keeps the whole starting ring 88..186 (99 particles, 9.2–35.6 mm, mean radial 18.4 mm) as the first old loop. A 45 mm pull
+  drags it (still on at 45) and the new loop forms outside it; no link. The whole ring is too loose to be the stitch loop.
+- `SLIP_GAUGE` (new lever, default off) holds a 3.5/4.5/5.5 mm capsule coaxial with the shaft (3R..12R) while the knot closes, then removes
+  it. At 4.5 mm the compact loop's radial mean rises to 3.4 mm. One 35 mm pull is the only strict pass seen: prep `around 1`, `cross 1`,
+  `clean 189..208 link -1.00` (old 168..182). But the final stretch was still the old loop (47% overlap, `newyarn 0`) and the old loop stayed
+  on the head at 3.8–10.2 mm. Renders (`sim_c0860_obl.png`, `sim_c1340_obl.png`, `sim_c1420_obl.png`, `sim_001_end_obl.png`) show a yarn
+  tangle at the head, not a chain V; the clean link is a closure artefact. Pulling further (50 mm) or slipping the old loop off with the new
+  left-hand grip (`PU_SLIP=6/8`, front particles, 0.3 s) drops `cross` and both links to 0 and leaves a clean 19–20 particle new loop on the
+  shaft (mean 3.2–3.4 mm) but no link. The slip step works mechanically; it cannot preserve a link that was not there.
+- The gauge runs put 0.98–1.38 mm of yarn into the hook (the baseline best is 0.04–0.36 mm), and `test_crochet_yarn_sim` is still red with
+  10 failures: chain 1 passes, chain 2 relinks 74..113, chain 3's yarn over is not caught, contact 2.04 mm self / 2.76 mm in the hook.
+- **Conclusion and next structural options.** The first chain from the slip knot cannot be made with the current noose and head: the noose
+  collapses to the neck (hole narrower than the yarn) and the full ring is too loose to be a stitch. The missing object is a starting loop
+  whose hole is wider than the head and whose knot sits at the work side and can feed both ways. Options, in order:
+  1. Form the loop over a controlled mandrel and keep it open through the first pull (the gauge must move with the hook, not stay in world
+     space), or make the knot's friction direction-independent so the noose can open as well as close.
+  2. Reshape the hook so the full shaft radius starts by ~3.5R, with a short neck at ≥0.8R and a head ≤0.85R; re-run the slip knot and the
+     first chain. A slim head loses the first yarn over, so the groove/throat catch must be re-tuned with it.
+  3. Make the strict judge closure-free (a full 360° old-loop stretch plus crossings) before further tuning; the current `clean` link changes
+     when the old loop leaves the tip, which is exactly the motion that must be measured.
+  No defaults were changed. New levers are default off: `CH_FULL=0`, `SLIP_GAUGE=0`, `PU_SLIP=0`, `SEAT_HOLD=0`.
+
 ## 6. The SDF hook
 
 `HookShape::sdf` is **true** by default. The hook is one smooth body:
@@ -250,6 +283,34 @@ caught; contact is 2.04 mm self / 2.76 mm in the hook. The best slip chain under
 one real stitch (chain 3 in the command above), so step 4 is not met and step 5's regression test is red. The next step is not another
 loop-count knob: it is keeping the old loop 3–5 mm behind the throat through the snug, and making the first stitch's final not include the
 old loop. See the new bullet in section 5 for the exact command and the failed levers.
+
+**Update after the full-turn / previous-loop experiments (2026-10-22):** a direct geometric diagnostic was added to the judge
+(`inOld` = new-loop particles inside the old loop's own best-fit-plane opening; `inNew` = old-loop particles inside the new loop's
+opening; printed with `crossClean`). The chain 1 candidate uses the whole 100 mm starting ring (`CH_TURNS1=1.0 CH_REACH1=20`, first loop
+only), with `SLIP_GAUGE=4.5`: old 92..192, final 192..207 (16 mm, r 2.8, 6% old, `newyarn 1`), `inOld 11–12/16`, but `cross` and
+`crossClean` both 0, and the render is a tangle at the head, not a V. `inNew` (4–5/101) is confounded by the shared working-yarn leg and
+is not evidence by itself. The decisive repeat test is chain 2. With `CH_PREV=2` (use the previous stitch's final loop alone, not the
+union) chain 2's old loop is 192..207 and its final is 207..227 (21 mm, r 3.5, `newyarn 1`), but `inOld 0/21`: the new loop is beside the
+old loop, not through it. With `CH_PREV=1` the union 155..207 gave `inOld 7/21` and looked linked; that was the union's long loop, not a
+stitch. Chain 3 is likewise 0/18. The physical reason is loop length: a loop on the full 2.5 mm shaft needs ≥20.4 mm of yarn; chain 1's
+final is 16 mm, so it sits on the 2.5 mm-diameter neck (12.6 mm) and its opening is too narrow for the next head/bight. The yarn-over
+bight is ~16 mm and cannot be lengthened by moving the finger out: for the carried slip knot `YO_SOLVE=1` overrides `YO_RADL`, and
+`YO_SOLVE_D` 25/30/35/40 breaks the yarn over (0 loops); 20 is the working maximum. New, default-off levers in the source:
+`CH_TURNS1`/`CH_REACH1` (first loop only), `CH_PREV=2` (previous loop alone), and the `inOld`/`inNew` judge print. No repeatable chain:
+chain 1 is a full-ring artifact, chains 2–3 are unlinked, and the 16 mm bight is the remaining structural limit. The next options are
+(a) a post-pull loop opener that feeds yarn from the ball until the new loop is ≥25 mm, or (b) a hook whose shaft under the working loop
+is no larger than the loop's own circumference (a thinner neck/longer taper), so a 16 mm loop can still open. Do not relax the strict
+link test; `cross` alone cannot see this failure.
+
+**Update after the finger-distance and hook-roll experiments (2026-10-22, later):** neither route works. `YO_SOLVE_D` 21/22/23/25/30/35/40
+all break the yarn over (chain 1 ends with 0 or an all-old loop; 21 leaves a 44-particle all-old stretch). 20 is the edge, and it gives
+the 16 mm bight. `YO_RADL=16/20` is inert because `YO_SOLVE=1` overrides it. Rolling the hook so the throat faces the old loop's arc
+(`PU_ALIGN=1` + the spread hold) gives a clean 27-particle final 194..220 on chain 1 but `inOld 0/27`: the bight went past the old loop,
+not through it. Other rolls (180°, +90°, blend) return 100% old or run away, and every align run violates the no-self-penetration rule
+(closest self-gap 0.18–0.39 mm against the 2.09 mm yarn, strain 16–23). The spread/align route is rejected, not just unlinked. No
+defaults were changed; the new levers stay off. The three-chain test is still red (10 failures), and section 7 still has no repeatable
+chain from the slip knot. A stitch cannot be claimed from the `cross`/`clean` values alone: in `al1n` the clean 216..230 stretch gives
+link −1.00 while the final loop is 54% the old loop — the closure artifact again.
 
 ## 8. Tools in the CLI (`build/yarn_sim`)
 

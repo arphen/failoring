@@ -79,6 +79,11 @@ int main(int argc, char** argv) {
     if (std::getenv("SIM_SQUASH")) sim.shape.squash = std::atof(std::getenv("SIM_SQUASH"));
     if (std::getenv("SIM_BARBW")) sim.shape.barbHalfWidth = std::atof(std::getenv("SIM_BARBW"));
     if (std::getenv("SIM_BARBX")) sim.shape.barbX = std::atof(std::getenv("SIM_BARBX"));
+    if (std::getenv("SIM_BARBR")) sim.shape.barbR = std::atof(std::getenv("SIM_BARBR"));
+    if (std::getenv("SIM_HEADR")) sim.shape.headR = std::atof(std::getenv("SIM_HEADR"));
+    if (std::getenv("SIM_NECKX")) sim.shape.neckX = std::atof(std::getenv("SIM_NECKX"));
+    if (std::getenv("SIM_NECKR")) sim.shape.neckR = std::atof(std::getenv("SIM_NECKR"));
+    if (std::getenv("SIM_FLATBACK")) sim.shape.flatBack = std::atoi(std::getenv("SIM_FLATBACK"));
     if (std::getenv("SIM_HOOKSHOT")) {   // the hook alone, close up: from the throat side, from the side, from above, at a slant
         const HookPose hp = hookPose(Vec3{}, Vec3{-1, 0, 0}, Vec3{0, 1, 0});
         const YarnMesh hm = hookMesh(hp, sim.shape, 0.1e-3);
