@@ -41,12 +41,12 @@ From the repo owner:
 
 For this plan:
 - **The judge is frozen after Phase 0b.** Never loosen, reword or add a fallback to `judgeStitch`, its fixtures or the harness verdict.
-  If you think the judge is wrong, stop and write down why (section 6). Do not work around it.
+  If you think the judge is wrong, prove it with a fixture (6.3). Do not work around it.
 - **One hypothesis, one lever.** Before an experiment, write one line in the run log (`build/chain_runs/LOG.md`): the hypothesis, the
   single change, and the result that would disprove it. If the lever doesn't move the verdict toward pass, delete it in the same
   session. Don't leave dead levers off by default.
 - **Budgets.** Each phase has an experiment budget: a run of the harness grid or one micro-rig sweep counts as one experiment. When the
-  budget is spent and the gate isn't met, follow section 6 and stop that phase. Don't start a side quest.
+  budget is spent and the gate isn't met, take the phase's fallback (6.4). Don't start a side quest.
 - **Look before you claim.** A gate counts as passed only after you have opened the PNGs (front, oblique, top) and described in the log
   what you see, compared with the picture in section 1.2. Numbers alone never pass a gate.
 - **Renders go in `build/chain_runs/<run>/`** (ignored by git), never the repo root.
@@ -73,8 +73,8 @@ day it is written. Unscaled guides are forbidden.
   was touched", "the judge was not loosened"). The diff shows what changed; say only that.
 - A failed experiment is one line: hypothesis, change, result with the number, deleted or kept. Don't make it sound like progress or
   reassurance.
-- No celebrating or validating. If nothing moved, say so in one sentence ("Phase 2: 30/30 spent, no stitch passes `onShaft`; stuck, see
-  below") and stop. Keep the final message short: the gate reached, the numbers, the render paths, the next decision.
+- No celebrating or validating. If nothing moved, say so in one sentence ("Phase 2: 30/30 spent, every stitch fails `onShaft`; taking
+  the fallback") and continue. Keep the final message short: the gate reached, the numbers, the render paths, the debts.
 
 ## 4. Phase 0: clean up, judge, harness (done 2026-10-27, commit f675371)
 
@@ -335,8 +335,8 @@ Renders of each rig are in the log. Commit.
 
 The A/B conflict (hold the yarn over, release the loop) is the hook's real design problem. Real hooks solve it with the turn of the
 throat: down while drawing back, so the yarn over is pressed into the throat and the loop slides over the smooth back of the head. If
-no shape passes both A and B within budget, stop and report it (section 6), with the best A-passing and the best B-passing shapes and
-their numbers.
+no shape passes both A and B within budget, log the best A-passing and the best B-passing shapes with their numbers and take the
+fallback (6.4).
 
 ### Phase 2: one chain from the rig (budget 30)
 `SIM_RIG=1` (`buildLoopRig`) starts from one clean loop, so there are fewer things to go wrong than with the slip knot.
@@ -362,8 +362,8 @@ the hand (3.1), so it is allowed at α = 0.
 - **When it acts.** During the seat, the push forward after the pull, and the snug. Turn it off during the catch and the pull through.
 - **Bookkeeping.** The controller counts as one lever. Its gain `k` joins the grid: baseline ±50% become 2 extra grid points, so
   9 in all. Log the tension trace (frame, L, T) for the baseline run, and check it settles rather than oscillating.
-- If the controller can't hold L near L* (the loop stays short at the 0.03 N floor), that is the "hand can't feed" case in section 6:
-  stop and report it.
+- If the controller can't hold L near L* (the loop stays short at the 0.03 N floor), that is the "loop won't climb" case: take its
+  next fallback (6.4).
 
 Phases 3 and 4 keep the feedback hand if Phase 2 needed it.
 
@@ -389,22 +389,54 @@ as in section 3, shows that's what's needed.
    Take an editor screenshot (`FL_SHOT_SIM` / `crochet_shot.tscn`, see the handoff) and look at it.
 3. Update `YARN_SIM_HANDOFF.md` sections 1, 4, 5 and 7 to the new truth: short, with numbers. Commit.
 
-## 6. When a phase is stuck
+## 6. Decide and keep going
 
-When the budget is spent, or the same failure comes back for three different hypotheses:
-1. Stop experimenting.
-2. Write a section "Phase N: stuck" at the end of this file. Include: the failing check (which judge column or rig criterion), the
-   numbers at the baseline, the lowest α reached and the guide report there, the render paths and what they show, each hypothesis you
-   tried and what disproved it, and the physical reason as far as you can tell.
-3. Delete the levers that didn't help, commit, and **end the session**. Don't move to a later phase, and don't loosen the judge.
-   Choosing what to do next is the user's decision.
+You run unattended for a long time. **Never stop to ask the user.** Every fork has a rule below. Apply it, write one line
+"Decision (agent): <the fork>, <the choice>, <the rule>" in section 7, and continue in the same session. Your final message comes only
+at a hard stop (6.5) or at Done.
 
-Known decision points the user will want to hear about, not decide around:
-- Phase 1: no hook shape passes both carry (A) and loop-off (B).
-- Phase 1/2: the loop won't climb onto the shaft (C), because the hand can't feed fast enough or friction locks it.
-- Any phase: a guide stays load-bearing after its physics was worked on within budget. Report the guide, its lowest passing scale,
-  its impulse there, and what was tried.
-- Any phase: the solver lets yarn pass through itself or the hook when the motion is fast enough to make the stitch.
+### 6.1 Choosing between options
+Pick the first option that satisfies the earliest rule in this list:
+1. It keeps the judge and its fixtures as they are.
+2. It keeps real physics (3.1): a smaller guide scale beats a larger one.
+3. It moves toward the next gate (code that runs a check beats more analysis).
+4. It is the smaller change and easier to undo.
+
+### 6.2 A plan expectation that disagrees with the plan's own rules
+When a number the plan predicts (an "expected" verdict, a baseline) was measured before a rule the plan added later, the later rule
+wins. Write the new value into the plan where the old one stood, log it as a decision, and continue. A stale expectation never blocks a
+gate.
+
+### 6.3 A judge bug after the freeze
+The judge changes only when a fixture proves it wrong: write the fixture first (a hand-built configuration whose correct verdict is
+clear from the picture), show it fails, fix the judge, and run every fixture. Every existing negative must still fail its named column.
+Log it as "Judge amendment" with the fixture's name. A judge change made to let a simulated stitch pass, without such a fixture, is
+forbidden.
+
+### 6.4 A phase whose budget is spent
+Write a short "Phase N: stuck" note (the failing column, the best numbers, the render paths, the hypotheses and what disproved each),
+delete the dead levers, commit, then take the phase's fallback below. Each fallback brings a fresh budget of half the phase's budget.
+After the last fallback, go on to the next phase with the best result so far and record the debt in section 7. Phase 4 pays all debts.
+
+- **Phase 1, no shape passes both A and B:** take the shape with the best A·B result (A passes, B's `oldOff` closest to pass) and go
+  on to Phase 2. Rig B's failure becomes a Phase 2 question about the motion (the turn of the throat, the draw-back angle).
+- **Phase 1/2, the loop won't climb onto the shaft (C):** first the feedback hand (Phase 2). Then the hand's grip on the work moves
+  closer to the hook (down to 5 mm, the 3.1 limit). Then a slower push (half the speed).
+- **Phase 2/3, a guide stays load-bearing:** leave it at its lowest passing scale, record the debt (guide, scale, impulse, what was
+  tried), and take the next guide in the removal order. Phase 3's gate ceiling (≤ 0.25) still holds for the others; a guide in debt
+  may sit up to 0.5 until Phase 4.
+- **Any phase, yarn passes through itself or the hook:** substeps 12 → 16 → 24, then the motion at 3/4 speed. These are numerics, not
+  guides; log the cost per chain.
+- **Phase 4, a guide in debt still fails at 0:** spend the fallback budget on that guide's physics (the section 5 list). Then stop (6.5).
+
+### 6.5 Hard stops (the only reasons to end the session and report)
+- Done (section 1).
+- Phase 4's fallback is spent with a guide still above 0. Report each guide in debt, its lowest passing scale, its impulse there, and
+  what was tried.
+- The build or the test suite breaks in a way you can't fix in 10 attempts.
+- A rule in section 3 would have to be broken to continue (the dylib, `main`, someone else's process).
+
+"Decision for the user" sections are retired. If you are about to write one, apply 6.1 instead.
 
 ## 7. Progress log
 
@@ -524,3 +556,8 @@ Decision for the user (not decided here):
 
 Phase 1 does not start: the plan's step 5 needs Gate 0b. Not committed: `godot/bin/libfailoring.dylib` (not staged), `Makefile` (untracked).
 
+### Decision on Phase 0b: stuck (second) (user, 2026-10-27): option 1, by rule 6.2
+
+Test A's chain 2 expectation (`through` alone) was measured before 4.5.2 (disc validity) and 4.5.3 (the `onShaft` cap). The later
+rules win: the expected verdict for test A's chain 2 is now `through ?` and `onShaft 40.0`. With that, Gate 0b passes on steps 1–4.
+The judge freezes as of 3caddd3. Phase 1 starts now with `--hook inline`. From here on, section 6 decides every fork.
