@@ -422,6 +422,11 @@ Known decision points the user will want to hear about, not decide around:
   checks (chain 1 fails in this tree), and the spring calibration (4.6.2). Numbers and renders in `build/chain_runs/LOG.md` (Phase 0b).
   Commit: see the git log for "Phase 0b".
 
+- 2026-10-27 Gate 0b (decision option 2): not passed; stuck, see "Phase 0b: stuck (second)". Done: step 1 (presets; `legacy()` SDF matches
+  f19157a at 1000 points, difference 0 m), step 2's ten-failure test (same text as f19157a), step 3 (spring calibration: `k = 2000 N/m` at
+  scale 1 matches the pinned code), step 4 (loop-finder fixture on both presets, found, `loopsOnHook(+y)` 1). Not met: step 2's judge test A
+  (chain 2 reads `through ?` and `onShaft 40.0`, not `through` alone). Commits 2b0bbba, f7bdb19, a60076f, 3caddd3.
+
 ## Phase 0b: stuck
 
 Failing check: Gate 0b's simulated judge checks cannot run. In this tree the slip knot gives no loop on the hook, so chain 1 fails in
@@ -488,3 +493,34 @@ order:
    and `loopsOnHook(front)` must read 1. If either fails, fix the finder now (it is part of the judge) and log it.
 5. Gate 0b, then Phase 1 starts with `--hook inline` as its starting shape. The slip knot breaking on it is the expected A/B failure in
    table 1.8 ("the first yarn over is lost"). Phase 1's rigs make `inline` pass; Gate 1 then makes it the default.
+
+## Phase 0b: stuck (second)
+
+Gate 0b, step 2: judge test A does not fail chain 2 on `through` alone. Chain 2 reads `final 199..239 old 135..197 ... through=? onShaft=3.9/40.0`.
+Two columns fail: `through` (the old loop's ends are more than 6.6 mm apart, so its disc is not a disc: `?`), and `onShaft` (40 mm, over the
+29.6 mm cap of 4.5.3). The Phase 0 value `through=0` came from the committed judge, which had no disc validity rule (4.5.2 added it); the cap
+was added after the Phase 0 measurement. So the stated expectation predates two rules the plan itself added.
+
+Numbers on the current judge (legacy hook, `build/chain_runs/p0b/cal2/`):
+- Test A, chain 1: `final 134..200 onHook 1 fresh 0.25` (fails fresh, at its limit); chain 2 as above; chain 3 `final 243..269 onShaft 4.2/26.0 oldOff 0.42`.
+- Judge test B: `stitch 1 FAIL final 237..254 ... oldOff -0.41 through ? onShaft 4.3/17.0` (matches the plan's expected onShaft).
+- Rig (`SIM_RIG=1 ... --chains 5`): every stitch fails. Chain 1 `oldOff -0.56` (turns; the old judge's unit bug had hidden it), chain 2 `fresh 0.40`, chain 3 and 4 have no loop candidate outside the old loop.
+- Three-chain test: 10 failures, the same text as f19157a.
+
+Steps taken and their results:
+1. Presets: `HookShape::legacy()` (default) and `inlineHook()`; `--hook legacy|inline`; `chain_check.sh` passes it on and names the run directory after it; the checkpoint header carries the form. 1000 random points against f19157a's `hookSdfRaw`: max difference 0 m.
+2. Simulated checks on legacy: the three-chain test gives the 10 failures with f19157a's text, after two fixes (the knot's catch depth is 3.4R on the legacy hook; the carry test's depth is restored). Judge test A: see above, not met. Judge test B: `onShaft 4.3/17.0`, met.
+3. Spring calibration: a hard-pin reference (`GUIDE_MODE=pin`, removed after use) against springs at k x 1, 3, 10. Test A's stitch lines are identical in all four; the rig and the three-chain test are identical in pin and spring mode. `k = 2000 N/m` stays.
+4. Loop finder: the 5-radii touch took a 15-particle arc across the true stitch's loop; a 2.5-radii touch found the loop but missed looser legs. The judge now tries 2.5 radii, then 5. It also refuses a candidate that covers 80% of the old loop: without that, test B's first loop was 104 mm (16.6/103.9). The simulator's `hookLoop` still uses 5 radii. Fixture: a 22 mm loop round the shaft at z = 12 and 6 mm on both presets: found, `loopsOnHook(+y)` 1 in all four.
+5. Not started: Phase 1 needs Gate 0b.
+
+Hypotheses for the test A mismatch, and what is known about each:
+- The 2.5-radii finder is wrong for chain 2. Partly supported: with a 5-radii finder, chain 2's final loop was 202..235 (33 mm, Phase 0). But the 5-radii finder picks a 15-particle arc across the true stitch's own loop (fixture), so a 5-radii judge fails the true stitch. The two cannot both hold with a single touch distance.
+- The disc validity rule (4.5.2) is too strict for chain 2. Not tested: the rule is the plan's, and the old loop's ends are 6.6+ mm apart in the simulation, which is what the rule guards against.
+
+Decision for the user (not decided here):
+1. Accept the Phase 0 expectation as stale (chain 2 fails `through ?` and `onShaft` 40 mm). Then Gate 0b's step 2 is met by its other parts; the plan's wording changes to say so, and the judge is frozen as it stands (commits 2b0bbba..3caddd3).
+2. Or specify the touch rule for the final loop (a single distance, or a rule that finds the new loop of chain 2 without the 5-radii arc) and rerun test A. That changes the frozen judge's finder once more.
+
+Phase 1 does not start: the plan's step 5 needs Gate 0b. Not committed: `godot/bin/libfailoring.dylib` (not staged), `Makefile` (untracked).
+
