@@ -231,7 +231,8 @@ int main(int argc, char** argv) {
         cam.dir = Vec3{0, 1, 0};
         cam.up = Vec3{0, 0, -1};
         cam.distance = topDist;
-        cam.target = Vec3{0.001, 0.001, -0.004};
+        // The top view is for the working loop on the shaft, so centre it on the full shaft behind the head, not on the tip.
+        cam.target = sim.hook.tip + sim.hook.axis() * (6.0 * sim.shape.R);
         std::snprintf(name, sizeof name, "%s_%03d_%s_top.png", out.c_str(), shot, tag);
         renderYarnPng(name, m, cam, 640, 640);
         ++shot;
@@ -533,6 +534,7 @@ int main(int argc, char** argv) {
         const ChainStart cs = prepareChain(sim);
         if (cs.ok) finishChain(sim, cs);
         const ChainResult r = judgeChain(sim, cs);
+        judgeStitch(sim, cs);
         if (r.made) {
             sim.lastLinkHi = r.linkHi;
             sim.lastLinkLo = r.linkLo;

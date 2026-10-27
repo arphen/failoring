@@ -225,6 +225,24 @@ struct ChainResult {
 // A linked stretch is one loop whichever way it winds; the half-plane count is only a fallback when no stretch closes.
 inline int linkedLoopCount(bool linked, int frontLoops) { return linked ? 1 : frontLoops; }
 ChainResult judgeChain(const YarnSim& sim, const ChainStart& c);
+// A chain stitch, judged without closing any stretch with a chord: the final loop is the shortest stretch of yarn that the hook's axis
+// passes through, the old loop's own yarn is off the hook, the yarn drawn after the old loop crosses the disc the old loop spans, and the
+// final loop is long enough and far enough from the axis to sit on the shaft. Contact is the state when the stitch has just been made.
+struct StitchVerdict {
+    bool onHook = false;      // `hookLoop` found the final loop
+    Real fresh = 1;           // the final loop's share of particles that belong to the old loop
+    bool newYarn = false;     // the final loop reaches the yarn drawn after the old loop
+    bool sequential = false;  // the final loop ends at or after the last valid stitch's end
+    Real oldOff = 0;          // the old loop's own winding round the hook outside the final loop (turns)
+    int through = 0;          // segments of the yarn drawn after the old loop that cross the old loop's spanning disc
+    Real meanR = 0;           // the final loop's mean distance from the hook's axis (m)
+    Real length = 0;          // the final loop's yarn length (m)
+    Real gap = 0;             // the closest non-neighbour self-gap over the whole stitch (m)
+    Real depth = 0;           // the deepest point of the yarn inside the hook (m)
+    int linkLo = -1, linkHi = -1;   // the final loop
+    bool pass = false;
+};
+StitchVerdict judgeStitch(const YarnSim& sim, const ChainStart& c);
 int carriedRound(const YarnSim& sim);   // 360 with a loop on the hook, else 0
 // The loop on the hook: the shortest stretch of yarn, from particle `from` to `to` where the yarn touches itself, that the hook's axis passes
 // through (linking number 1 with the axis closed far away). False when there is none. Use this for the stitch, not loopsOnHook(front), which

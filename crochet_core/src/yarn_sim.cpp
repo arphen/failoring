@@ -1894,10 +1894,100 @@ ChainResult judgeChain(const YarnSim& sim, const ChainStart& c) {
     return r;
 }
 
+// Crossings of the open yarn path B through a triangle fan spanning the loop A, counted without sign: a stitch's new loop goes through the
+// old loop's opening, so both of its legs cross the disc and each one is a passage. Points on a fan edge belong to no triangle, which keeps a
+// yarn lying on the old loop's own polygon from counting.
+static int discCrossings(const std::vector<Vec3>& A, const std::vector<Vec3>& B, Real r) {
+    if (A.size() < 3 || B.size() < 2) return 0;
+    Vec3 C{};
+    for (const Vec3& p : A) C += p;
+    C = C / (Real)A.size();
+    int count = 0;
+    const Real eps = 0.25 * r;
+    for (size_t k = 0; k + 1 < B.size(); ++k) {
+        const Vec3 p0 = B[k], p1 = B[k + 1], d = p1 - p0;
+        for (size_t i = 0; i < A.size(); ++i) {
+            const Vec3& a = A[i];
+            const Vec3& b = A[(i + 1) % A.size()];
+            const Vec3 n = cross(a - C, b - C);
+            const Real den = dot(d, n);
+            if (std::fabs(den) < 1e-12) continue;
+            const Real t = dot(C - p0, n) / den;
+            if (t <= 0 || t >= 1) continue;
+            const Vec3 p = p0 + d * t;
+            const Vec3 v0 = a - C, v1 = b - C, v2 = p - C;
+            const Real d00 = dot(v0, v0), d01 = dot(v0, v1), d11 = dot(v1, v1), d20 = dot(v2, v0), d21 = dot(v2, v1);
+            const Real den2 = d00 * d11 - d01 * d01;
+            if (std::fabs(den2) < 1e-18) continue;
+            const Real u = (d11 * d20 - d01 * d21) / den2;
+            const Real v = (d00 * d21 - d01 * d20) / den2;
+            if (u <= 0 || v <= 0 || u + v >= 1) continue;
+            if (length(p - p0) < eps || length(p - p1) < eps) continue;
+            ++count;
+        }
+    }
+    return count;
+}
+
+StitchVerdict judgeStitch(const YarnSim& sim, const ChainStart& c) {
+    StitchVerdict v;
+    const Real R = sim.shape.R, r = sim.params.radius;
+    int lo = -1, hi = -1;
+    v.onHook = hookLoop(sim, &lo, &hi) && hi > lo;
+    v.linkLo = lo;
+    v.linkHi = hi;
+    const int span = v.onHook ? hi - lo + 1 : 0;
+    // The old loop is off the hook when the final loop is mostly new yarn and the old loop's own yarn no longer winds round the shaft.
+    if (v.onHook && c.oldLo >= 0 && c.oldHi >= c.oldLo) {
+        const int a = std::max(lo, c.oldLo), b = std::min(hi, c.oldHi);
+        v.fresh = b >= a ? (Real)(b - a + 1) / span : 0;
+    }
+    v.newYarn = v.onHook && c.oldHi >= 0 && hi > c.oldHi + 1;
+    v.sequential = v.onHook && (c.prevHi < 0 || hi >= c.prevHi);
+    Real oldWind = 0;
+    if (c.oldLo >= 0) {
+        if (v.onHook) {
+            if (c.oldLo < lo) oldWind += sim.windingNear(c.oldLo, lo - 1, R + 3.0 * r);
+            if (c.oldHi > hi) oldWind += sim.windingNear(hi + 1, c.oldHi, R + 3.0 * r);
+        } else {
+            oldWind = sim.windingNear(c.oldLo, c.oldHi, R + 3.0 * r);
+        }
+    }
+    v.oldOff = oldWind / (2 * kPi);
+    // The yarn drawn through the old loop starts at the old loop's end and ends with the final loop. A stitch passes through the opening the
+    // old loop spans; a loop lying beside it does not cross the disc at all.
+    if (c.oldLo >= 0 && c.oldHi >= c.oldLo && v.onHook && hi > c.oldHi) {
+        const std::vector<Vec3> A(sim.rs.x.begin() + c.oldLo, sim.rs.x.begin() + c.oldHi + 1);
+        const std::vector<Vec3> B(sim.rs.x.begin() + c.oldHi, sim.rs.x.begin() + hi + 1);
+        v.through = discCrossings(A, B, r);
+    }
+    if (v.onHook) {
+        Real sum = 0;
+        for (int i = lo; i <= hi; ++i) {
+            const Vec3 l = rotate(conj(sim.hook.q), sim.rs.x[i] - sim.hook.tip);
+            sum += std::hypot(l.x, l.y);
+            if (i < hi) v.length += sim.rs.restLen[i];
+        }
+        v.meanR = sum / span;
+    }
+    v.gap = sim.minGap();
+    v.depth = sim.hookPenetration();
+    const bool onShaft = v.meanR >= R + 0.6 * r && v.length >= 19e-3;
+    const bool contact = v.gap >= 0.95 * 2 * r && v.depth <= 0.4e-3;
+    v.pass = v.onHook && v.fresh < 0.25 && v.newYarn && v.sequential && std::fabs(v.oldOff) < 0.25 && v.through >= 1 && onShaft && contact;
+    // A stitch that could not be started has not advanced the chain count; its line still names the stitch it attempted.
+    const int k = sim.chains + (c.ok ? 0 : 1);
+    std::printf("stitch %d %s onHook=%d fresh=%.2f newYarn=%d sequential=%d oldOff=%.2f through=%d onShaft=%.1f/%.1f contact=%.2f/%.2f\n",
+                k, v.pass ? "PASS" : "FAIL", v.onHook ? 1 : 0, v.fresh, v.newYarn ? 1 : 0, v.sequential ? 1 : 0, v.oldOff, v.through,
+                v.meanR * 1e3, v.length * 1e3, v.gap * 1e3, v.depth * 1e3);
+    return v;
+}
+
 void makeChain(YarnSim& sim) {
     const ChainStart c = prepareChain(sim);
     if (c.ok) finishChain(sim, c);
     const ChainResult r = judgeChain(sim, c);
+    judgeStitch(sim, c);
     if (r.made) {
         sim.lastLinkHi = r.linkHi;
         sim.lastLinkLo = r.linkLo;
