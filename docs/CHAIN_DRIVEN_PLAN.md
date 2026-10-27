@@ -224,3 +224,9 @@ and take the fallback. Each fallback brings half the phase's budget again.
   the stretch drops 5 mm or more on both presets.
 - 2026-10-27 Release check measured: the stretch falls 85.8 mm in 60 frames under gravity on both presets (passes 5 mm). That is a free fall,
   not a hang: the rod's gravity is not calibrated to the yarn's mass. Debt: calibrate gravity or the mass before the hanging chain (D3).
+- 2026-10-27 Gate D1 passed on `--hook inline`. ringDrive, inline: target error 0.000 mm; stretch 21.94 of 22.00 mm; yarn-yarn closest 2.20 mm
+  during the window and 2.92 mm after release; into the hook within 0.3 mm; released move 2.4 mm (1 mm required). Render: none (ringDrive
+  is numeric). Legacy: the same checks pass except 0.35 mm into the hook during the window, printed as a note (legacy is not a gate preset).
+  Decision (user): `--hook inline` from D2 on; `chain_check.sh` defaults to `HOOK=inline`.
+  Decision (agent, 6.2): release check rewritten to the amended section 4.3 line (gravity off; contact and NaN over 60 frames; 1 mm move).
+  Gravity change discarded (commits 3d4845c, 609a1f7 reverted in content by the test edit below).

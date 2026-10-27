@@ -42,8 +42,8 @@ if [ ! -x "$bin" ]; then
     exit 2
 fi
 
-# The hook is legacy (the committed hook) unless HOOK=inline is set; it is in the run's directory name and the checkpoints' headers.
-hook=${HOOK:-legacy}
+# The hook is inline (the groove hook, from D1 on: docs/CHAIN_DRIVEN_PLAN.md section 7) unless HOOK=legacy is set; it is in the run's directory name and the checkpoints' headers.
+hook=${HOOK:-inline}
 # The chain procedure: physics (prepare and finish, the default) or driven (the ring-driven chain of docs/CHAIN_DRIVEN_PLAN.md).
 chain=${CHAIN:-physics}
 outroot=build/chain_runs/$run-$hook-$chain

@@ -200,22 +200,30 @@ void testRingDrive(const char* preset, const HookShape& shape) {
         CHECK_MSG(worstPen <= 0.3 * m, "%s: yarn never more than 0.3 mm into the hook (worst %.2f mm)", preset, worstPen * 1e3);
     else
         std::printf("note %s: yarn reaches %.2f mm into the hook (accepted limit on this hook, see docs/CHAIN_DRIVEN_PLAN.md section 7)\n", preset, worstPen * 1e3);
+    // After release the solver runs 60 frames with no gravity: no NaN, the contact limits still hold, and the released stretch moves at
+    // least 1 mm (the pins really let go).
     sim.releaseRing();
-    sim.rs.params.gravity = Vec3{0, -9.81, 0};   // released, the stretch hangs under its own weight (the work below the hook)
     Vec3 c0{};
     for (int i = lo; i <= hi; ++i) c0 += sim.rs.x[i];
     c0 = c0 / (Real)(hi - lo + 1);
-    for (int f = 0; f < 60; ++f) sim.step(sim.hook);
-    Vec3 c1{};
+    Real releaseGap = 1e9, releasePen = 0;
     bool finite = true;
-    for (int i = lo; i <= hi; ++i) {
-        c1 += sim.rs.x[i];
-        finite = finite && std::isfinite(sim.rs.x[i].x) && std::isfinite(sim.rs.x[i].y) && std::isfinite(sim.rs.x[i].z);
+    for (int f = 0; f < 60; ++f) {
+        sim.step(sim.hook);
+        releaseGap = std::min(releaseGap, sim.minGap());
+        releasePen = std::max(releasePen, sim.hookPenetration());
+        for (int i = 0; i < sim.rs.particleCount(); ++i)
+            finite = finite && std::isfinite(sim.rs.x[i].x) && std::isfinite(sim.rs.x[i].y) && std::isfinite(sim.rs.x[i].z);
     }
+    Vec3 c1{};
+    for (int i = lo; i <= hi; ++i) c1 += sim.rs.x[i];
     c1 = c1 / (Real)(hi - lo + 1);
     const Real moved = length(c1 - c0);
-    CHECKP(moved >= 5 * m, "%s: released, the stretch falls at least 5 mm in 60 frames under gravity (%.1f mm)", preset, moved * 1e3);
+    CHECKP(moved >= 1 * m, "%s: released, the stretch moves at least 1 mm in 60 frames (%.1f mm)", preset, moved * 1e3);
+    CHECKP(releaseGap >= 0.95 * 2 * 0.6 * r, "%s: after release, yarn never closer than 0.95 of its squashed width (closest %.2f mm)", preset, releaseGap * 1e3);
     CHECKP(finite, "%s: no NaN after the release", preset);
+    if (shape.form == HookShape::Form::Inline)
+        CHECK_MSG(releasePen <= 0.3 * m, "%s: after release, yarn never more than 0.3 mm into the hook (worst %.2f mm)", preset, releasePen * 1e3);
 }
 
 }  // namespace
