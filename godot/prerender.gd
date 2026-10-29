@@ -12,6 +12,7 @@ extends RefCounted
 
 const PlanLoader = preload("res://plan_loader.gd")
 const MAGIC := "FLSHOW01"
+const GPU_VERSION := 2      # renders on the GPU solver: 2 = the body moves through the frame (contact per substep)
 const VERSION := 2          # 2: display mesh with two subdivision levels (more vertices). Bump when the solver setup, the scenario data or the file format changes
 const LEAD := 0.5           # seconds the body moves from the standing pose into the scenario's first pose
 const SIM_DT := 1.0 / 60.0
@@ -31,9 +32,14 @@ var _started_ms := 0
 
 # The cache key of a render: everything its frames depend on.
 static func key_for(inp: Dictionary, sc: Dictionary) -> String:
-	var text := JSON.stringify({"v": VERSION, "plan": inp["plan"], "fabric": inp["fabric_id"], "quality": inp["quality_key"],
+	var d := {"v": VERSION, "plan": inp["plan"], "fabric": inp["fabric_id"], "quality": inp["quality_key"],
 		"body": inp["body_key"], "collide": inp["collide"], "seam": inp["seam_stiffness"], "ramp": inp["ramp_frames"],
-		"scenario": sc["id"], "duration": sc["duration"], "frames": sc["frames"]})
+		"scenario": sc["id"], "duration": sc["duration"], "frames": sc["frames"]}
+	if String(sc.get("rev", "")) != "":
+		d["rev"] = sc["rev"]  # the motion's fingerprint (export_scenarios.js): a re-exported motion is simulated again
+	if bool((inp["quality"] as Dictionary).get("gpu", false)):
+		d["gpu"] = GPU_VERSION  # only when set, so the keys of CPU renders made before the GPU solver stay the same
+	var text := JSON.stringify(d)
 	return text.sha256_text()
 
 

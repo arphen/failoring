@@ -114,6 +114,7 @@ struct SolverParams {
     Vec3 gravity{0, -9.81, 0};
     Real seamStiffness = 20000.0;  // N/m of seam length (thread + construction)
     int seamRampFrames = 0;        // >0: seams fade in over this many frames (helps assembling far-apart panels)
+    Real seamScale = 1.0;          // multiplies every seam's stiffness (after the ramp); 0 = unsewn (live drape, docs/LIVE_DRAPE_PLAN.md)
     // Multiplied into damp_ in finalize() (CROCHET_PLAN §6.9: the zero-g relaxation of an assembled layout uses
     // x5). 1.0 leaves every existing result bit-identical.
     Real dampingScale = 1.0;
@@ -292,9 +293,61 @@ using ExternalLinearSolver = std::function<int(const LinearSystemView&, std::vec
 int cgBlockJacobiFloat(const LinearSystemView& sys, std::vector<Vec3>& x);
 int cgBlockJacobiDouble(const LinearSystemView& sys, std::vector<Vec3>& x);  // the same in double precision
 
+// Everything a GPU implementation of the fast implicit substep needs, as flat arrays (cloth_gpu_model.cpp; the GPU
+// stepper of the Godot extension, gdextension/src/gpu_step.cpp). Built from the finalized solver; it changes only when
+// modelVersion() changes (topology, materials, pins).
+struct GpuModel {
+    std::string unsupported;  // why the GPU cannot run this solver ("" = it can)
+    int n = 0, nTri = 0, nBend = 0, nSeam = 0, nnz = 0;
+    std::vector<float> mass, w, damp, muK, radius;     // per vertex
+    std::vector<int> triIdx;                           // 3 per triangle
+    std::vector<float> triPar;                         // 11 per triangle: a b c d alphaU alphaV alphaS comp lockU lockV ratio
+    std::vector<int> bendIdx;                          // 4 per hinge (shared edge, then the two opposite vertices)
+    std::vector<float> bendAlpha;                      // 1 per hinge
+    std::vector<int> seamIdx;                          // 3 per seam link: a, b0, b1
+    std::vector<float> seamPar;                        // 2 per seam link: t, alpha
+    std::vector<int> rowStart, col, diag;              // block-CSR pattern of the Hessian
+    // Hessian assembly by gathering: contribution c is a 3x3 block computed by one element; triangles own contributions
+    // 9t..9t+8 (a*3+b), hinges 9T + 16h.. (a*4+b), seams 9T + 16B + 9s.. Block k of the matrix is the sum of
+    // blkItem[blkStart[k] .. blkStart[k+1]). Gradient pieces likewise: triangles 3t+a, hinges 3T + 4h + a, seams
+    // 3T + 4B + 3s + a; vertex i sums gItem[gStart[i] .. gStart[i+1]).
+    std::vector<int> blkStart, blkItem, gStart, gItem;
+    // strain limiting: unique mesh edges with rest length, grouped by colour (no two edges of a colour share a vertex);
+    // colour c owns edges colStart[c] .. colStart[c+1]
+    std::vector<int> edgeA, edgeB, colStart;
+    std::vector<float> edgeL0;
+    // self collision: triangles of the mesh (triIdx) and the (vertex, triangle) pairs that never collide (sewn
+    // neighbours), sorted by vertex: vertex i's excluded triangles are ncTri[ncStart[i] .. ncStart[i+1])
+    std::vector<int> ncStart, ncTri;
+    float hashCell = 0.02f;
+    int hashTable = 1024;  // power of two (the CPU's spatial hash size)
+};
+
 class ClothSolver {
 public:
     explicit ClothSolver(SolverParams p = {}) : p_(p) {}
+
+    // ---- GPU stepping (cloth_gpu_model.cpp) --------------------------------------------------------------------------
+    // The model of the finalized solver (finalizes and builds the Hessian pattern if needed).
+    GpuModel gpuModel();
+    // Changes whenever the model would (finalize, pins).
+    int modelVersion() const { return modelVersion_; }
+    // Hessian model of the next substep: true = with the tension term (hessianAuto picks it per substep on the CPU;
+    // the GPU keeps the current one for a whole frame).
+    bool gpuTension() const { return p_.hessianAuto ? autoTension_ : p_.tensionStiffness; }
+    // The per-frame state a GPU frame starts from and ends with. gpuState fills the vectors (resized to vertexCount();
+    // contact data of a vertex never touched: force 0, phi 1e30, normal +y). gpuEndFrame takes the state back and counts
+    // the frame (its substeps and one Newton iteration each).
+    void gpuState(std::vector<Vec3>& x, std::vector<Vec3>& v, std::vector<Real>& force, std::vector<Real>& phi,
+                  std::vector<Vec3>& normal) const;
+    void gpuEndFrame(const std::vector<Vec3>& x, const std::vector<Vec3>& v, const std::vector<Real>& force,
+                     const std::vector<Real>& phi, const std::vector<Vec3>& normal);
+    const std::vector<Vec3>& colliderMotion() const { return colliderDisp_; }
+    // Seam stiffness ramp factor of the coming frame (SolverParams::seamRampFrames).
+    Real seamScaleNow() const;
+    // ... of the point seams (tacks): the ramp alone.
+    Real pointSeamScaleNow() const;
+
 
     // Adds a pattern piece. `grain` is the angle (radians, CCW) of the warp yarn
     // direction relative to the panel's +u axis (0 = warp along +u, pi/2 = along +v, pi/4 = bias).
@@ -314,9 +367,21 @@ public:
     // Sew vertex `a` directly to vertex `b` (crochet plan 2.4): one seam link with b0 = b1 = b, t = 0 and
     // alpha = 1/(seamStiffness * share), where `share` is the seam length the link stands for (m). Like addSeam,
     // the request is only stored and built in finalize(), so a repeated finalize() rebuilds the same set.
-    // Throws std::logic_error after the simulation started, std::invalid_argument for share <= 0 or a == b,
+    // After the start the model is rebuilt at once, the motion kept (a live tack). Throws std::invalid_argument for share <= 0 or a == b,
     // std::out_of_range for a vertex outside [0, vertexCount()).
     void addPointSeam(int a, int b, Real share);
+    // Removes the point seams between `a` and `b` (either order). Returns how many were removed. After the start the
+    // model is rebuilt like addPointSeam's (positions and velocities kept).
+    int removePointSeam(int a, int b);
+    // Live edits (docs/LIVE_DRAPE_PLAN.md): after the start, addPointSeam and these rebuild the model at once and keep
+    // the positions and velocities, so the cloth goes on moving.
+    // Many grain-aligned rest coordinates (see setRestUV) with one rebuild.
+    void setRestUVs(const std::vector<int>& verts, const std::vector<Vec2>& restCoords);
+    // Kinematic targets: each vertex is put at its target, with the velocity (target - old) / dt (a pinned vertex
+    // dragged by the pointer keeps the drag's speed when it is released).
+    void driveVertices(const std::vector<int>& verts, const std::vector<Vec3>& targets, Real dt);
+    // SolverParams::dampingScale, taking effect at once (it is applied when the model is built).
+    void setDampingScale(Real s);
 
     // ---- static equilibrium (opt-in; the dynamic step() is untouched) ---------
     // Finds the equilibrium of the potential energy (stretch, shear, bending, seams, gravity, body contact) from the
@@ -342,6 +407,7 @@ public:
 
     // Pin a vertex (global index) in place; pinned vertices have infinite mass.
     void pinVertex(int v, bool pinned = true);
+    bool isPinned(int v) const { return pinned_.at(static_cast<size_t>(v)) != 0; }
     void setVertexPosition(int v, const Vec3& p);  // teleport (also resets its velocity)
 
     // Advance one frame (dt, split into substeps).
@@ -429,12 +495,16 @@ private:
         int a, b0, b1;
         Real t, alpha, lam;
         int slot[9];
+        bool point = false;   // a point seam (addPointSeam: a tack): SolverParams::seamScale does not switch it off
     };
+    // The stiffness scale of seam s, given the edge seams' scale this frame.
+    Real seamScaleOf(const SeamC& s, Real seamScale) const { return s.point ? pointSeamScaleNow() : seamScale; }
     // addPointSeam request (crochet plan 2.4), kept so finalize() can rebuild seamC_ from it (which makes a
     // repeated finalize() idempotent). a, b are global vertex ids; share is the seam length the link stands for (m).
     struct PointSeamSpec { int a, b; Real share; };
 
     void finalize();
+    void refinalizeLive(bool topology);
     // VBD (cloth_vbd.cpp)
     void stepVBD();
     void vbdPrepare();
@@ -451,8 +521,11 @@ private:
     std::vector<Real> extMass_;
     int patternVersion_ = 0;
     struct SlEdge { int a, b; Real l0; };
-    std::vector<SlEdge> slEdges_;  // strain limiting: unique mesh edges with rest length
+    std::vector<SlEdge> slEdges_;  // strain limiting: unique mesh edges with rest length, ordered by colour
+    std::vector<int> slColStart_;  // colour c owns slEdges_[slColStart_[c] .. slColStart_[c+1])
     void limitStrain();  // per vertex, the body penalty force at the start of the substep (friction normal force)
+    void buildStrainEdges();  // fills slEdges_ (limitStrain, gpuModel)
+    int modelVersion_ = 0;
     void solveTriangles(Real invH2);
     void solveBends(Real invH2);
     void solveSeams(Real invH2, Real scale);

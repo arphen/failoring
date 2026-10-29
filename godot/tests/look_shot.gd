@@ -12,6 +12,7 @@ const BodyGen = preload("res://body_gen.gd")
 const BodyView = preload("res://scripts/body_loader.gd")
 const PlanLoader = preload("res://plan_loader.gd")
 const Idle = preload("res://idle.gd")
+const FaceLikeness = preload("res://face.gd")
 
 const SHOTS := [
 	# name, camera position, target, vertical fov
@@ -40,6 +41,8 @@ const SHOTS := [
 	["mirror", Vector3(-0.6, 1.4, 0.6), Vector3(-3.35, 1.0, -1.55), 38.0],
 	["mouth", Vector3(0.0, 1.512, 0.42), Vector3(0.0, 1.512, 0.0), 14.0],
 	["mouth34", Vector3(-0.2, 1.512, 0.36), Vector3(0.0, 1.512, 0.0), 14.0],
+	["head_back", Vector3(-0.35, 1.62, -0.95), Vector3(0.0, 1.45, 0.0), 28.0],
+	["head_side", Vector3(1.0, 1.55, 0.15), Vector3(0.0, 1.45, 0.0), 30.0],
 ]
 
 var _out := "."
@@ -92,6 +95,10 @@ func _init() -> void:
 	var meas: Dictionary = BodyGen.DEFAULT_MEAS.duplicate()
 	if BodyGen.PRESETS.has(preset):
 		meas = (BodyGen.PRESETS[preset] as Dictionary).duplicate()
+	# FL_FACE=<id>: the face likeness (face.gd) with its skin and eyes; FL_HAIR=1 its long hair too
+	var face_id := OS.get_environment("FL_FACE") if OS.has_environment("FL_FACE") and FaceLikeness.use(OS.get_environment("FL_FACE")) else ""
+	if face_id != "":
+		meas["face"] = face_id
 	var rest := BodyGen.generate(M, meas, null)
 	var stand := BodyGen.stand(M, rest)
 	var pos: PackedFloat32Array = stand["pos"]
@@ -111,6 +118,13 @@ func _init() -> void:
 		body.use_custom(v, M["tris"])
 		body.set_skin_data(SkinMap.build(M))
 		body.eyes.set_iris(eye_key)
+		if face_id != "":
+			var fi := FaceLikeness.info(face_id)
+			if fi.get("iris", null) is Array:
+				body.eyes.set_iris_rgb(Color(fi["iris"][0], fi["iris"][1], fi["iris"][2]))
+			if OS.has_environment("FL_HAIR"):
+				var hc = fi.get("hair", null)
+				body.set_long_hair(true, M, Color(hc[0], hc[1], hc[2]) if hc is Array else Color(0.31, 0.24, 0.18))
 		# FL_IDLE=0 leaves the mannequin still; FL_IDLE_T=12 lets the idle layer run for 12 s before the shots; FL_IDLE_SEED=n
 		if OS.get_environment("FL_IDLE") != "0":
 			var il := Idle.new(int(OS.get_environment("FL_IDLE_SEED")) if OS.has_environment("FL_IDLE_SEED") else 7)
@@ -125,7 +139,9 @@ func _init() -> void:
 				il.intensity = il.intensity
 		, CONNECT_ONE_SHOT)
 	Look.set_skin_tone(body.material_override, skin_key)
-	Look.set_hair(body.material_override, hair_key)
+	Look.set_hair(body.material_override, "none" if OS.has_environment("FL_HAIR") else hair_key)
+	if face_id != "":
+		Look.set_face(body.material_override, face_id)
 	Look.apply_quality(qual, we.environment, st["key"], _vp, body.material_override)
 	# FL_FX=nogi,nossr,nossil,nossao,noglow,nodof,notaa,noprobe,nosss turns those effects off, for finding which one draws an artifact
 	if OS.has_environment("FL_FX"):

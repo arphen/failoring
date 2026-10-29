@@ -15,7 +15,8 @@
 # cases are reported but not gated. Run headless (needs libfailoring, see docs/NATIVE_NOTES.md):
 #   godot --headless --path godot res://tests/skirt_cover_check.tscn
 # FL_CASES=pencil:average,penelope:curvy restricts the cases (garment:preset, comma separated; garment pencil, penelope,
-# teagan or charlie). FL_NOWALK=1 skips the walk. FL_DEBUG=1 prints the breakdown.
+# teagan or charlie, or a built-in plan). FL_NOWALK=1 skips the walk. FL_DEBUG=1 prints the breakdown. FL_GPU_STEP=1 runs
+# the frames on the GPU (needs a window) and prints how many did.
 extends Node
 
 const BodyGen = preload("res://body_gen.gd")
@@ -101,11 +102,11 @@ static func _smooth(x: float) -> float:
 	return x * x * (3.0 - 2.0 * x)
 
 
-# The plan as the editor has it: the built-in pencil, or a FreeSewing garment (penelope, teagan, charlie) fitted to the preset.
+# The plan as the editor has it: a built-in plan (pencil, tiered, ...), or a FreeSewing garment (penelope, teagan, charlie) fitted to the preset.
 func _plan(garment: String, preset: String) -> Dictionary:
 	var p := {}
-	if garment == "pencil":
-		p = (Builtin.all()["pencil"] as Dictionary).duplicate(true)
+	if Builtin.all().has(garment):
+		p = (Builtin.all()[garment] as Dictionary).duplicate(true)
 	else:
 		p = PlanLoader.load_json("res://assets/%s/plan_%s.json" % [preset, garment])
 	return PlanLoader.normalize_plan(p)
@@ -171,6 +172,10 @@ func _run_case(garment: String, preset: String, b: Dictionary, no_walk: bool) ->
 				worst = minf(worst, c)
 		walk_min = worst
 	print("COVERCHECK %s/%s walk back:[%s]" % [garment, preset, walk_txt.strip_edges()])
+	var st: Dictionary = sim.get_solver_stats()
+	if st.has("gpu_step_frames"):
+		print("COVERCHECK %s/%s GPU frames %d of %d, last %.1f ms (CPU reason: %s)" % [garment, preset, int(st["gpu_step_frames"]),
+			sim.get_frames(), float(st["gpu_step_last_ms"]), st["gpu_step_cpu_reason"]])
 	# a shipped pattern piece must reach the simulation: a dropped piece is the bug this check was written for
 	var ok := dropped == "" and drape >= MIN_COVER and walk_min >= MIN_COVER
 	if dropped != "":

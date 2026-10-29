@@ -16,6 +16,7 @@ add_library(cloth_core STATIC
   cloth_core/src/cloth_vbd.cpp
   cloth_core/src/linear_ext.cpp
   cloth_core/src/cloth_contact_al.cpp
+  cloth_core/src/cloth_gpu_model.cpp
   cloth_core/src/mesher.cpp
   cloth_core/src/material.cpp
   cloth_core/src/mesh_sizing.cpp

@@ -15,7 +15,7 @@ const $$ = (s, el) => Array.from((el || document).querySelectorAll(s));
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 const smooth = (t) => { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); };
 const SEAM_COLORS = ['#3fd3c0', '#ff9d4d', '#c792ea', '#82aaff', '#f07178', '#c3e88d', '#ffcb6b', '#89ddff'];
-const FABRIC_COLORS = { cotton_poplin: '#6f93c4', denim_12oz: '#3d5c8c', linen_medium: '#c2b184', wool_suiting: '#566175', silk_charmeuse: '#a8405c',
+const FABRIC_COLORS = { cotton_poplin: '#6f93c4', cotton_crepe: '#b9776a', denim_12oz: '#3d5c8c', linen_medium: '#c2b184', wool_suiting: '#566175', silk_charmeuse: '#a8405c',
   polyester_chiffon: '#dc94ac', canvas_heavy: '#a89a76', cotton_jersey: '#6f9a88', lambskin_leather: '#7a4630' };
 
 App.snapshot = () => JSON.stringify({ pieces: App.S.pieces, seams: App.S.seams });

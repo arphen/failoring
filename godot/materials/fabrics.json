@@ -20,6 +20,16 @@
       }
     },
     {
+      "id": "cotton_crepe", "name": "Cotton crepe", "category": "woven",
+      "notes": "~130 g/m2 plain weave with high-twist crepe yarns. Crinkled surface: softer and more fluid than poplin at the same weight, stretchier across the grain (crimp straightens first), matte with some spring.",
+      "params": {
+        "density_kg_m2": 0.13, "thickness_m": 0.0004,
+        "tensile_warp_N_m": 3500, "tensile_weft_N_m": 1800, "shear_N_m_rad": 25,
+        "bending_warp_Nm": 8.0e-6, "bending_weft_Nm": 6.0e-6,
+        "compression_ratio": 0.35, "friction_static": 0.55, "friction_kinetic": 0.4, "damping_1_s": 0.7
+      }
+    },
+    {
       "id": "denim_12oz", "name": "Denim 12 oz", "category": "woven",
       "notes": "~400 g/m2 3x1 twill. Heavy, stiff, higher shear resistance.",
       "params": {

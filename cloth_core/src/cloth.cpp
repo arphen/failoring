@@ -257,16 +257,61 @@ void ClothSolver::addSeam(int pa, int ea, int pb, int eb, bool reverse) {
 }
 
 void ClothSolver::addPointSeam(int a, int b, Real share) {
-    if (finalized_) FL_THROW(std::logic_error, "ClothSolver: cannot add seams after the simulation started");
     if (share <= 0) FL_THROW(std::invalid_argument, "addPointSeam: share must be positive");
     if (a < 0 || b < 0 || a >= vertexCount() || b >= vertexCount()) FL_THROW(std::out_of_range, "addPointSeam: bad vertex");
     if (a == b) FL_THROW(std::invalid_argument, "addPointSeam: a and b are the same vertex");
     pointSeamSpecs_.push_back({a, b, share});
+    if (finalized_) refinalizeLive(true);
+}
+
+int ClothSolver::removePointSeam(int a, int b) {
+    const size_t before = pointSeamSpecs_.size();
+    pointSeamSpecs_.erase(std::remove_if(pointSeamSpecs_.begin(), pointSeamSpecs_.end(),
+                                         [&](const PointSeamSpec& ps) { return (ps.a == a && ps.b == b) || (ps.a == b && ps.b == a); }),
+                          pointSeamSpecs_.end());
+    const int removed = static_cast<int>(before - pointSeamSpecs_.size());
+    if (removed > 0 && finalized_) refinalizeLive(true);
+    return removed;
+}
+
+void ClothSolver::setRestUVs(const std::vector<int>& verts, const std::vector<Vec2>& restCoords) {
+    if (verts.size() != restCoords.size()) FL_THROW(std::invalid_argument, "setRestUVs: sizes differ");
+    for (size_t k = 0; k < verts.size(); ++k) restUV_.at(static_cast<size_t>(verts[k])) = restCoords[k];
+    if (finalized_) refinalizeLive(false);
+}
+
+void ClothSolver::driveVertices(const std::vector<int>& verts, const std::vector<Vec3>& targets, Real dt) {
+    if (verts.size() != targets.size()) FL_THROW(std::invalid_argument, "driveVertices: sizes differ");
+    const Real inv = dt > 0 ? 1 / dt : 0;
+    for (size_t k = 0; k < verts.size(); ++k) {
+        const size_t v = static_cast<size_t>(verts[k]);
+        const Vec3 old = x_.at(v);
+        x_[v] = targets[k];
+        if (finalized_) {
+            xPrev_[v] = targets[k];
+            v_[v] = (targets[k] - old) * inv;
+        }
+    }
+}
+
+void ClothSolver::setDampingScale(Real s) {
+    p_.dampingScale = s;
+    if (finalized_) refinalizeLive(false);
+}
+
+// finalize() again in the middle of a simulation: the model follows the edit, the motion goes on (finalize() alone
+// zeroes the velocities). A new seam couples vertices the Hessian pattern may not hold yet: topology = true rebuilds it.
+void ClothSolver::refinalizeLive(bool topology) {
+    const std::vector<Vec3> v = v_;
+    if (topology) patternValid_ = false;
+    finalize();
+    v_ = v;
 }
 
 void ClothSolver::pinVertex(int v, bool pinned) {
     pinned_.at(static_cast<size_t>(v)) = pinned ? 1 : 0;
     if (finalized_) w_[v] = pinned ? 0 : 1 / mass_[v];
+    ++modelVersion_;
 }
 
 void ClothSolver::setVertexPosition(int v, const Vec3& p) {
@@ -492,6 +537,7 @@ void ClothSolver::finalize() {
         c.a = ps.a; c.b0 = c.b1 = ps.b; c.t = 0;
         c.alpha = 1.0 / (p_.seamStiffness * ps.share);
         c.lam = 0;
+        c.point = true;
         seamC_.push_back(c);
         for (int tt : vertTris[c.b0]) noCollide_.insert(pairKey(c.a, tt));
         for (int tt : vertTris[c.a]) noCollide_.insert(pairKey(c.b0, tt));
@@ -512,6 +558,7 @@ void ClothSolver::finalize() {
     vbdReady_ = false;  // VBD adjacency and colouring follow the elements
     slEdges_.clear();   // strain-limiting edges follow the mesh
     finalized_ = true;
+    ++modelVersion_;
 }
 
 // ---------------------------------------------------------------------------
@@ -584,7 +631,9 @@ void ClothSolver::solveSeams(Real invH2, Real scale) {
         if (l < 1e-12) continue;
         const Vec3 n = d / l;
         const Vec3 g[3] = {n, -n * (1 - s.t), -n * s.t};
-        xpbdSolve(3, xs, w, g, l, s.alpha / scale * invH2, s.lam);
+        const Real sc = seamScaleOf(s, scale);
+        if (sc <= 0) continue;
+        xpbdSolve(3, xs, w, g, l, s.alpha / sc * invH2, s.lam);
     }
 }
 
@@ -716,7 +765,7 @@ void ClothSolver::stepXpbd() {
     const Real h = p_.dt / S;
     const Real invH2 = 1.0 / (h * h);
     const int N = vertexCount();
-    const Real seamScale = p_.seamRampFrames > 0 ? std::min(Real(1), std::max(Real(0.02), (frame_ + 1.0) / p_.seamRampFrames)) : Real(1);
+    const Real seamScale = seamScaleNow();
 
     for (int s = 0; s < S; ++s) {
         for (int i = 0; i < N; ++i) {

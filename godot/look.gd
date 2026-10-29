@@ -3,6 +3,8 @@
 # functions at setup time, and cloth_shade.gd builds the per-vertex cloth data. No solver logic here.
 extends RefCounted
 
+const FaceLikeness = preload("res://face.gd")
+
 const CLOTH_SHADER := preload("res://shaders/cloth.gdshader")
 const CONTACT_SHADER := preload("res://shaders/contact.gdshader")
 const POST_SHADER := preload("res://shaders/post.gdshader")
@@ -80,6 +82,7 @@ const QUALITY := {
 # sheen: grazing-angle light (fibre fuzz); back: light passing through the thin cloth from behind.
 const FABRIC_LOOK := {
 	"cotton_poplin": {"pattern": 0, "freq": 350.0, "amp": 0.00010, "rough": 0.70, "spec": 0.22, "sheen": 0.30, "back": 0.15},
+	"cotton_crepe": {"pattern": 0, "freq": 300.0, "amp": 0.00018, "rough": 0.85, "spec": 0.08, "sheen": 0.20, "back": 0.15},
 	"denim_12oz": {"pattern": 1, "freq": 170.0, "amp": 0.00022, "rough": 0.80, "spec": 0.12, "sheen": 0.20, "back": 0.05},
 	"linen_medium": {"pattern": 0, "freq": 240.0, "amp": 0.00016, "rough": 0.85, "spec": 0.10, "sheen": 0.20, "back": 0.20},
 	"wool_suiting": {"pattern": 4, "freq": 200.0, "amp": 0.00012, "rough": 0.90, "spec": 0.08, "sheen": 0.45, "back": 0.12},
@@ -393,6 +396,34 @@ static func photo_texture(file: String) -> Texture2D:
 	var tex := ImageTexture.create_from_image(img)
 	_photo_cache[file] = tex
 	return tex
+
+
+# The face likeness's skin over the body's (face.gd): its texture, and a gain that brings the photo's exposure to the
+# body's tone (the tone set last: call this after set_skin_tone). "" or a missing texture: the mannequin's face.
+static func set_face(m: ShaderMaterial, id: String) -> void:
+	var tex: Texture2D = FaceLikeness.skin_texture(id) if id != "" else null
+	# the face's resting lids (face.json "lids": [upper lowered, lower raised], radians; tools/face/soften.py)
+	var lids = FaceLikeness.info(id).get("lids", null) if tex != null else null
+	m.set_shader_parameter("lid_rest", Vector2(float(lids[0]), float(lids[1])) if lids is Array and lids.size() == 2 else Vector2.ZERO)
+	if tex == null:
+		m.set_shader_parameter("use_face", 0.0)
+		return
+	# the face skin's average colour: the well covered texels (alpha > 0.9) of a small copy
+	var img := tex.get_image().duplicate() as Image
+	img.resize(128, 128, Image.INTERPOLATE_BILINEAR)
+	var acc := Color(0, 0, 0)
+	var cnt := 0
+	for y in 128:
+		for x in 128:
+			var c := img.get_pixel(x, y)
+			if c.a > 0.9:
+				acc += c
+				cnt += 1
+	var avg: Color = acc / maxf(1.0, float(cnt))
+	var tone: Color = m.get_shader_parameter("tone")
+	m.set_shader_parameter("face_tex", tex)
+	m.set_shader_parameter("face_gain", Vector3(tone.r / maxf(avg.r, 0.02), tone.g / maxf(avg.g, 0.02), tone.b / maxf(avg.b, 0.02)))
+	m.set_shader_parameter("use_face", 1.0)
 
 
 static func set_skin_tone(m: ShaderMaterial, key: String) -> void:

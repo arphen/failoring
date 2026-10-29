@@ -39,6 +39,9 @@ uniform float breath = 0.0;        // 0 .. 1 (times the depth): the ribcage and 
 uniform vec2 breath_amp = vec2(0.0045, 0.0065);   // m: ribcage, belly
 uniform float blink = 0.0;         // 0 open .. 1 closed: the lids swing down round the eyeball
 uniform mat3 lid_basis = mat3(1.0);   // rest axes -> drawn axes (head rotation and scale), set by eyes.gd
+// the lids at rest (a face's expression, face.json "lids"): x the upper lid lowered, y the lower lid raised, in radians of
+// the same swing; a blink closes from there
+uniform vec2 lid_rest = vec2(0.0);
 
 uniform int debug_view = 0;        // 1 cavity, 2 redness, 3 thin, 4 areola and nails, 5 face masks, 6 region texture
 
@@ -49,6 +52,11 @@ uniform float use_regions = 0.0;
 uniform sampler2D photo : source_color, hint_default_white, filter_linear_mipmap_anisotropic;
 uniform float use_photo = 0.0;
 uniform vec3 photo_tint = vec3(1.0);   // multiplies the photo (a light tint towards the chosen tone)
+// a face likeness (face.gd): the wearer's face skin in the same UV layout, alpha = where it covers; face_gain matches its
+// exposure to the body's tone. Where it covers, the drawn brows and scalp hair give way to the photo's own.
+uniform sampler2D face_tex : source_color, hint_default_transparent, filter_linear_mipmap_anisotropic;
+uniform float use_face = 0.0;
+uniform vec3 face_gain = vec3(1.0);
 
 uniform vec3 mouth = vec3(0.0, 0.6058, 0.1375);
 uniform float mouth_w = 0.0225;
@@ -119,7 +127,7 @@ vec3 lid_shift(vec3 rest) {
 	float lo_m = -0.0035 * shape;
 	float wu = d.y > 0.0 ? (1.0 - smoothstep(0.0, 0.011, max(d.y - up_m, 0.0))) * taper : 0.0;
 	float wl = d.y <= 0.0 ? (1.0 - smoothstep(0.0, 0.008, max(lo_m - d.y, 0.0))) * taper : 0.0;
-	float a = blink * (0.66 * wu - 0.14 * wl);
+	float a = blink * (0.66 * wu - 0.14 * wl) + (1.0 - blink) * (lid_rest.x * wu - lid_rest.y * wl);
 	float ca = cos(a);
 	float sa = sin(a);
 	vec3 r = vec3(d.x, d.y * ca - d.z * sa, d.y * sa + d.z * ca);
@@ -135,7 +143,7 @@ void vertex() {
 		nh = nl > 1e-4 ? nh / nl : vec3(0.0);
 		p += nh * breath * (CUSTOM3.x * breath_amp.x + CUSTOM3.y * breath_amp.y);
 	}
-	if (blink > 0.001) {
+	if (blink > 0.001 || lid_rest != vec2(0.0)) {
 		p += lid_shift(CUSTOM0.xyz);
 	}
 	if (idle_on > 0.5) {
@@ -285,6 +293,8 @@ void fragment() {
 	// ---------------- colour
 	vec3 alb = tone;
 	vec3 photo_c = texture(photo, UV).rgb * photo_tint;
+	vec4 face_c = texture(face_tex, UV);
+	float face_a = face_c.a * use_face;
 	// mottling: large soft patches that lean yellow or red, and a finer unevenness
 	float mot = n_low.x * 0.6 + vnoise(rp * 41.0 + 3.3).x * 0.4;
 	alb *= 1.0 + 0.045 * mot * vec3(1.0, 0.75, 0.6);
@@ -319,7 +329,7 @@ void fragment() {
 	lip_c *= mix(0.68, 1.12, smoothstep(0.0, 0.75, ly));                  // darker at the lip line, lighter in the middle
 	lip_c *= mix(0.78, 1.0, 1.0 - smoothstep(0.55, 1.0, lmu));            // and at the corners
 	lip_c = mix(lip_c, lip_c * vec3(1.05, 0.9, 0.95), 0.4 * clamp(vnoise(rp * 300.0).x * 0.5 + 0.5, 0.0, 1.0));   // a little unevenness
-	alb = mix(alb, lip_c, lip * 0.88);
+	alb = mix(alb, lip_c, lip * 0.88 * (1.0 - use_face));   // a face likeness has the photo's own lips
 	// how far behind the lips' front a point lies: the lips curl in towards the mouth line and darken (wet inner lip),
 	// and the mouth behind them is dark
 	float mu = abs(rp.x - mouth.x) / mouth_w;
@@ -328,12 +338,15 @@ void fragment() {
 	// the mouth line: the lips meet at the bottom of a groove 5 to 8 mm behind their fronts. The groove is deep red and
 	// shut off from the light (its ambient occlusion also takes the direct light), so the lips read as in contact, with a
 	// soft dark line between them, and never as a slot or a pale band
-	float groove = near_line * smoothstep(0.0012, 0.0042, depth);
+	// (a face likeness closes the mouth: its inner lips are drawn up to the mouth line, and they still carry the
+	// cavity's and the teeth's rest positions; there the groove is only the soft line where closed lips meet)
+	float closed = 1.0 - use_face;
+	float groove = near_line * smoothstep(0.0012, 0.0042, depth) * (1.0 - 0.7 * use_face);
 	alb = mix(alb, alb * vec3(0.34, 0.13, 0.13), groove);
 	// the inside of the mouth is a real cavity behind the lips: moist pink-red at the lips, deeper red further in, with a
 	// gradient of occlusion, never a black hole
 	float in_depth = (mouth.z + 0.0035) - rp.z;
-	float inside_m = mouth_outline(rp, 0.0015) * smoothstep(0.0012, 0.0045, in_depth);
+	float inside_m = mouth_outline(rp, 0.0015) * smoothstep(0.0012, 0.0045, in_depth) * closed;
 	vec3 cav_col = tone * mix(vec3(0.62, 0.26, 0.24), vec3(0.16, 0.05, 0.05), smoothstep(0.004, 0.025, in_depth));
 	alb = mix(alb, cav_col, inside_m);
 	// the upper teeth, painted on the far wall of the cavity: ivory crowns with soft gaps, a curved lower edge, dim (they sit
@@ -357,7 +370,7 @@ void fragment() {
 	float nail = use_regions > 0.5 ? smoothstep(0.2, 0.7, reg.g) : v_mask.a;
 	// eyelids: a little pinker and darker, as the skin there is thin
 	alb = mix(alb, alb * vec3(0.92, 0.78, 0.78), smoothstep(0.1, 0.8, reg.b) * 0.6);
-	alb = mix(alb, alb * vec3(0.45, 0.2, 0.2), smoothstep(0.2, 0.8, reg.a) * 0.85);   // the mouth behind the parted lips: shadowed red, not a void
+	alb = mix(alb, alb * vec3(0.45, 0.2, 0.2), smoothstep(0.2, 0.8, reg.a) * 0.85 * closed);   // the mouth behind the parted lips: shadowed red, not a void
 	// lid margins: a dark lash line along the upper margin (strands), a moist pink line along the lower one
 	float lash = 0.0;
 	float wet_lid = 0.0;
@@ -374,6 +387,7 @@ void fragment() {
 	}
 	// a photographic skin replaces the drawn colour (it carries its own lips, mottling and redness); creases stay
 	alb = mix(alb, photo_c * (1.0 - 0.12 * crease), use_photo);
+	alb = mix(alb, face_c.rgb * face_gain * (1.0 - 0.12 * crease), face_a);
 	alb = mix(alb, mix(tone, vec3(0.92, 0.78, 0.76), 0.6), nail * 0.8);
 
 	// brows and scalp hair, drawn over the skin
@@ -404,8 +418,8 @@ void fragment() {
 			hair_m = clamp(thin_out * grain * 1.08, 0.0, 1.0);
 		}
 	}
-	alb = mix(alb, brow_col, clamp(brow_m, 0.0, 1.0) * 0.92);
-	alb = mix(alb, hair_col, clamp(hair_m, 0.0, 1.0));
+	alb = mix(alb, brow_col, clamp(brow_m, 0.0, 1.0) * 0.92 * (1.0 - face_a));
+	alb = mix(alb, hair_col, clamp(hair_m, 0.0, 1.0) * (1.0 - face_a));
 	ALBEDO = clamp(alb, 0.0, 1.0);
 	if (debug_view == 1) {
 		ALBEDO = vec3(crease, 0.15, max(-cav, 0.0));

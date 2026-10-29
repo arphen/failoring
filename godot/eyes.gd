@@ -48,6 +48,17 @@ func set_iris(key: String) -> void:
 	_mat.set_shader_parameter("iris_in", c[1])
 
 
+# An iris of one colour (a face likeness: the colour sampled from photos): darker at the rim, lighter round the pupil.
+func set_iris_rgb(c: Color) -> void:
+	if _mat == null:
+		return
+	# photographed irises read dark (shaded by the lids, a dim room): lift to a believable lightness, keep the hue
+	var l := maxf(c.get_luminance(), 0.01)
+	var lit := Color(c.r, c.g, c.b) * clampf(0.36 / l, 1.0, 3.0)
+	_mat.set_shader_parameter("iris_out", lit * 0.55)
+	_mat.set_shader_parameter("iris_in", lit * 1.1)
+
+
 # Places both eyes on a posed body (vertex positions in the body node's space).
 func follow(verts: PackedVector3Array) -> void:
 	if anchors.is_empty():

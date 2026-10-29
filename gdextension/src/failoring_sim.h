@@ -26,7 +26,8 @@
 #include "failoring/material.hpp"
 #include "failoring/sdf_grid.hpp"
 
-class GpuCg;  // gpu_cg.h
+class GpuCg;    // gpu_cg.h
+class GpuStep;  // gpu_step.h
 
 namespace godot {
 
@@ -88,6 +89,16 @@ public:
     bool add_seam(int panel_a, int edge_a, int panel_b, int edge_b, bool reverse);
     void pin_vertex(int vertex, bool pinned);
     void set_vertex_position(int vertex, Vector3 p);                  // teleport one vertex (zeroes its velocity)
+    // Live edits while the simulation runs (docs/LIVE_DRAPE_PLAN.md); each keeps the cloth's motion.
+    void pin_vertices(const PackedInt32Array& vertices, bool pinned);
+    // Kinematic targets for (pinned) vertices; their velocity becomes the displacement over one frame (dt), so a
+    // dragged vertex released afterwards keeps the drag's speed.
+    void drive_vertices(const PackedInt32Array& vertices, const PackedVector3Array& targets, real_t dt);
+    // Sews vertex a to vertex b (a tack); share is the seam length the link stands for (m). Before or after the start.
+    bool add_point_seam(int a, int b, real_t share);
+    int remove_point_seam(int a, int b);
+    // A panel's rest shape in pattern coordinates (as get_panel_vertices_2d), one point per panel vertex.
+    bool set_panel_rest_2d(int panel, const PackedVector2Array& uv);
     void set_positions(const PackedVector3Array& positions);          // teleport all cloth vertices (wasm fl_set_positions)
     int get_first_vertex(int panel) const;
     int get_panel_vertex_count(int panel) const;
@@ -216,6 +227,8 @@ private:
     std::unique_ptr<fl::ClothSolver> solver_;
     std::shared_ptr<::GpuCg> gpu_;   // set_param("gpu", 1): the CG solves run on the GPU (gpu_cg.h)
     void attachGpu();
+    std::shared_ptr<::GpuStep> gpuStep_;   // set_param("gpu_step", 1): whole frames on the GPU when it can run them (gpu_step.h)
+    bool gpuStepFrame();                  // one frame on the GPU; false = the CPU steps it
     std::vector<fl::FabricMaterial> materials_;
     std::vector<std::shared_ptr<fl::Collider>> colliders_;     // analytic primitives
     std::shared_ptr<fl::Collider> active_;                     // what the solver collides with (primitives + body)
@@ -239,6 +252,7 @@ private:
     std::vector<float> skinWeight_;
     std::vector<int> panelEdges_;                              // outline edge count per panel (for seam checks)
     int warnings_ = 0;
+    std::vector<real_t> panelGrain_;                          // grain angle per panel, as given to addPanel
     std::vector<std::vector<fl::Vec2>> panelUV_;              // pattern (u,v) per panel vertex before grain rotation (wasm restUV)
 
     // mesh body

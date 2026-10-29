@@ -1,5 +1,6 @@
 #include "failoring_sim.h"
 #include "gpu_cg.h"
+#include "gpu_step.h"
 
 #include <algorithm>
 #include <cmath>
@@ -81,9 +82,11 @@ void FailoringSim::resetSolver() {
     solver_ = std::make_unique<fl::ClothSolver>(params_);
     solver_->setCollider(active_);
     attachGpu();
+    if (gpuStep_) gpuStep_->invalidate();
     panelEdges_.clear();
     warnings_ = 0;
     panelUV_.clear();
+    panelGrain_.clear();
     dispEdges_.clear();
     dispTris_.clear();
     dispVertexCount_ = -1;
@@ -172,6 +175,7 @@ int FailoringSim::addOutlinePanel(std::vector<fl::Vec2> poly, real_t edge_length
         const int p = solver_->addPanel(mesh, *m, pl, grain_angle, name.utf8().get_data());
         panelEdges_.push_back(static_cast<int>(poly.size()));
         panelUV_.push_back(mesh.verts);
+        panelGrain_.push_back(grain_angle);
         return p;
     } catch (const std::exception& e) {
         UtilityFunctions::push_error("FailoringSim: cannot add panel '", name, "': ", String(e.what()), " (begin() starts a new simulation)");
@@ -237,6 +241,74 @@ void FailoringSim::pin_vertex(int v, bool pinned) {
     if (v < 0 || v >= solver_->vertexCount()) return;
     solver_->pinVertex(v, pinned);
 }
+// ---- live edits (docs/LIVE_DRAPE_PLAN.md): the model is rebuilt in place, the cloth keeps moving
+void FailoringSim::pin_vertices(const PackedInt32Array& verts, bool pinned) {
+    const int n = solver_->vertexCount();
+    for (int64_t k = 0; k < verts.size(); ++k)
+        if (verts[k] >= 0 && verts[k] < n) solver_->pinVertex(verts[k], pinned);
+}
+
+void FailoringSim::drive_vertices(const PackedInt32Array& verts, const PackedVector3Array& targets, real_t dt) {
+    if (verts.size() != targets.size()) {
+        UtilityFunctions::push_error("FailoringSim: drive_vertices expects one target per vertex");
+        return;
+    }
+    std::vector<int> vs;
+    std::vector<fl::Vec3> ts;
+    const int n = solver_->vertexCount();
+    for (int64_t k = 0; k < verts.size(); ++k) {
+        if (verts[k] < 0 || verts[k] >= n) continue;
+        vs.push_back(verts[k]);
+        ts.push_back(toFl(targets[k]));
+    }
+    solver_->driveVertices(vs, ts, solver_->params().dt);
+}
+
+bool FailoringSim::add_point_seam(int a, int b, real_t share) {
+    try {
+        solver_->addPointSeam(a, b, share);
+        return true;
+    } catch (const std::exception& e) {
+        UtilityFunctions::push_error("FailoringSim: add_point_seam: ", String(e.what()));
+        return false;
+    }
+}
+
+int FailoringSim::remove_point_seam(int a, int b) {
+    try {
+        return solver_->removePointSeam(a, b);
+    } catch (const std::exception& e) {
+        UtilityFunctions::push_error("FailoringSim: remove_point_seam: ", String(e.what()));
+        return 0;
+    }
+}
+
+// New rest shape of a panel in pattern coordinates (the frame of get_panel_vertices_2d): the grain is applied as at
+// add time. The mesh keeps its topology; a live simulation goes on from where it is.
+bool FailoringSim::set_panel_rest_2d(int panel, const PackedVector2Array& uv) {
+    if (!validPanel(panel, "set_panel_rest_2d")) return false;
+    const int first = solver_->firstVertex(panel);
+    const auto& old = panelUV_[static_cast<size_t>(panel)];
+    if (uv.size() != static_cast<int64_t>(old.size())) {
+        UtilityFunctions::push_error("FailoringSim: set_panel_rest_2d expects one point per panel vertex");
+        return false;
+    }
+    std::vector<int> vs(old.size());
+    std::vector<fl::Vec2> rest(old.size());
+    const real_t grain = panelGrain_[static_cast<size_t>(panel)];
+    for (size_t k = 0; k < old.size(); ++k) {
+        vs[k] = first + static_cast<int>(k);
+        rest[k] = fl::rotate(fl::Vec2(uv[k].x, uv[k].y), -grain);
+    }
+    try {
+        solver_->setRestUVs(vs, rest);
+    } catch (const std::exception& e) {
+        UtilityFunctions::push_error("FailoringSim: set_panel_rest_2d: ", String(e.what()));
+        return false;
+    }
+    return true;
+}
+
 void FailoringSim::set_vertex_position(int v, Vector3 p) {
     if (v < 0 || v >= solver_->vertexCount()) return;
     solver_->setVertexPosition(v, toFl(p));
@@ -709,8 +781,13 @@ PackedVector3Array FailoringSim::get_display_positions(real_t margin) const {
     for (size_t i = 0; i < n; ++i) P[i] = x[i];
     // seams are soft: the two sides sit a few mm apart while walking, and skin shows through the crack. Shown closed: each
     // sewn vertex is drawn on the point of the other side's edge it is sewn to (a shift of the seam gap, a few mm).
+    // Only a seam that is nearly closed: an open one (unsewn in live drape, or still pulling together) would draw each
+    // panel's seam edge on its partner up to a metre away, a sheet stretched between the panels.
     if (dispLevels_ >= 2)
-        for (const auto& s : solver_->seamLinks()) P[s.a] = x[s.b0] * (1 - s.t) + x[s.b1] * s.t;
+        for (const auto& s : solver_->seamLinks()) {
+            const fl::Vec3 to = x[s.b0] * (1 - s.t) + x[s.b1] * s.t;
+            if (fl::length(to - x[s.a]) < fl::Real(0.015)) P[s.a] = to;
+        }
     if (active_)
         for (size_t i = 0; i < n; ++i) phi[i] = active_->eval(P[i], N[i]);
     if (active_ && dispLevels_ >= 2)
@@ -799,12 +876,15 @@ void FailoringSim::set_param(const String& name, real_t v) {
     else if (name == "display_levels") dispLevels_ = std::max(1, std::min(3, static_cast<int>(v)));  // before setup_display()
     else if (name == "seam_stiffness") p.seamStiffness = v;
     else if (name == "seam_ramp_frames") p.seamRampFrames = static_cast<int>(v);
+    else if (name == "damping_scale") solver_->setDampingScale(std::max(real_t(0), v));   // live: the model is rebuilt
+    else if (name == "seam_scale") p.seamScale = std::max(real_t(0), v);   // 0 = unsewn, live (docs/LIVE_DRAPE_PLAN.md)
     else if (name == "self_collision") p.selfCollision = v != 0;
     else if (name == "body_friction_mode") p.bodyFrictionMode = static_cast<int>(v);      // 0 after the solve, 2 inside it
     else if (name == "friction_slip_velocity") p.frictionSlipVelocity = v;              // m/s, mode 2 smoothing
     else if (name == "contact_offset") p.contactOffset = v;
     else if (name == "contact_band") p.contactBand = v;
     else if (name == "tension_stiffness") p.tensionStiffness = v != 0;
+    else if (name == "hessian_auto") p.hessianAuto = v != 0;  // 0: always the model of tension_stiffness
     else if (name == "gravity_y") p.gravity.y = v;
     else if (name == "gpu") {  // 1: run the conjugate gradient on the GPU (with linear_solver 1)
         // the device is created here, on the calling (main) thread: created on the editor's worker thread and freed on the
@@ -815,6 +895,10 @@ void FailoringSim::set_param(const String& name, real_t v) {
         }
         if (v == 0) gpu_.reset();
         attachGpu();
+    }
+    else if (name == "gpu_step") {  // 1: whole frames on the GPU (gpu_step.h); the device is made on the first stepped frame
+        if (v != 0 && !gpuStep_) gpuStep_ = std::make_shared<GpuStep>();
+        if (v == 0) gpuStep_.reset();
     }
     else if (name == "gpu_verify") { if (gpu_) gpu_->setVerify(v != 0); }  // after "gpu": check every solve on the CPU
     // fast solve (docs/GPU_SOLVER_NOTES.md): linear_solver 0 = Cholesky, 1 = conjugate gradient
@@ -831,7 +915,7 @@ void FailoringSim::step(int frames) {
         for (int i = 0; i < frames; ++i) {
             // moved props: their motion (and the body's, elsewhere) for this frame. Without props this branch is not taken.
             if (propsMoved_) solver_->setColliderMotion(propMotion());
-            solver_->step();
+            if (!gpuStepFrame()) solver_->step();
             // The surface motion described one frame; the solver keeps it until replaced, so clear it (the browser sets
             // it before every fl_step(1)). Otherwise a body moved once is dragged against the cloth on every later frame.
             solver_->setColliderMotion({});
@@ -864,8 +948,40 @@ real_t FailoringSim::get_kinetic_energy() const { return solver_->kineticEnergy(
 real_t FailoringSim::get_max_seam_gap() const { return solver_->maxSeamGap(); }
 real_t FailoringSim::get_min_body_clearance() const { return solver_->minBodyClearance(); }
 
+// The collision scene as the GPU stepper takes it; colliders it does not implement make the frame stay on the CPU.
+bool FailoringSim::gpuStepFrame() {
+    if (!gpuStep_) return false;
+    GpuStep::Scene sc;
+    for (const auto& c : colliders_) {
+        if (auto pl = std::dynamic_pointer_cast<fl::PlaneCollider>(c)) { sc.planes.push_back(pl->point()); sc.planes.push_back(pl->normal()); }
+        else if (auto sp = std::dynamic_pointer_cast<fl::SphereCollider>(c)) {
+            sc.spheres.insert(sc.spheres.end(), {sp->center().x, sp->center().y, sp->center().z, sp->radius()});
+        } else sc.unsupported = "a collider type the GPU does not implement (capsule, cylinder or ellipsoid)";
+    }
+    if (body_.enabled && body_.grid && !body_.grid->empty()) sc.grid = body_.grid;
+    for (const BoxProp& bp : props_) {
+        const BoxFrame& f = bp.box->frame;
+        for (const fl::Vec3& v : {f.origin, f.axis[0], f.axis[1], f.axis[2], bp.box->half}) sc.boxes.insert(sc.boxes.end(), {v.x, v.y, v.z});
+    }
+    return gpuStep_->stepFrame(*solver_, sc);
+}
+
 Dictionary FailoringSim::get_solver_stats() const {
     Dictionary d;
+    if (gpuStep_) {
+        d["gpu_step_frames"] = static_cast<int64_t>(gpuStep_->frames());
+        d["gpu_step_device"] = String(gpuStep_->deviceName().c_str());
+        d["gpu_step_error"] = String(gpuStep_->error().c_str());
+        d["gpu_step_cpu_reason"] = String(gpuStep_->reason().c_str());
+        d["gpu_step_last_ms"] = gpuStep_->lastMs();
+        d["gpu_step_last_gpu_ms"] = gpuStep_->lastGpuMs();
+        d["gpu_step_last_upload_ms"] = gpuStep_->lastUploadMs();
+        d["gpu_step_last_record_ms"] = gpuStep_->lastRecordMs();
+        d["gpu_step_last_read_ms"] = gpuStep_->lastReadMs();
+        d["gpu_step_cg_iterations"] = gpuStep_->lastCgIterations();
+        d["gpu_step_ls_rejects"] = gpuStep_->lastLsRejects();
+        d["gpu_step_dispatches"] = gpuStep_->dispatchesPerFrame();
+    }
     d["line_search_failures"] = solver_->lineSearchFailures();
     d["newton_iterations"] = static_cast<int64_t>(solver_->newtonIterations());
     d["substeps"] = static_cast<int64_t>(solver_->substepsDone());
@@ -948,6 +1064,11 @@ void FailoringSim::_bind_methods() {
     ClassDB::bind_method(D_METHOD("add_seam", "panel_a", "edge_a", "panel_b", "edge_b", "reverse"), &FailoringSim::add_seam);
     ClassDB::bind_method(D_METHOD("pin_vertex", "vertex", "pinned"), &FailoringSim::pin_vertex);
     ClassDB::bind_method(D_METHOD("set_vertex_position", "vertex", "position"), &FailoringSim::set_vertex_position);
+    ClassDB::bind_method(D_METHOD("pin_vertices", "vertices", "pinned"), &FailoringSim::pin_vertices);
+    ClassDB::bind_method(D_METHOD("drive_vertices", "vertices", "targets", "dt"), &FailoringSim::drive_vertices);
+    ClassDB::bind_method(D_METHOD("add_point_seam", "a", "b", "share"), &FailoringSim::add_point_seam);
+    ClassDB::bind_method(D_METHOD("remove_point_seam", "a", "b"), &FailoringSim::remove_point_seam);
+    ClassDB::bind_method(D_METHOD("set_panel_rest_2d", "panel", "uv"), &FailoringSim::set_panel_rest_2d);
     ClassDB::bind_method(D_METHOD("set_positions", "positions"), &FailoringSim::set_positions);
     ClassDB::bind_method(D_METHOD("get_first_vertex", "panel"), &FailoringSim::get_first_vertex);
     ClassDB::bind_method(D_METHOD("get_panel_vertex_count", "panel"), &FailoringSim::get_panel_vertex_count);

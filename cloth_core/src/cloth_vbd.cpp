@@ -148,7 +148,7 @@ void ClothSolver::vbdSolveVertex(int i, Real invH2, Real h, Real seamScale) {
         } else {
             const SeamC& s = seamC_[r.elem];
             const Vec3 d = x_[s.a] - (x_[s.b0] * (1 - s.t) + x_[s.b1] * s.t);
-            const Real k = seamScale / s.alpha;
+            const Real k = seamScaleOf(s, seamScale) / s.alpha;
             const Real wl = r.local == 0 ? 1.0 : (r.local == 1 ? -(1 - s.t) : -s.t);
             f -= d * (k * wl);
             H.addDiag(k * wl * wl);
@@ -219,7 +219,7 @@ Real ClothSolver::vbdLocalEnergy(int i, Real invH2, Real seamScale) const {
         } else {
             const SeamC& s = seamC_[r.elem];
             const Vec3 d = x_[s.a] - (x_[s.b0] * (1 - s.t) + x_[s.b1] * s.t);
-            E += 0.5 * seamScale / s.alpha * length2(d);
+            E += 0.5 * seamScaleOf(s, seamScale) / s.alpha * length2(d);
         }
     }
     if (collider_) {
@@ -236,7 +236,7 @@ void ClothSolver::stepVBD() {
     const Real h = p_.dt / S;
     const Real invH2 = 1.0 / (h * h);
     const int N = vertexCount();
-    const Real seamScale = p_.seamRampFrames > 0 ? std::min(Real(1), std::max(Real(0.02), (frame_ + 1.0) / p_.seamRampFrames)) : Real(1);
+    const Real seamScale = seamScaleNow();
     const int threads = p_.vbdThreads > 0 ? p_.vbdThreads : std::max(1u, std::thread::hardware_concurrency());
     if (vbdAccel_.size() != static_cast<size_t>(N)) vbdAccel_.assign(N, Vec3(0, 0, 0));
     vbdVPrev_.resize(N);

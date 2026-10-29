@@ -59,6 +59,15 @@ public:
     const SdfGridParams& params() const { return p_; }
     // Positions and values of all fine samples (tests and diagnostics).
     void fineSamples(std::vector<Vec3>& pos, std::vector<float>& val) const;
+    // The baked arrays and their geometry, for an evaluator elsewhere (the GPU stepper ports evalFine/evalCoarse).
+    // Fine bricks hold 2x2x2 samples, x fastest; brickOf is the brick table (-1 = no brick), x fastest.
+    struct Raw {
+        Vec3 fo; Real fh, finv; int bnx, bny, bnz;
+        const std::vector<int>* brickOf; const std::vector<float>* fine;
+        Vec3 co; Real ch, cinv; int cnx, cny, cnz;
+        const std::vector<float>* coarse;
+    };
+    Raw raw() const { return {fo_, fh_, finv_, bnx_, bny_, bnz_, &brickOf_, &fine_, co_, ch_, cinv_, cnx_, cny_, cnz_, &coarse_}; }
     // Which level answered the last queries (diagnostics only; not thread safe).
     mutable long long fineQueries = 0, coarseQueries = 0;
 

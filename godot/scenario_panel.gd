@@ -10,8 +10,8 @@ extends RefCounted
 
 const SPEEDS := [0.25, 0.5, 1.0, 2.0]
 const SPEED_LABELS := ["0.25x", "0.5x", "1x", "2x"]
-const QUALITY_KEYS := ["draft", "preview", "standard"]
-const QUALITY_LABELS := ["Draft (fast)", "Preview", "Standard"]
+const QUALITY_KEYS := ["draft", "preview", "standard", "fine", "photo", "ultra"]
+const QUALITY_LABELS := ["Draft (fast)", "Preview", "Standard", "Fine (slow)", "Photo (slowest)", "Ultra (GPU solver)"]
 const LEAD := 0.5
 
 var _ed: Node
@@ -44,6 +44,9 @@ var _playing := false
 var _t := 0.0                       # playhead, scenario seconds (negative during the lead-in)
 var _prop_nodes: Array = []
 var _st := {}                       # the last poll of the render in flight
+
+
+var _restore_q := ""   # the editor's quality while a render at another quality is on the view (_enter_view)
 
 
 func _init(ed: Node, vb: VBoxContainer) -> void:
@@ -281,6 +284,10 @@ func _set_playing(on: bool) -> void:
 func _enter_view(r: Dictionary, sc: Dictionary) -> void:
 	_cur = r
 	_cur_scenario = sc
+	# the render's cloth is drawn with the editor's display mesh, which belongs to the quality the editor built: a render at
+	# another quality has another vertex count, nothing was drawn, and the editor's own (unsewn) pieces stayed on the view.
+	# So the editor builds the garment at the render's quality (a build only, no steps) while the render is on the view.
+	_restore_q = _ed.showcase_match_quality(String(r.get("quality", "")))
 	_pose = ShowcaseScenarios.Pose.new(_ed.M, _ed.body_rest)
 	var first := ShowcaseScenarios.sample(sc, 0.0)
 	_pose0 = _pose.evaluate(first["rot"], first["root"])["verts"]
@@ -380,6 +387,9 @@ func _exit_view() -> void:
 	_time_label.text = "no render on the view"
 	_ed._body_key = ""
 	_ed._last_shown = ""
+	if _restore_q != "":
+		_ed.showcase_match_quality(_restore_q)
+		_restore_q = ""
 	_ed.call("_show_current")
 	_status.text = "Back to editing."
 
@@ -482,6 +492,14 @@ func api_show(t: float) -> void:
 	if _view:
 		_t = t
 		_show_frame()
+
+
+# Where the pelvis is at time t on the floor plane (the scenario's root, x and z): render mode's camera follows it.
+func api_root(t: float) -> Vector3:
+	if _cur_scenario.is_empty():
+		return Vector3.ZERO
+	var r: Vector3 = ShowcaseScenarios.sample(_cur_scenario, maxf(t, 0.0))["root"]
+	return Vector3(r.x, 0.0, r.z)
 
 
 func api_duration() -> float:

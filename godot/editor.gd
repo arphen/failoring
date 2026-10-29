@@ -8,6 +8,8 @@ extends Node3D
 const PlanLoader = preload("res://plan_loader.gd")
 const BodyView = preload("res://scripts/body_loader.gd")
 const BodyGen = preload("res://body_gen.gd")
+const MeasurementsForm = preload("res://measurements_form.gd")
+const FaceLikeness = preload("res://face.gd")
 const Draft = preload("res://draft.gd")
 const Wrap = preload("res://wrap.gd")
 const Info = preload("res://info.gd")
@@ -36,6 +38,7 @@ const Arrange = preload("res://arrange.gd")
 const Studio = preload("res://studio.gd")
 const SkinMap = preload("res://skin.gd")
 const Eyes = preload("res://eyes.gd")
+const LiveDrape = preload("res://live_drape.gd")
 
 # body_h: spacing (m) of the body's signed-distance grid, baked for every walking frame. 7 mm is the reference (the
 # numbers in docs/PERF_NOTES.md are measured with it). Draft and Preview use 10 mm: the bake takes about 1.8x less CPU,
@@ -46,6 +49,8 @@ const QUALITIES := {
 	"standard": {"label": "Standard", "edge": 0.040, "sub": 2, "newton": 8, "frames": 48, "body_h": 0.007},
 	"fine": {"label": "Fine (slow)", "edge": 0.028, "sub": 2, "newton": 10, "frames": 60, "body_h": 0.007},
 	"photo": {"label": "Photo", "edge": 0.025, "sub": 3, "newton": 12, "frames": 60, "self": true, "body_h": 0.007},
+	# 1.5 cm triangles (about 3x Photo's vertex count): meant for the GPU solver; on the CPU a frame takes seconds
+	"ultra": {"label": "Ultra (GPU)", "edge": 0.015, "sub": 3, "newton": 12, "frames": 60, "self": true, "body_h": 0.007},
 }
 const FS_GARMENTS := [["Tee", "teagan"], ["Pencil skirt", "penelope"], ["Chinos", "charlie"]]
 const CYCLE := 64.0
@@ -61,6 +66,7 @@ var studio: Dictionary = {}              # Studio.build: lights, fixtures, sky
 var look_skin := Look.SKIN_DEFAULT       # mannequin look (Body tab, settings.cfg [look]): skin tone, hair, eye colour
 var look_hair := Look.HAIR_DEFAULT
 var look_eyes := Look.EYE_DEFAULT
+var look_face := ""                       # a face likeness from Documents/Failoring/faces (face.gd), "" = the mannequin's
 var _shade := ClothShade.new()           # cloth normals, UVs, strain, contact occlusion, fabric surfaces
 var cam_pivot: Node3D
 var cam: Camera3D
@@ -69,6 +75,8 @@ var debounce: Timer
 # state (mirrors App.S pieces of it)
 var M: Dictionary = {}
 var meas := {}
+var _meas_mine := false         # meas holds the wearer's measurements (MeasurementsForm), not a preset
+var _meas_form: MeasurementsForm
 var prev_body = null
 var body_rest = null
 var body_stand = null
@@ -84,6 +92,10 @@ var motion := "walk"
 var seam_stiffness := 20000.0
 var ramp_frames := 20
 var self_collision := false
+# Whole frames on the GPU (gdextension/src/gpu_step.h): the fast solve (10 substeps, one linearised solve, CG 100, 3 %
+# strain limit) with every substep on the GPU. Frames it cannot run (no GPU device, a collider or solver feature it does
+# not implement) stay on the CPU with the same settings; the status line says which. Off under headless (tests).
+var solver_gpu := DisplayServer.get_name() != "headless" and OS.get_environment("FL_CPU") != "1"
 
 # Outfit: the garments on the mannequin, inner first (outfit.gd merges the shown ones into one simulation). Entry:
 # {uid, key, redraft, name, notes, fabric, color, visible, locked, fitted, plan, pieces, seams}. The globals above
@@ -214,6 +226,8 @@ var view_pane: Control
 var view_image: TextureRect
 var layout = Layout.new()   # pane splits, toggles and their saved state (layout.gd)
 var place_view = PlaceView.new()   # moving and turning panels in the 3D view (place_view.gd)
+var live = LiveDrape.new()         # working on the garment live on the mannequin (live_drape.gd, docs/LIVE_DRAPE_PLAN.md)
+var live_btn: Button
 var place_btn: Button
 var arrange_btn: Button
 var soft = SoftTissue.new()   # breasts, seat, belly, thighs, upper arms that bounce while walking; breath (soft_tissue.gd)
@@ -254,8 +268,16 @@ func _ready() -> void:
 	Look.apply_ui($UI/Root, sub_view)
 	M = BodyGen.load_data(PlanLoader.load_json("res://assets/body_data.json"))
 	meas = (BodyGen.PRESETS["average"] as Dictionary).duplicate()
+	# the wearer's own measurements (Documents/Failoring/my_measurements.csv), when saved; not in headless runs (tests
+	# start from the presets, whatever is on the machine). FL_AUTO below still picks its preset.
+	if DisplayServer.get_name() != "headless" and MeasurementsForm.has_file():
+		var mine := MeasurementsForm.load_csv()
+		if not mine.is_empty():
+			meas.merge(mine, true)
+			_meas_mine = true
 	_build_scene()
 	place_view.setup(self)
+	live.setup(self)
 	_apply_render_quality()
 	_apply_auto_env()
 	_build_ui()
@@ -273,7 +295,9 @@ func _ready() -> void:
 	# Headless runs and tests keep the synchronous path (no threads, identical results). FL_THREAD=1 forces the worker
 	# under headless (for tests); FL_SYNC=1 forces the synchronous path.
 	# FL_GPU=1 (GPU conjugate gradient, plan_loader.gd) steps on the main thread too: its device's submits from the worker
-	# while the main thread draws crashed Godot 4.3 (SwiftShader, gdb: SIGSEGV in the main loop); the GPU step is short.
+	# while the main thread drew crashed Godot 4.3 (SwiftShader, gdb: SIGSEGV in the main loop). The whole-frame GPU
+	# stepper (solver_gpu) keeps the worker: its device is made, used and freed by the sim on whatever thread holds it,
+	# measured safe on the M3 (tests/gpu_dispatch_bench.gd: worker-made devices freed on the main thread while it draws).
 	_use_worker = (DisplayServer.get_name() != "headless" or OS.has_environment("FL_THREAD")) and not OS.has_environment("FL_SYNC") \
 		and OS.get_environment("FL_GPU") != "1"
 	if _use_worker:
@@ -290,7 +314,7 @@ func _apply_auto_env() -> void:
 	var parts := OS.get_environment("FL_AUTO").split(",")
 	if parts.size() >= 3:
 		meas = (BodyGen.PRESETS.get(parts[0], BodyGen.PRESETS["average"]) as Dictionary).duplicate()
-		plan_key = parts[1] if parts[1].begins_with("fs-") or Builtin.all().has(parts[1]) or parts[1] in ["pants", "tank", "shirt"] else "fs-" + parts[1]
+		plan_key = parts[1] if parts[1].begins_with("fs-") or Builtin.all().has(parts[1]) or parts[1] in Library.DRAFTED else "fs-" + parts[1]
 	if parts.size() >= 4 and QUALITIES.has(parts[3]):
 		quality = parts[3]
 	if parts.size() >= 5 and (parts[4] == "stand" or parts[4] == "walk"):
@@ -327,9 +351,13 @@ func _load_settings() -> void:
 		var sk := String(cf.get_value("look", "skin", Look.SKIN_DEFAULT))
 		look_skin = sk if Look.skin_choices().has(sk) else Look.SKIN_DEFAULT
 		var hk := String(cf.get_value("look", "hair", Look.HAIR_DEFAULT))
-		look_hair = hk if Look.HAIR_COLORS.has(hk) else Look.HAIR_DEFAULT
+		look_hair = hk if Look.HAIR_COLORS.has(hk) or hk == "mine" else Look.HAIR_DEFAULT
+		var fk := String(cf.get_value("look", "face", ""))
+		look_face = fk if FaceLikeness.available().has(fk) and DisplayServer.get_name() != "headless" else ""
 		var ek := String(cf.get_value("look", "eyes", Look.EYE_DEFAULT))
-		look_eyes = ek if Eyes.IRIS.has(ek) else Look.EYE_DEFAULT
+		look_eyes = ek if Eyes.IRIS.has(ek) or (ek == "mine" and look_face != "") else Look.EYE_DEFAULT
+		if look_hair == "mine" and look_face == "":
+			look_hair = Look.HAIR_DEFAULT
 	# a missing or unreadable file keeps the defaults (auto scale, medium render quality)
 	if OS.has_environment("FL_RENDER") and Look.QUALITY_LEVELS.has(OS.get_environment("FL_RENDER")):
 		render_q = OS.get_environment("FL_RENDER")
@@ -358,9 +386,24 @@ func _apply_look() -> void:
 	if m == null:
 		return
 	Look.set_skin_tone(m, look_skin)
-	Look.set_hair(m, look_hair)
+	Look.set_hair(m, "none" if look_hair == "mine" else look_hair)   # the long hair covers the scalp: no painted crop
+	Look.set_face(m, look_face)
+	_apply_long_hair()
 	if body_node.eyes != null:
-		body_node.eyes.set_iris(look_eyes)
+		var iris = FaceLikeness.info(look_face).get("iris", null) if look_eyes == "mine" else null
+		if iris is Array:
+			body_node.eyes.set_iris_rgb(Color(iris[0], iris[1], iris[2]))
+		else:
+			body_node.eyes.set_iris(look_eyes)
+
+
+# The face likeness's long hair (Look > Hair > Long (mine)): hair.gd on the body, in the colour from the photos.
+func _apply_long_hair() -> void:
+	if body_node == null:
+		return
+	var on := look_hair == "mine" and look_face != ""
+	var hc = FaceLikeness.info(look_face).get("hair", null) if on else null
+	body_node.set_long_hair(on, M, Color(hc[0], hc[1], hc[2]) if hc is Array else Color(0.31, 0.24, 0.18))
 
 
 func _set_look(key: String, value: String) -> void:
@@ -371,6 +414,14 @@ func _set_look(key: String, value: String) -> void:
 			look_hair = value
 		"eyes":
 			look_eyes = value
+		"face":
+			look_face = value
+			if value == "" and look_eyes == "mine":
+				look_eyes = Look.EYE_DEFAULT
+			if value == "" and look_hair == "mine":
+				look_hair = Look.HAIR_DEFAULT
+			_rebuild_body_tab()
+			_schedule()   # the head's shape changes: the body is generated again
 	_apply_look()
 	var cf := ConfigFile.new()
 	cf.load(SETTINGS_PATH)
@@ -630,8 +681,8 @@ func _add_opt(box: VBoxContainer, label_text: String, opt_name: String, items: A
 
 
 func _plan_entries() -> Array:
-	var out := [["Pencil skirt", "pencil"], ["A-line skirt", "aline"], ["Blank rectangle", "blank"],
-		["Poncho (square, neck hole)", "poncho"], ["Trousers (drafted)", "pants"], ["Tank (drafted)", "tank"], ["T-shirt (drafted)", "shirt"]]
+	var out := [["Pencil skirt", "pencil"], ["A-line skirt", "aline"], ["Tiered maxi skirt", "tiered"], ["Blank rectangle", "blank"],
+		["Poncho (square, neck hole)", "poncho"], ["Trousers (drafted)", "pants"], ["Tank (drafted)", "tank"], ["Crop top (drafted)", "crop"], ["T-shirt (drafted)", "shirt"]]
 	for g in FS_GARMENTS:
 		out.append(["%s (FreeSewing)" % g[0], "fs-" + g[1]])
 	return out
@@ -1088,6 +1139,9 @@ func showcase_inputs(qkey: String) -> Dictionary:
 		if bool(e["visible"]):
 			n_shown += 1
 	var q: Dictionary = QUALITIES[qkey]
+	if solver_gpu:
+		q = q.duplicate()
+		q["gpu"] = true
 	return {"plan": {"pieces": _sim_pieces.duplicate(true), "seams": _sim_seams.duplicate(true)},
 		"sections": body_stand["sections"], "arms": body_stand["arms"], "stand": _stand_v3, "tris": _tris(),
 		"fabric_id": fabric_id, "quality": q, "quality_key": qkey, "seam_stiffness": seam_stiffness, "ramp_frames": ramp_frames,
@@ -2336,6 +2390,19 @@ func _rebuild_body_tab() -> void:
 
 func _build_body_tab_content() -> void:
 	var vb := _tab_vbox("Body")
+	var mine := Button.new()
+	mine.name = "MyMeasurementsBtn"
+	mine.text = "Enter my measurements..."
+	mine.tooltip_text = "A form for your own body measurements. They are saved to %s and loaded every time the editor starts." % MeasurementsForm.csv_path()
+	mine.pressed.connect(_open_measurements_form)
+	vb.add_child(mine)
+	var src := Label.new()
+	src.name = "MeasSource"
+	src.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	src.add_theme_font_size_override("font_size", 11)
+	src.modulate = Color(1, 1, 1, 0.65)
+	src.text = "Your measurements (saved)." if _meas_mine else ("A preset. Your saved measurements: Enter my measurements..." if MeasurementsForm.has_file() else "A preset. Enter your measurements to see garments on your own body.")
+	vb.add_child(src)
 	var h := Label.new()
 	h.text = "Preset"
 	vb.add_child(h)
@@ -2371,11 +2438,21 @@ func _build_body_tab_content() -> void:
 			String(d[4]) + " Idle life (idle.gd). With garments on the body keeps still: the cloth is simulated against a still body.")
 	vb.add_child(_h4("Look"))
 	_look_row(vb, "Skin", "skin", Look.skin_choices(), look_skin, "Skin tone of the mannequin, or a photographic MakeHuman skin (tools/fetch_makehuman_skins.sh puts them in godot/assets/skin/photo). Look only: the simulation does not change.")
-	_look_row(vb, "Hair", "hair", Look.HAIR_COLORS, look_hair, "A short crop drawn on the scalp, or none.")
+	var hairs := Look.HAIR_COLORS.duplicate()
+	if look_face != "":
+		hairs["mine"] = {"label": "Long (mine)"}
+	_look_row(vb, "Hair", "hair", hairs, look_hair, "A short crop drawn on the scalp, none, or with a face likeness the long hair modelled after the photos (hair.gd; look only, the cloth does not collide with it).")
 	var eyes := {}
 	for k in Eyes.IRIS.keys():
 		eyes[k] = {"label": String(k).capitalize()}
+	if look_face != "":
+		eyes["mine"] = {"label": "Mine (from the photos)"}
 	_look_row(vb, "Eyes", "eyes", eyes, look_eyes, "Eye colour.")
+	var faces := {"": {"label": "Mannequin"}}
+	for id in FaceLikeness.available():
+		faces[id] = {"label": String(FaceLikeness.info(id).get("label", "Mine" if id == "me" else String(id).capitalize()))}
+	if faces.size() > 1:
+		_look_row(vb, "Face", "face", faces, look_face, "The mannequin's face, or a likeness made from photos (tools/face/build_face.sh; kept in %s). Look only: the head's shape changes a little, the simulation does not." % FaceLikeness.faces_dir())
 	vb.add_child(_h4("More measurements"))
 	for spec in [["arm", "Arm length", 44.0, 68.0], ["inseam", "Inseam", 62.0, 96.0], ["neck", "Neck", 28.0, 48.0], ["thigh", "Thigh", 40.0, 85.0], ["upperarm", "Upper arm", 20.0, 45.0], ["back", "Back length", 30.0, 48.0]]:
 		var row := HBoxContainer.new()
@@ -2482,6 +2559,13 @@ func _build_fabric_tab() -> void:
 	chk.button_pressed = self_collision
 	chk.toggled.connect(func(on: bool) -> void: self_collision = on; _schedule())
 	vb.add_child(chk)
+	var gchk := CheckBox.new()
+	gchk.name = "GpuCheck"
+	gchk.text = "GPU solver"
+	gchk.tooltip_text = "Simulate on the graphics card: the fast solve (10 substeps, capped CG, 3 % strain limit) with every substep on the GPU. About 3x faster than the CPU on fine meshes; the drape can differ a little from the CPU's exact solve. Frames the GPU cannot run stay on the CPU (the status line says why)."
+	gchk.button_pressed = solver_gpu
+	gchk.toggled.connect(func(on: bool) -> void: solver_gpu = on; _schedule())
+	vb.add_child(gchk)
 	var note := Label.new()
 	note.name = "FabricNote"
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -2631,6 +2715,12 @@ func changed(kind: String) -> void:
 	if kind == "structure" or kind == "structure-drag" or kind == "table-done":  # table-done: a piece was moved
 		if active >= 0 and active < outfit.size():
 			outfit[active]["edited"] = true  # later rebuilds keep the user's pieces (see _redraft_drafted)
+	if kind == "live":  # an edit made in live drape (live_drape.gd): the simulator has it already, nothing is rebuilt
+		if active >= 0 and active < outfit.size():
+			outfit[active]["edited"] = true
+		_commit_pending()
+		_refresh_garment_tabs()
+		return
 	if kind == "structure" or kind == "table-done":  # the edit is over: record it (drags record on release)
 		_commit_pending()
 	if kind != "load" and kind != "history":
@@ -3188,7 +3278,27 @@ func _build_table_bar() -> void:
 	table.set_tool("select")
 
 
+func _open_measurements_form() -> void:
+	if _meas_form != null:
+		_meas_form.close()
+	_meas_form = MeasurementsForm.new()
+	# the form shows what is on the mannequin now; with a preset on and a saved file, the saved values
+	var shown := meas
+	if not _meas_mine and MeasurementsForm.has_file():
+		shown = meas.duplicate()
+		shown.merge(MeasurementsForm.load_csv(), true)
+	_meas_form.open(self, shown,
+		func(key: String) -> Variant: return body_stand["m"].get(key, null) if body_stand != null else null,
+		func(m: Dictionary) -> void:
+			for k in m:
+				meas[k] = m[k]
+			_meas_mine = true
+			_rebuild_body_tab()
+			_schedule())
+
+
 func _on_preset_button(p: String) -> void:
+	_meas_mine = false
 	meas = (BodyGen.PRESETS[p] as Dictionary).duplicate()
 	_rebuild_body_tab()
 	_schedule()
@@ -3255,6 +3365,18 @@ func _qual_key() -> String:
 	return "draft" if _edit_draft else quality
 
 
+# Builds the garment at quality q if the editor's sim is at another one (a build only: the showcase draws a render's cloth
+# with this build's display mesh). Returns the quality it replaced, or "" when nothing changed.
+func showcase_match_quality(q: String) -> String:
+	if q == "" or not QUALITIES.has(q) or _qual_key() == q:
+		return ""
+	var prev := quality   # the chosen quality (an edit's Draft preview is not restored: Play rebuilds anyway)
+	quality = q
+	_edit_draft = false
+	rebuild()
+	return prev
+
+
 func _on_motion(_i: int) -> void:
 	motion = "walk" if motion_opt.selected == 1 else "stand"
 	regen_and_rebuild()
@@ -3283,6 +3405,8 @@ func _redraft_active() -> void:
 
 
 func _on_play() -> void:
+	if live.active:
+		_set_live_mode(false)
 	if tl_t >= 3.999:
 		tl_t = 0.0
 	if not playing and _edit_draft:  # leaving the Draft preview: the walk is simulated at the chosen quality
@@ -3417,6 +3541,8 @@ func _plan_for_key(key: String) -> Dictionary:
 			p = Draft.pants(body_stand, _helper_wrap(), {})
 		elif key == "tank":
 			p = Draft.tank(body_stand, _helper_wrap(), {})
+		elif key == "crop":
+			p = Draft.crop(body_stand, _helper_wrap(), {})
 		else:
 			p = Draft.shirt(body_stand, _helper_wrap(), {})
 	elif key.begins_with("fs-"):
@@ -3432,10 +3558,14 @@ func regen_and_rebuild() -> void:
 	_drain()  # body regen and rebuild replace the sim: no step may be running
 	if M.is_empty():
 		return
-	var meas_key := JSON.stringify(meas)
+	# the face likeness (Look > Face) goes into the request here, so presets and the measurements form keep it
+	var req := meas.duplicate()
+	if look_face != "" and FaceLikeness.use(look_face):
+		req["face"] = look_face
+	var meas_key := JSON.stringify(req)
 	var body_changed := meas_key != _meas_key
 	_meas_key = meas_key
-	body_rest = BodyGen.generate(M, meas, prev_body)
+	body_rest = BodyGen.generate(M, req, prev_body)
 	prev_body = {"x": (body_rest as Dictionary)["x"], "keys": (body_rest as Dictionary)["keys"]}
 	body_stand = BodyGen.stand(M, body_rest)
 	var dress_abd := float(OS.get_environment("FL_DRESS")) if OS.has_environment("FL_DRESS") else DRESS_ABDUCT
@@ -3565,6 +3695,9 @@ func rebuild() -> void:
 		q["body_h"] = body_h_override
 	# two or more garments need the solver's self collision: it is what keeps them apart (no seams join garments)
 	var collide := self_collision or bool(q.get("self", false)) or gs.size() > 1
+	if solver_gpu:
+		q = q.duplicate()
+		q["gpu"] = true
 	var built: Dictionary = PlanLoader.build({"pieces": _sim_pieces, "seams": _sim_seams}, start_body["sections"], start_body["arms"],
 		_start_v3, _tris(), fabric_id, q, seam_stiffness, ramp_frames, collide)
 	if built.is_empty():
@@ -3596,6 +3729,7 @@ func rebuild() -> void:
 	body_node.use_custom(_stand_v3, _tris())
 	body_node.set_idle(idle, body_stand["joints"], M["bones"])
 	body_node.show_pose(_stand_v3)
+	_apply_long_hair()   # built from this standing body, now drawn
 	_body_key = ""
 	_last_shown = ""
 	frames.clear()
@@ -3615,6 +3749,8 @@ func rebuild() -> void:
 	_render_info()
 	_show_current()
 	status_label.text = "%d verts - press play" % int(built["n"]) + _status_suffix()
+	if live.active:   # an edit on the table while live: the new garment goes on live from its start
+		live.restart()
 
 
 func _tris() -> PackedInt32Array:
@@ -3634,11 +3770,34 @@ func _physics_process(_delta: float) -> void:
 	if sim == null:
 		return
 	_poll_step(false)  # collect a step the worker has finished; never blocks the draw loop (paused or playing)
-	if playing:
+	if live.active:
+		live.tick(_delta)
+	elif playing:
 		_advance()
 	_show_current()
 	_tick += 1
-	if OS.has_environment("FL_UISHOT") and sim != null and (frames.size() == 10 or _tick >= 150):
+	if OS.has_environment("FL_OUTFIT") and _tick == 20 and body_stand != null:   # FL_OUTFIT=crop,...: more garments on (tests, shots)
+		for id in OS.get_environment("FL_OUTFIT").split(","):
+			_on_library_add(id)
+	if OS.has_environment("FL_MEAS_FORM"):  # look work: the measurements form open, the window saved to FL_MEAS_FORM
+		if _tick == 30:
+			_open_measurements_form()
+		elif _tick == 120:
+			get_viewport().get_texture().get_image().save_png(OS.get_environment("FL_MEAS_FORM"))
+			print("MEASFORM saved")
+	if OS.has_environment("FL_LIVE") and sim != null:   # look work: live drape entered, the front slid out (FL_LIVE=tool)
+		if _tick == 40:
+			_set_live_mode(true)
+			for p in pieces:
+				if String(p.get("name", "")) == "Front":
+					live._activate(_sim_id_of(String(p["id"])))
+			live.set_tool(OS.get_environment("FL_LIVE"))
+		elif _tick % 30 == 0 and live.active:
+			var g := _solver_stats
+			print("LIVESTAT tick=%d frames=%d step=%.1f ms gpu=%s total=%.1f gpu=%.1f up=%.1f rec=%.1f read=%.1f cg=%s disp=%s ls=%s" % [_tick, live.frames_run, step_ms,
+				str(g.get("gpu_step_frames", "-")), float(g.get("gpu_step_last_ms", 0)), float(g.get("gpu_step_last_gpu_ms", 0)), float(g.get("gpu_step_last_upload_ms", 0)),
+				float(g.get("gpu_step_last_record_ms", 0)), float(g.get("gpu_step_last_read_ms", 0)), str(g.get("gpu_step_cg_iterations", "")), str(g.get("gpu_step_dispatches", "")), str(g.get("gpu_step_ls_rejects", ""))])
+	if OS.has_environment("FL_UISHOT") and sim != null and (frames.size() == 10 or _tick >= int(OS.get_environment("FL_UISHOT_TICK")) if OS.has_environment("FL_UISHOT_TICK") else _tick >= 150):
 		var img := get_viewport().get_texture().get_image()
 		if img != null and not img.is_empty():
 			img.save_png(OS.get_environment("FL_UISHOT"))
@@ -3749,6 +3908,8 @@ func _run_step(job: Dictionary) -> Dictionary:
 		sim.prefetch_body_positions(job["next_body"])  # bakes the next body on another thread while this step solves
 	if job.has("gravity"):
 		sim.set_param("gravity_y", job["gravity"])
+	if job.has("live_ops"):
+		LiveDrape.run_ops(sim, job["live_ops"])  # live drape's edits (pins, drags, tacks, rest shapes), before the step
 	var t1 := Time.get_ticks_usec()
 	sim.step(1)
 	var t2 := Time.get_ticks_usec()
@@ -3757,8 +3918,11 @@ func _run_step(job: Dictionary) -> Dictionary:
 	var fr := {"pos": disp, "normal": sim.get_display_normals(disp), "cloth": sim.get_positions(),
 		"body": job["body"], "ke": sim.get_kinetic_energy(), "gap": sim.get_max_seam_gap(),
 		"clear": sim.get_min_body_clearance(), "ms": (t2 - t1) / 1000.0, "bake": bake}
-	return {"frame": fr, "stats": sim.get_solver_stats(), "vcount": sim.get_vertex_count(),
+	var res := {"frame": fr, "stats": sim.get_solver_stats(), "vcount": sim.get_vertex_count(),
 		"total_ms": (t2 - t0) / 1000.0}
+	if job.get("live", false):
+		res["live"] = true
+	return res
 
 
 # Worker thread body: waits for a posted job, runs it, publishes the result, signals the main thread.
@@ -3815,6 +3979,10 @@ func _drain() -> void:
 
 # Main thread: appends a finished frame and caches what the UI reads from sim (so the UI never calls sim mid-step).
 func _collect(res: Dictionary) -> void:
+	if res.get("live", false):
+		if live.active:
+			live.collect(res)
+		return
 	frames.append(res["frame"])
 	_solver_stats = res["stats"]
 	_vcount = res["vcount"]
@@ -3851,6 +4019,9 @@ var _last_shown := ""
 
 
 func _show_current() -> void:
+	if live.active:
+		live.show()
+		return
 	if tl_range != null and (not tl_range.has_focus() or playing) and tl_range.value != tl_t * 1000.0:
 		tl_range.set_value_no_signal(tl_t * 1000.0)
 	_sync_stage_buttons()
@@ -4397,7 +4568,7 @@ func _build_timeline_bar() -> void:
 	tl_range.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	tl_range.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	tl_range.custom_minimum_size = Vector2(120, 0)
-	tl_range.value_changed.connect(func(v: float) -> void: _drain(); tl_t = v / 1000.0; playing = false; _sync_tl_ui(); _show_current())
+	tl_range.value_changed.connect(func(v: float) -> void: _leave_live(); _drain(); tl_t = v / 1000.0; playing = false; _sync_tl_ui(); _show_current())
 	bar.add_child(tl_range)
 	tl_stage_label = Label.new()
 	tl_stage_label.custom_minimum_size = Vector2(150, 0)
@@ -4460,10 +4631,14 @@ static func _smooth(x: float) -> float:
 func _render_stats(_m: float, fr: Dictionary) -> void:
 	var done := " - done" if frames.size() >= target and target > 0 else ""
 	var warn := health_text + "\n" if health_text != "" else ""  # the garment check says what went wrong, above "done"
-	var body := "%s / %s   frame %d/%d   verts %d   KE %s J   gap %.1f mm   clear %.1f mm\nbake %.0f ms   step %.0f ms (newton %d, ls-fail %d)%s" % [
+	var solver := "CPU"
+	if _solver_stats.has("gpu_step_frames"):
+		var why := String(_solver_stats.get("gpu_step_cpu_reason", ""))
+		solver = "GPU %.0f ms" % float(_solver_stats.get("gpu_step_last_ms", 0.0)) if why == "" else "CPU (GPU off: %s)" % why
+	var body := "%s / %s   frame %d/%d   verts %d   KE %s J   gap %.1f mm   clear %.1f mm\nbake %.0f ms   step %.0f ms (%s, newton %d, ls-fail %d)%s" % [
 		plan_name, fabric_id, frames.size(), target, _vcount, str(fr.get("ke", 0.0)),
 		float(fr.get("gap", 0.0)) * 1000.0, float(fr.get("clear", 0.0)) * 1000.0,
-		float(fr.get("bake", 0.0)), float(fr.get("ms", 0.0)),
+		float(fr.get("bake", 0.0)), float(fr.get("ms", 0.0)), solver,
 		int(_solver_stats.get("newton_iterations", 0)), int(_solver_stats.get("line_search_failures", 0)), done]
 	_set_text_if_changed(status_label, warn + body + _status_suffix())
 	if frames.size() % 30 == 0 and not frames.is_empty():
@@ -4598,6 +4773,14 @@ func _show_view_texture() -> void:
 	arrange_btn.focus_mode = Control.FOCUS_NONE
 	arrange_btn.tooltip_text = "Arrangement points (A): pick a piece, hover a dot to see it there, click to put it there. Dots on the torso (blue), arms (yellow) and legs (violet). The mirror twin follows."
 	arrange_btn.toggled.connect(func(on: bool) -> void: _set_arrange_mode(on))
+	live_btn = Button.new()
+	live_btn.name = "LiveBtn"
+	live_btn.text = "Live drape"
+	live_btn.toggle_mode = true
+	live_btn.focus_mode = Control.FOCUS_NONE
+	live_btn.tooltip_text = "Work on the garment live on the mannequin (L): click a panel, then grab, pin, tack, lengthen or shorten it, slide it out from the body. The cloth keeps moving while you work."
+	live_btn.toggled.connect(func(on: bool) -> void: _set_live_mode(on))
+	bar.add_child(live_btn)
 	bar.add_child(arrange_btn)
 	bar.add_child(place_btn)
 	_stitch_btn = Button.new()
@@ -4631,6 +4814,7 @@ func _show_view_texture() -> void:
 	bar.add_child(ph)
 	view_pane.add_child(bar)
 	view_pane.add_child(_build_view_chips())
+	live.build_ui(view_pane)
 	render_mode = RenderModeLib.new(self, _showcase, view_pane)
 
 
@@ -4792,6 +4976,8 @@ func _show_gear(on: bool) -> void:
 # seam, exactly as the table's Sew tool does (the same undo, the same checks), with the stitch type chosen in the bar. A right click on
 # an edge unpicks the seam that ends there. Esc leaves.
 func _set_stitch_mode(on: bool) -> void:
+	if on and live.active:
+		_set_live_mode(false)
 	stitch_mode = on
 	_stitch_a = null
 	_stitch_hover = null
@@ -4978,6 +5164,8 @@ func _draw_stitch_highlight() -> void:
 
 
 func _set_place_mode(on: bool) -> void:
+	if on and live.active:
+		_set_live_mode(false)
 	if on and stitch_mode:
 		_set_stitch_mode(false)
 	if place_btn != null:
@@ -4991,6 +5179,8 @@ func _set_place_mode(on: bool) -> void:
 
 
 func _set_arrange_mode(on: bool) -> void:
+	if on and live.active:
+		_set_live_mode(false)
 	if on and stitch_mode:
 		_set_stitch_mode(false)
 	if arrange_btn != null:
@@ -5005,6 +5195,43 @@ func _set_arrange_mode(on: bool) -> void:
 	var ph = view_pane.get_node_or_null("ViewBar/PlaceHint")
 	if ph != null:
 		(ph as Label).text = ("Pick a piece, then click a dot to put it there. Seam lines: green ready, yellow far, red a problem. Esc leaves." if on else "")
+
+
+# Live drape (live_drape.gd): the garment runs live on the mannequin while the user works on it. Leaving rebuilds the
+# garment (the simulator's state is the live one, not the timeline's) and shows the timeline where it was.
+func _set_live_mode(on: bool) -> void:
+	if on == live.active:
+		if live_btn != null:
+			live_btn.set_pressed_no_signal(on)
+		return
+	if on:
+		if sim == null or meta.is_empty():
+			notify("Live drape needs a garment on the mannequin")
+			if live_btn != null:
+				live_btn.set_pressed_no_signal(false)
+			return
+		if place_view.active or place_view.arrange:
+			_set_arrange_mode(false)
+			_set_place_mode(false)
+		if stitch_mode:
+			_set_stitch_mode(false)
+		live.enter()
+		notify("Live drape: click a panel, then use the tools at the top. L or Esc leaves.")
+	else:
+		var keep_t := tl_t
+		live.leave()
+		rebuild()
+		tl_t = keep_t if keep_t < 3.0 else 2.0
+		_last_shown = ""
+		_sync_tl_ui()
+		_show_current()
+	if live_btn != null:
+		live_btn.set_pressed_no_signal(on)
+
+
+func _leave_live() -> void:
+	if live.active:
+		_set_live_mode(false)
 
 
 # Drops the selected piece's 3D move and turn (one undoable action).
@@ -5035,6 +5262,12 @@ func _click_select(local: Vector2) -> void:
 
 
 func _on_view_gui_input(e: InputEvent) -> void:
+	if live.active:
+		if live.input(e):
+			view_pane.accept_event()
+		elif _camera_input(e):
+			view_pane.accept_event()
+		return
 	if e is InputEventMouseButton and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT and not (e as InputEventMouseButton).double_click:
 		var mb := e as InputEventMouseButton
 		if mb.pressed:
@@ -5099,6 +5332,14 @@ func _unhandled_key_input(e: InputEvent) -> void:
 	elif e.keycode == KEY_PAGEDOWN or e.keycode == KEY_MINUS or e.keycode == KEY_KP_SUBTRACT:
 		_touch_user_cam()
 		_zoom_by(1.18)
+		get_viewport().set_input_as_handled()
+	elif e.keycode == KEY_L:
+		_set_live_mode(not live.active)
+		get_viewport().set_input_as_handled()
+	elif live.active and e.keycode == KEY_ESCAPE:
+		_set_live_mode(false)
+		get_viewport().set_input_as_handled()
+	elif live.active and live.key(e):
 		get_viewport().set_input_as_handled()
 	elif e.keycode == KEY_M:
 		_set_place_mode(not place_view.active)

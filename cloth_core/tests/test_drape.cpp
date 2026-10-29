@@ -77,6 +77,7 @@ int main() {
     auto dc = [&](const char* id) { return res.at(id).dc; };
     CHECK_MSG(dc("silk_charmeuse") < dc("cotton_poplin"), "silk %.1f !< poplin %.1f", dc("silk_charmeuse"), dc("cotton_poplin"));
     CHECK_MSG(dc("polyester_chiffon") < dc("cotton_poplin"), "chiffon %.1f !< poplin %.1f", dc("polyester_chiffon"), dc("cotton_poplin"));
+    CHECK_MSG(dc("silk_charmeuse") < dc("cotton_crepe") && dc("cotton_crepe") < dc("cotton_poplin"), "crepe %.1f not between silk %.1f and poplin %.1f", dc("cotton_crepe"), dc("silk_charmeuse"), dc("cotton_poplin"));
     CHECK_MSG(dc("cotton_poplin") < dc("denim_12oz"), "poplin %.1f !< denim %.1f", dc("cotton_poplin"), dc("denim_12oz"));
     CHECK_MSG(dc("denim_12oz") < dc("canvas_heavy"), "denim %.1f !< canvas %.1f", dc("denim_12oz"), dc("canvas_heavy"));
     CHECK_MSG(dc("canvas_heavy") <= dc("lambskin_leather") + 5, "canvas %.1f vs leather %.1f", dc("canvas_heavy"), dc("lambskin_leather"));

@@ -492,10 +492,40 @@ int main() {
                     dist[0], dist[1], dist[2], dmax);
         CHECK_MSG(dmax < 5e-4, "point seam max pair distance %.3e m is not below 5e-4 m (0.5 mm)", dmax);
 
-        // addPointSeam after the first step has finalized the solver must throw (same gate as addSeam).
-        bool threwLate = false;
-        try { s->addPointSeam(0, 49, 0.025); } catch (const std::logic_error&) { threwLate = true; }
-        CHECK_MSG(threwLate, "addPointSeam after the simulation started did not throw std::logic_error");
+        // Live edits (docs/LIVE_DRAPE_PLAN.md): a point seam added after the start (a tack) rebuilds the model in place,
+        // keeps the motion, and pulls its two vertices together; removing it lets them go; the seam switch unsews.
+        {
+            for (int k = 0; k < 50; ++k) s->setVertexPosition(k, s->positions()[k]);  // at rest
+            const Vec3 kick(0, 0, 0.3);
+            s->driveVertices({0}, {s->positions()[0] + kick * s->params().dt}, s->params().dt);
+            const Real d0 = length(s->positions()[4] - s->positions()[45]);
+            s->addPointSeam(4, 45, 0.025);
+            const Real vz = s->velocities()[0].z;
+            std::printf("  live tack: velocity kept through the rebuild %.3f m/s (PASS if 0.3)\n", vz);
+            CHECK_MSG(std::fabs(vz - 0.3) < 1e-9, "addPointSeam after the start lost the velocity: %.3f", vz);
+            for (int f = 0; f < 120; ++f) s->step();
+            const Real d1 = length(s->positions()[4] - s->positions()[45]);
+            std::printf("  live tack: 4-45 apart %.3f -> %.4f m (PASS if < 2 mm)\n", d0, d1);
+            CHECK_MSG(d1 < 2e-3, "live tack did not close: %.4f m", d1);
+            CHECK(s->removePointSeam(45, 4) == 1);
+            // rest shape: panel B's rest stretched 1.5x along y keeps the topology and grows B on the next frames
+            std::vector<int> vs;
+            std::vector<Vec2> uv;
+            for (int k = 25; k < 50; ++k) { vs.push_back(k); uv.push_back(Vec2(s->restUV()[k].x, s->restUV()[k].y * 1.5)); }
+            auto column = [&]() {  // arc length of B's free right column (29, 34, .., 49): its length whatever the fold
+                Real l = 0;
+                for (int j = 0; j < 4; ++j) l += length(s->positions()[34 + 5 * j] - s->positions()[29 + 5 * j]);
+                return l;
+            };
+            const Real h0 = column();
+            s->params().seamScale = 0;   // unsewn: B is free to grow (the point seams 9-30 .. 19-40 still hold, as tacks)
+            s->setRestUVs(vs, uv);
+            for (int f = 0; f < 120; ++f) s->step();
+            const Real h1 = column();
+            std::printf("  live rest shape: panel B column length %.3f -> %.3f m (PASS if ~1.5x)\n", h0, h1);
+            CHECK_MSG(std::fabs(h1 / h0 - 1.5) < 0.05, "rest shape change did not take: %.3f -> %.3f", h0, h1);
+            s->params().seamScale = 1;
+        }
 
         // dampingScale (CROCHET_PLAN 6.9): the same rig, fresh solvers, dampingScale 1 vs 5. Ten frames in, the
         // ramped seams have pumped the same motion into both, so the x5 run must carry strictly less KE.

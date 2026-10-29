@@ -33,7 +33,7 @@ static Real minAngleDeg(const PanelMesh& m) {
 int main() {
     std::printf("[materials]\n");
     auto mats = loadMaterialsFromFile(FL_MATERIALS_PATH);
-    CHECK(mats.size() == 9);
+    CHECK(mats.size() == 10);
     for (auto& m : mats) {
         std::printf("  %-18s %-7s %.0f g/m2  B=%.1e/%.1e Nm  k=%.0f/%.0f N/m  G=%.0f\n", m.id.c_str(), m.category.c_str(), m.density * 1000,
                     m.bendWarp, m.bendWeft, m.tensileWarp, m.tensileWeft, m.shear);

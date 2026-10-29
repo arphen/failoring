@@ -31,6 +31,7 @@ var _shown: PackedVector3Array = PackedVector3Array()    # positions currently i
 var _skin: Dictionary = {}
 var _drawn_idx := PackedInt32Array()   # the drawn mesh's triangles (skin "drawn"), winding flipped like _draw_idx
 var eyes: Node3D = null
+var hair: Node3D = null         # hair.gd, when a likeness's long hair is shown (set_long_hair)
 
 # The idle layer (idle.gd): breathing, weight shifts, micro motion, blinks and gaze. The mesh is not rebuilt for it: the skin
 # shader skins it again with one small transform per bone (a 24 x 3 float texture) and displaces the chest for the breath.
@@ -72,6 +73,24 @@ func load_preset(name: String) -> bool:
 func show_standing() -> void:
 	walking = false
 	_build(standing)
+
+
+# Long hair (hair.gd) on or off: m is the body data (body_data.json, BodyGen.load_data), colour the hair's. Built from
+# the body as it is drawn next (the standing body, normally). Needs the skin data (set_skin_data: the eye anchors).
+func set_long_hair(on: bool, m: Dictionary = {}, colour: Color = Color(0.31, 0.24, 0.18)) -> void:
+	if not on or _skin.is_empty() or m.is_empty():
+		if hair != null:
+			hair.queue_free()
+			hair = null
+		return
+	if hair == null:
+		hair = preload("res://hair.gd").new()
+		hair.name = "Hair"
+		add_child(hair)
+	hair.setup(_skin.get("eyes", {}), m["base"], m["tris"], int(m["nb"]))
+	hair.set_color(colour)
+	if not _shown.is_empty():
+		hair.follow(_shown)
 
 
 # Per-vertex skin attributes and eyes (skin.gd build output). Used while the vertex count matches.
@@ -153,6 +172,8 @@ func _idle_step(delta: float) -> void:
 	m.set_shader_parameter("blink", idle.blink)
 	if eyes != null:
 		eyes.idle(idle.gaze, head)
+	if hair != null:
+		hair.idle(head)
 
 
 func _process(delta: float) -> void:
@@ -301,6 +322,8 @@ func _build(verts: PackedVector3Array) -> void:
 	_shown = verts
 	if eyes != null:
 		eyes.follow(verts)
+	if hair != null:
+		hair.follow(verts)
 
 
 # Triangle topology changed: the flipped draw order is rebuilt on the next _build.

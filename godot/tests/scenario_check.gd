@@ -25,7 +25,7 @@ func _ready() -> void:
 		_finish()
 		return
 	var ids: Array = lib["order"]
-	check("five scenarios (%s)" % ", ".join(ids), ids == ["catwalk", "idle", "dressing", "box", "chair"])
+	check("six scenarios (%s)" % ", ".join(ids), ids == ["runway", "catwalk", "idle", "dressing", "box", "chair"])
 	check("catwalk loops, box does not", bool(lib["by_id"]["catwalk"]["loop"]) and not bool(lib["by_id"]["box"]["loop"]))
 
 	var M := BodyGen.load_data(PlanLoader.load_json("res://assets/body_data.json"))

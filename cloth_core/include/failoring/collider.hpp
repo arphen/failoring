@@ -39,6 +39,8 @@ public:
         n = l > 1e-12 ? d / l : Vec3(0, 1, 0);
         return l - r_;
     }
+    const Vec3& center() const { return c_; }
+    Real radius() const { return r_; }
 private:
     Vec3 c_;
     Real r_;
@@ -92,6 +94,8 @@ public:
         n = n_;
         return dot(p - p_, n_);
     }
+    const Vec3& point() const { return p_; }
+    const Vec3& normal() const { return n_; }
 private:
     Vec3 p_, n_;
 };

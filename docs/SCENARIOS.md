@@ -37,7 +37,8 @@ Sample k is the pose at time k / 60 s. The player interpolates linearly between 
 
 | id | duration | loop | what |
 |---|---|---|---|
-| `catwalk` | 1.067 s (one gait cycle) | yes | FL.Gait.rotations at 1.2 x the walk's stride and arms 1.15, pelvis swing 1.4 x, root sway 3 cm |
+| `catwalk` ("Walk on the spot") | 1.067 s (one gait cycle) | yes | FL.Gait.rotations at 1.2 x the walk's stride and arms 1.15, pelvis swing 1.4 x, root sway 3 cm; on the spot |
+| `runway` ("Catwalk (down the runway)", first in the list) | 4.08 s | no | the catwalk gait walking 3.2 m down the runway (z -0.45 to 2.75): stand, ease in, walk, ease out, stand. The body glides at the gait's mean speed (1.62 m/s at full stride, 1.42-1.79 m/s with the IK's give); the feet are IK targets, a foot on the ground held where it touched down (export check: the contact point slides at most 2 mm per frame; 1.8 mm). Render mode follows it with the camera, from the side |
 | `idle` | 4 s | yes | standing; spine, neck and clavicles breathe (under 1 degree) |
 | `dressing` | 6 s | no | shoulders: 42 deg from vertical (A-pose), arms up (170), T (90), back to A |
 | `box` | 7 s | no | IK: reach to a box on the floor (0.34 x 0.30 x 0.24 m, back face 0.24 m in front of the feet), grip at 1.8 s, lift to the chest (2.2 to 3.4 s), hold, lower (4.2 to 5.4 s), release at 5.8 s, stand |

@@ -3,7 +3,7 @@
 #
 # Item: {id, name, category, kind, fitted, user_file, redraft}
 #   id        plan key: a built-in key ("pencil", "aline", "blank"), "fs-<garment>" (FreeSewing, nearest preset),
-#             "pants" / "tank" / "shirt" (drafted on the live body), or "user:<file>" (saved garment)
+#             "pants" / "tank" / "shirt" / "crop" (drafted on the live body), or "user:<file>" (saved garment)
 #   category  tops | bottoms | skirts | custom
 #   kind      builtin | freesewing | drafted | user
 #   fitted    body preset the outline is fitted for ("" = fixed outline)
@@ -13,7 +13,7 @@ const DIR := "user://library"
 const FORMAT := "failoring-library/1"
 const CATEGORIES := ["All", "Tops", "Bottoms", "Skirts", "Custom"]
 const CATEGORY_KEYS := ["", "tops", "bottoms", "skirts", "custom"]
-const DRAFTED := ["pants", "tank", "shirt"]
+const DRAFTED := ["pants", "tank", "shirt", "crop"]
 
 
 static func _item(id: String, name: String, category: String, kind: String, fitted: String, redraft: bool) -> Dictionary:
@@ -25,6 +25,7 @@ static func static_items(preset: String) -> Array:
 	return [
 		_item("pencil", "Pencil skirt (2 panels)", "skirts", "builtin", "", false),
 		_item("aline", "A-line skirt (4 gores)", "skirts", "builtin", "", false),
+		_item("tiered", "Tiered maxi skirt (3 tiers)", "skirts", "builtin", "", false),
 		_item("blank", "Blank rectangle", "custom", "builtin", "", false),
 		_item("poncho", "Poncho (square, neck hole)", "tops", "builtin", "", false),
 		_item("fs-teagan", "Tee (FreeSewing)", "tops", "freesewing", preset, true),
@@ -32,6 +33,7 @@ static func static_items(preset: String) -> Array:
 		_item("fs-charlie", "Chinos (FreeSewing)", "bottoms", "freesewing", preset, true),
 		_item("shirt", "T-shirt (drafted)", "tops", "drafted", preset, true),
 		_item("tank", "Tank (drafted)", "tops", "drafted", preset, true),
+		_item("crop", "Crop top (drafted)", "tops", "drafted", preset, true),
 		_item("pants", "Trousers (drafted)", "bottoms", "drafted", preset, true),
 	]
 

@@ -82,7 +82,10 @@ static func build(plan: Dictionary, sections: Dictionary, arms: Dictionary, stan
 	sim.set_param("body_friction_mode", float(OS.get_environment("FL_FRICTION")) if OS.has_environment("FL_FRICTION") else 2.0)
 	# FL_FAST=1: the inexact solve of docs/GPU_SOLVER_NOTES.md (10 substeps, one linearised solve each, block-Jacobi CG
 	# capped at 100 iterations, 3% strain limit), the GPU-shaped policy, for comparison with the Newton default.
-	if OS.get_environment("FL_FAST") == "1":
+	# FL_GPU_STEP=1 or quality["gpu"] (the editor's GPU solver): that solve with whole frames on the GPU
+	# (gdextension/src/gpu_step.h); frames the GPU cannot run stay on the CPU with the same settings.
+	var gpu_step := OS.get_environment("FL_GPU_STEP") == "1" or bool(quality.get("gpu", false))
+	if OS.get_environment("FL_FAST") == "1" or gpu_step:
 		sim.set_param("substeps", 10)
 		sim.set_param("newton_iterations", 1)
 		sim.set_param("linear_solver", 1)
@@ -92,6 +95,8 @@ static func build(plan: Dictionary, sections: Dictionary, arms: Dictionary, stan
 		# FL_GPU=1: those CG solves on the GPU (gdextension/src/gpu_cg.h); needs the Forward+ or Mobile renderer
 		if OS.get_environment("FL_GPU") == "1":
 			sim.set_param("gpu", 1)
+		if gpu_step:
+			sim.set_param("gpu_step", 1)
 	if OS.has_environment("FL_SLIP"):
 		sim.set_param("friction_slip_velocity", float(OS.get_environment("FL_SLIP")))
 	sim.add_plane(Vector3.ZERO, Vector3.UP)  # feet stand on y = 0, like the browser floor
@@ -147,6 +152,7 @@ static func build(plan: Dictionary, sections: Dictionary, arms: Dictionary, stan
 			pos[f0 + i] = wrap.point(uv[i].x, uv[i].y)
 		Place3D.apply(pos, f0, uv.size(), pc)  # the piece's free move and turn in 3D, if it has one (place3d.gd)
 	sim.set_positions(pos)
+	var tacks := _sew_tacks(sim, plan, index_of, first, uvs)
 	sim.setup_display()
 	var chains := {}
 	for pc in plan["pieces"]:
@@ -156,4 +162,33 @@ static func build(plan: Dictionary, sections: Dictionary, arms: Dictionary, stan
 			edge_lists.append(sim.get_edge_chain(index_of[pid], e))
 		chains[pid] = edge_lists
 	return {"sim": sim, "order": order, "first": first, "n": sim.get_vertex_count(), "warn": sim.get_warnings(),
-		"uv": uvs, "ranges": ranges, "chains": chains, "p2": pos.duplicate(), "tris": sim.get_indices()}
+		"uv": uvs, "ranges": ranges, "chains": chains, "p2": pos.duplicate(), "tris": sim.get_indices(), "tacks": tacks}
+
+
+# Tacks (live_drape.gd, docs/LIVE_DRAPE_PLAN.md): p["tacks"] = [[x, y, other piece id, ox, oy]], pattern points sewn
+# together by a point seam between the nearest vertices. The other piece's id is the table's; in a merged outfit it
+# carries this piece's garment prefix. Returns the sewn vertex pairs.
+static func _sew_tacks(sim: FailoringSim, plan: Dictionary, index_of: Dictionary, first: Dictionary, uvs: Dictionary) -> Array:
+	var out := []
+	for pc in plan["pieces"]:
+		var pid := String(pc["id"])
+		var pre := "g%d_" % int(pc["garment"]) if pc.has("garment") else ""   # outfit.gd prefix()
+		for t in pc.get("tacks", []):
+			var other := String(t[2])
+			if not index_of.has(other) and index_of.has(pre + other):
+				other = pre + other
+			if not index_of.has(other):
+				continue
+			var a := _nearest(uvs[pid], Vector2(float(t[0]), float(t[1]))) + int(first[pid])
+			var b := _nearest(uvs[other], Vector2(float(t[3]), float(t[4]))) + int(first[other])
+			if a != b and sim.add_point_seam(a, b, 0.02):
+				out.append([a, b])
+	return out
+
+
+static func _nearest(uv: PackedVector2Array, p: Vector2) -> int:
+	var best := 0
+	for j in uv.size():
+		if uv[j].distance_squared_to(p) < uv[best].distance_squared_to(p):
+			best = j
+	return best

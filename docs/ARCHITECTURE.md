@@ -93,6 +93,7 @@ is then the frame-300 value). In brackets: the same test on main @ 842609f (Gaus
 | cotton_jersey | 27.7 (27.6) | 259 (223) | 9.9e-09 |
 | silk_charmeuse | 42.3 (46.6) | 300 | 5.0e-07 |
 | polyester_chiffon | 43.6 (43.1) | 300 | 3.2e-07 |
+| cotton_crepe | 50.6 (added 2026-10-29, macOS, current build; same test setup, poplin re-measured 64.1 there) | 300 | 1.6e-08 |
 | cotton_poplin | 63.9 (65.0) | 300 | 2.2e-08 |
 | wool_suiting | 64.8 | 125 | 8.8e-09 |
 | denim_12oz | 80.7 | 214 | 9.3e-09 |

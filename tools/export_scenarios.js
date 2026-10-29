@@ -6,7 +6,8 @@
 // places the box from the hands it is carried in. Format and runtime: docs/SCENARIOS.md.
 //
 // Scenarios (seconds; stored at the solver's 60 steps per second, one sample per step):
-//   catwalk     gait cycle (FL.Gait.rotations) with a longer stride, hip sway and a wider pelvis swing; loops
+//   catwalk     gait cycle (FL.Gait.rotations) with a longer stride, hip sway and a wider pelvis swing; loops (on the spot)
+//   runway      the catwalk gait walking forward down the runway (feet planted), easing in and out; does not loop
 //   idle        standing, breathing (spine and shoulders), loops
 //   dressing    arms up, T-pose, then A-pose (shoulder rotations only); does not loop
 //   box         stand, reach down to a box on the floor, grip, lift to the chest, hold, lower, release, stand (IK)
@@ -111,39 +112,43 @@ const LO = PARAMS.map((p) => p.lo), HI = PARAMS.map((p) => p.hi);
 const reg0 = PARAMS.map((q) => (q.bone < 0 ? 0 : STAND_ROT[q.bone][q.c]));   // the regulariser pulls towards the stand
 
 // state -> rotations and root
-function toState(p) {
-  const rot = STAND_ROT.map((r) => r.slice());
-  const root = [0, 0, 0];
+function toState(p, tg) {
+  const rot = ((tg && tg.baseRot) || STAND_ROT).map((r) => r.slice());
+  const root = ((tg && tg.baseRoot) || [0, 0, 0]).slice();
   for (let i = 0; i < NP; i++) {
     const q = PARAMS[i];
-    if (q.bone < 0) root[q.c] = p[i]; else rot[q.bone][q.c] = p[i];
+    if (q.bone < 0) root[q.c] += p[i]; else rot[q.bone][q.c] = p[i];
   }
   return { rot, root };
 }
 const paramsOf = (rot, root) => PARAMS.map((q) => (q.bone < 0 ? root[q.c] : rot[q.bone][q.c]));
 
-// targets: { hands: {l, r} (metres or null), hip: [y, z] or null }
+// targets: { hands: {l, r} (metres or null), hip: [y, z] or null }; walking (tg.feet): { feet: {l, r: {ankle, toe}},
+// baseRot, baseRoot (the gait pose the parameters start from: root parameters are offsets from baseRoot), reg0, regW }
 function residuals(p, tg, reg) {
-  const { rot, root } = toState(p);
+  const { rot, root } = toState(p, tg);
   const W = fk(rot, root), r = [];
   for (const s of ['l', 'r']) {
     const a = jointAt(W, s + '-ankle'), t = jointAt(W, s + '-toe');
-    r.push(4 * (a[0] - STAND_ANKLE[s][0]), 4 * (a[1] - STAND_ANKLE[s][1]), 4 * (a[2] - STAND_ANKLE[s][2]));
-    r.push(4 * (t[0] - STAND_TOE[s][0]), 4 * (t[1] - STAND_TOE[s][1]), 4 * (t[2] - STAND_TOE[s][2]));
+    const ga = tg.feet ? tg.feet[s].ankle : STAND_ANKLE[s], gt = tg.feet ? tg.feet[s].toe : STAND_TOE[s];
+    r.push(4 * (a[0] - ga[0]), 4 * (a[1] - ga[1]), 4 * (a[2] - ga[2]));
+    r.push(4 * (t[0] - gt[0]), 4 * (t[1] - gt[1]), 4 * (t[2] - gt[2]));
     if (tg.hands && tg.hands[s]) {
       const h = jointAt(W, s + '-hand'), g = tg.hands[s];
       r.push(3 * (h[0] - g[0]), 3 * (h[1] - g[1]), 3 * (h[2] - g[2]));
     }
   }
-  for (let i = 0; i < SOLE.length; i++) {
-    const q = skinPoint(W, SOLE[i]), g = SOLE_TARGET[i];
-    r.push(4 * (q[0] - g[0]), 4 * (q[1] - g[1]), 4 * (q[2] - g[2]));
-  }
+  if (!tg.feet)
+    for (let i = 0; i < SOLE.length; i++) {
+      const q = skinPoint(W, SOLE[i]), g = SOLE_TARGET[i];
+      r.push(4 * (q[0] - g[0]), 4 * (q[1] - g[1]), 4 * (q[2] - g[2]));
+    }
   if (tg.hip) {
     const hl = jointAt(W, 'l-upper-leg'), hr = jointAt(W, 'r-upper-leg');
     r.push(0.5 * (hl[1] + hr[1]) - tg.hip[0], 0.5 * (hl[2] + hr[2]) - tg.hip[1]);
   }
-  for (let i = 0; i < NP; i++) r.push(reg * (p[i] - reg0[i]));
+  if (tg.reg0) for (let i = 0; i < NP; i++) r.push(tg.regW[i] * (p[i] - tg.reg0[i]));
+  else for (let i = 0; i < NP; i++) r.push(reg * (p[i] - reg0[i]));
   return r;
 }
 const REG = 0.01;   // per radian (metres per radian of the residual): keeps the posture near the stand without holding the reach
@@ -305,7 +310,7 @@ function build(id) {
     if (spec.ik && t >= (spec.ikFrom || 0)) {
       const tg = spec.targets(t);
       p = ik(p, tg, 400).p;
-      s = toState(p);
+      s = toState(p, tg);
       const W = fk(s.rot, s.root);
       for (const sd of ['l', 'r']) {
         worst.ik = Math.max(worst.ik, dist3(jointAt(W, sd + '-ankle'), STAND_ANKLE[sd]));
@@ -320,8 +325,132 @@ function build(id) {
   return { rot, root, worst };
 }
 
+// runway: the catwalk gait walking down the runway: stand, ease into the stride, walk, ease out, stand. The in-place gait
+// cannot simply be moved forward: its foot on the ground slides back unevenly (planting it exactly made the body surge
+// between 0.7 and 2.3 m/s). So the body glides at the gait's mean speed (scaled with the stride while it eases in and
+// out), and the feet are IK targets: a foot on the ground stays where it touched down (its contact point is followed
+// frame to frame), a swinging foot moves from where it lifted off to its next footprint (where the in-place gait puts it
+// relative to the body at touchdown), with the gait's own height and swing. The IK solves the legs (and lets the pelvis
+// and the body's position give a little); spine, arms and the pelvis rotation follow the gait.
+const RUNWAY = { z0: -0.45, zEnd: 2.75, stand0: 0.5, ease: 0.9, stand1: 0.7 };
+const runwayAmp = (t, walk) => smooth((t - RUNWAY.stand0) / RUNWAY.ease) * (1 - smooth((t - RUNWAY.stand0 - RUNWAY.ease - walk) / RUNWAY.ease));
+function runwayInPlace(t, walk) {
+  const cyc = 64 / 60, a = runwayAmp(t, walk);
+  const ph = Math.max(0, t - RUNWAY.stand0) / cyc % 1;
+  const rot = FL.Gait.rotations(M, rest, ph, { stride: 1.2 * a, arms: 1.15 * a });
+  rot[BONE.pelvis][1] *= 1.4; rot[BONE.pelvis][2] *= 1.4;
+  return { rot, root: [0.03 * a * Math.sin(TAU * ph), 0, 0] };
+}
+// the gait's mean speed at full stride: per frame, the near-floor sole point moving back fastest (the foot pushing the
+// body), averaged over whole cycles of the steady gait
+const RUNWAY_V = (() => {
+  const cyc = 64 / 60, n = Math.round(4 * cyc * STORE_FPS);
+  let sum = 0, prev = null;
+  for (let k = 0; k <= n; k++) {
+    const ph = k / STORE_FPS / cyc % 1;
+    const rot = FL.Gait.rotations(M, rest, ph, { stride: 1.2, arms: 1.15 });
+    rot[BONE.pelvis][1] *= 1.4; rot[BONE.pelvis][2] *= 1.4;
+    const pts = SOLE.map((i) => skinPoint(fk(rot, [0.03 * Math.sin(TAU * ph), 0, 0]), i));
+    if (prev) {
+      const ymin = Math.min(...prev.map((v) => v[1]));
+      let d = 0;
+      for (let q = 0; q < 4; q++) if (prev[q][1] <= ymin + 0.005) d = Math.min(d, pts[q][2] - prev[q][2]);
+      sum -= d;
+    }
+    prev = pts;
+  }
+  return sum / (n / STORE_FPS);
+})();
+function runwayBody(walk) {
+  const dur = RUNWAY.stand0 + 2 * RUNWAY.ease + walk + RUNWAY.stand1, n = Math.round(dur * STORE_FPS);
+  const z = [RUNWAY.z0];
+  for (let k = 1; k < n; k++) z.push(z[k - 1] + RUNWAY_V * runwayAmp((k - 0.5) / STORE_FPS, walk) / STORE_FPS);
+  return { dur, n, z };
+}
+const RUNWAY_FRAMES = (() => {
+  let lo = 0.5, hi = 8;
+  for (let i = 0; i < 40; i++) { const mid = 0.5 * (lo + hi), b = runwayBody(mid); if (b.z[b.n - 1] < RUNWAY.zEnd) lo = mid; else hi = mid; }
+  const walk = 0.5 * (lo + hi), body = runwayBody(walk), n = body.n;
+  // the in-place gait: poses, ankles, toes, sole points; which feet are on the ground
+  const ip = [];
+  for (let k = 0; k < n; k++) {
+    const st = runwayInPlace(k / STORE_FPS, walk), W = fk(st.rot, st.root);
+    const pts = SOLE.map((i) => skinPoint(W, i));
+    const ymin = Math.min(...pts.map((v) => v[1]));
+    ip.push({ st, pts, ankle: [jointAt(W, 'l-ankle'), jointAt(W, 'r-ankle')], toe: [jointAt(W, 'l-toe'), jointAt(W, 'r-toe')],
+      down: [0, 1].map((f) => Math.min(pts[2 * f][1], pts[2 * f + 1][1]) <= ymin + 0.005) });
+  }
+  // toe-off: a foot stays on the ground while its contact point still moves back (pushing) near the floor; its toe rolls
+  // off the floor for a frame or two after the sole leaves the 5 mm band, and released then it slid back 26 mm
+  for (let f = 0; f < 2; f++)
+    for (let k = 1; k < n; k++) {
+      if (ip[k].down[f] || !ip[k - 1].down[f]) continue;
+      const j = ip[k - 1].pts[2 * f][1] <= ip[k - 1].pts[2 * f + 1][1] ? 2 * f : 2 * f + 1;
+      const ymin = Math.min(...ip[k].pts.map((v) => v[1]));
+      if (ip[k].pts[j][2] < ip[k - 1].pts[j][2] && ip[k].pts[j][1] < ymin + 0.03) ip[k].down[f] = true;
+    }
+  // per foot, the world offset [x, z] added to its in-place position
+  const off = [0, 1].map(() => new Array(n).fill(null));
+  for (let f = 0; f < 2; f++) {
+    off[f][0] = [0, body.z[0]];
+    for (let k = 1; k < n; k++) {
+      if (!ip[k].down[f]) continue;
+      if (ip[k - 1].down[f] && off[f][k - 1]) {
+        // planted: follow the contact point (the lower sole point of this foot in the previous frame)
+        const j = ip[k - 1].pts[2 * f][1] <= ip[k - 1].pts[2 * f + 1][1] ? 2 * f : 2 * f + 1;
+        off[f][k] = [off[f][k - 1][0] - (ip[k].pts[j][0] - ip[k - 1].pts[j][0]), off[f][k - 1][1] - (ip[k].pts[j][2] - ip[k - 1].pts[j][2])];
+      } else off[f][k] = [0, body.z[k]];   // touchdown: where the gait puts the foot relative to the body
+    }
+    // swing: from lift-off to the next footprint
+    for (let k = 1; k < n; k++) {
+      if (off[f][k]) continue;
+      let e = k;
+      while (e < n && !off[f][e]) e++;
+      const a = off[f][k - 1], b = e < n ? off[f][e] : [0, body.z[n - 1]];
+      for (let q = k; q < e; q++) { const u = smooth((q - k + 1) / (e - k + 1)); off[f][q] = [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u]; }
+      k = e;
+    }
+  }
+  // IK per frame, warm-started: legs free, pelvis a little, the rest held at the gait pose
+  const regW = PARAMS.map((q) => {
+    // pelvis height held firmly: with it nearly free (0.05) the IK crouched to reach awkward targets, both knees at up
+    // to 123 degrees and the pelvis 27 cm down (a curtsy). At 3, with the legs pulled to the gait at 0.05: knees up to
+    // 77 degrees (the gait's own), the pelvis bobs 1.9 cm, the feet within 7.5 mm of their targets
+    if (q.bone < 0) return q.c === 1 ? 3.0 : 0.5;
+    const j = M.bones[q.bone].joint;
+    if (/upper-leg|knee|ankle|toe/.test(j)) return 0.05;
+    return j === 'pelvis' ? 0.3 : 1.0;
+  });
+  const frames = [];
+  let p = null, worst = 0;
+  for (let k = 0; k < n; k++) {
+    const st = ip[k].st;
+    const tg = { feet: {}, baseRot: st.rot, baseRoot: [st.root[0], 0, body.z[k]],
+      reg0: PARAMS.map((q) => (q.bone < 0 ? 0 : st.rot[q.bone][q.c])), regW };
+    [['l', 0], ['r', 1]].forEach(([sd, f]) => {
+      const o = off[f][k], A = ip[k].ankle[f], T = ip[k].toe[f];
+      tg.feet[sd] = { ankle: [A[0] + o[0], A[1], A[2] + o[1]], toe: [T[0] + o[0], T[1], T[2] + o[1]] };
+    });
+    p = ik(p || tg.reg0.slice(), tg, 80).p;
+    const res = toState(p, tg), W = fk(res.rot, res.root);
+    for (const [sd] of [['l'], ['r']]) {
+      worst = Math.max(worst, dist3(jointAt(W, sd + '-ankle'), tg.feet[sd].ankle), dist3(jointAt(W, sd + '-toe'), tg.feet[sd].toe));
+    }
+    frames.push(res);
+  }
+  const kl = BONE['l-knee'], kr = BONE['r-knee'];
+  let kmax = 0, ydrop = 0;
+  frames.forEach((f) => { kmax = Math.max(kmax, f.rot[kl][0], f.rot[kr][0]); ydrop = Math.max(ydrop, -f.root[1]); });
+  log(`runway: ${n} frames, ${(walk).toFixed(2)} s at full stride, body ${RUNWAY_V.toFixed(2)} m/s, feet off their targets at most ${(worst * 1000).toFixed(1)} mm, knees up to ${(kmax / D).toFixed(0)} deg, pelvis down up to ${(ydrop * 100).toFixed(1)} cm`);
+  return { dur: body.dur, frames };
+})();
+function runwaySample(t) {
+  return RUNWAY_FRAMES.frames[Math.min(RUNWAY_FRAMES.frames.length - 1, Math.round(t * STORE_FPS))];
+}
+
 const SCEN = {
-  catwalk: { name: 'Catwalk', duration: 64 / 60, loop: true, sample: catwalkSample, props: [] },
+  runway: { name: 'Catwalk (down the runway)', duration: RUNWAY_FRAMES.dur, loop: false, sample: runwaySample, props: [], travel: true },
+  catwalk: { name: 'Walk on the spot', duration: 64 / 60, loop: true, sample: catwalkSample, props: [] },
   idle: { name: 'Idle breathing', duration: 4.0, loop: true, sample: idleSample, props: [] },
   dressing: { name: 'Arms up to A-pose', duration: 6.0, loop: false, sample: dressingSample, props: [] },
   box: { name: 'Pick up a box', duration: T_BOX.end, loop: false, ik: true, ikFrom: 0,
@@ -352,6 +481,8 @@ function main() {
     const spec = SCEN[id];
     const b = build(id);
     const entry = { id, name: spec.name, duration: +spec.duration.toFixed(6), frames: b.rot.length, fps: STORE_FPS, loop: spec.loop, props: spec.props, rot: b.rot, root: b.root };
+    // fingerprint of the motion: renders are cached by it (godot/prerender.gd), so a changed motion is simulated again
+    entry.rev = require('crypto').createHash('sha1').update(JSON.stringify([b.rot, b.root, spec.props])).digest('hex').slice(0, 12);
     // checks: planted feet (before the floor shift), floor after the shift, and hands on the box
     const chk = verify(id, spec, b);
     entry.checks = chk.summary;
@@ -370,7 +501,7 @@ function main() {
 
 // Re-evaluates every stored frame the way the Godot player does (rotations -> FK -> floor shift from the feet -> skin),
 // and checks the result. Thresholds: planted feet 1.5 cm (before the shift), floor -0.1 mm, hands 1.2 cm from the grip.
-const LIMITS = { planted: 0.015, floor: -1e-4, hands: 0.012 };
+const LIMITS = { planted: 0.015, floor: -1e-4, hands: 0.012, slipMm: 2.0 };
 function verify(id, spec, b) {
   const fails = [], s = { planted_max_m: 0, floor_min_m: Infinity, hand_box_max_m: 0, ik_ankle_max_m: 0, shift_max_m: 0, foot_box_min_m: Infinity };
   const boxSpec = spec.props.find((p) => p.type === 'box');
@@ -411,9 +542,29 @@ function verify(id, spec, b) {
     }
     if (k === sample) reference.frame = k, reference.joints = Object.fromEntries(Object.entries(J).map(([n, v]) => [n, v.map((x) => +x.toFixed(5))]));
   }
+  if (spec.travel) {   // walking scenarios: the contact point (lowest sole point) must not slide while it carries the body
+    let prev = null;
+    s.slip_max_mm = 0;
+    for (let k = 0; k < b.rot.length; k++) {
+      const rot = []; for (let i = 0; i < NB; i++) rot.push(b.rot[k].slice(3 * i, 3 * i + 3));
+      const W = fk(rot, b.root[k]);
+      const pts = SOLE.map((i) => skinPoint(W, i));
+      if (prev) {
+        // the near-floor sole point that moves least: if the body stands on a foot, that point does not move at all
+        const ymin = Math.min(...prev.map((v) => v[1]));
+        let slip = Infinity;
+        for (let q = 0; q < 4; q++)
+          if (prev[q][1] <= ymin + 0.005) slip = Math.min(slip, Math.hypot(pts[q][0] - prev[q][0], pts[q][2] - prev[q][2]) * 1000);
+        s.slip_max_mm = Math.max(s.slip_max_mm, +slip.toFixed(3));
+        if (slip > LIMITS.slipMm) fails.push(`${id} frame ${k}: the foot on the ground slides ${slip.toFixed(2)} mm`);
+      }
+      prev = pts;
+    }
+    s.end_m = b.root[b.root.length - 1].map((v) => +v.toFixed(3));
+  }
   if (spec.ik) s.ik_ankle_max_m = +b.worst.ik.toFixed(5);
   const r = (v) => (Number.isFinite(v) ? +v.toFixed(5) : v);
-  const summary = { planted_max_m: spec.ik ? r(s.planted_max_m) : null, planted_from_s: spec.ik ? (spec.ikFrom || 0) : null, floor_min_m: r(s.floor_min_m), hand_box_max_m: r(s.hand_box_max_m), shift_max_m: r(s.shift_max_m), ik_ankle_max_m: s.ik_ankle_max_m, ik_hand_max_m: r(b.worst.hands), frames: b.rot.length };
+  const summary = { slip_max_mm: spec.travel ? s.slip_max_mm : undefined, planted_max_m: spec.ik ? r(s.planted_max_m) : null, planted_from_s: spec.ik ? (spec.ikFrom || 0) : null, floor_min_m: r(s.floor_min_m), hand_box_max_m: r(s.hand_box_max_m), shift_max_m: r(s.shift_max_m), ik_ankle_max_m: s.ik_ankle_max_m, ik_hand_max_m: r(b.worst.hands), frames: b.rot.length };
   if (boxSpec) {
     summary.foot_box_min_m = r(s.foot_box_min_m);
     if (s.foot_box_min_m < 0.005) fails.push(`${id}: a foot is ${s.foot_box_min_m.toFixed(4)} m from the box at rest`);

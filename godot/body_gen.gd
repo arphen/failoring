@@ -28,6 +28,11 @@ const PRESETS := {
 	"athletic": {"height": 1.75, "bust": 0.96, "waist": 0.78, "hip": 0.96, "shoulder": 0.40, "muscle": 0.85, "cup": -0.3, "belly": -0.4},
 	"plus": {"height": 1.68, "bust": 1.18, "waist": 1.02, "hip": 1.24, "shoulder": 0.39, "muscle": 0.4, "cup": 0.3},
 }
+# A face likeness (face.gd loads it from the user's faces folder): {id, idx: base vertices, d: offsets (3 per vertex,
+# metres on the base mesh), ref: two vertices whose distance scales the offsets to the generated head}. generate()
+# applies it when the request's "face" equals its id. Empty: every body has the mannequin's face.
+static var face := {}
+
 const DEFAULT_MEAS := {"height": 1.68, "bust": 0.92, "waist": 0.74, "hip": 0.98, "shoulder": 0.40, "muscle": 0.5, "cup": 0.0}
 
 
@@ -493,7 +498,28 @@ static func _key(req: Dictionary) -> String:
 	var parts: Array = []
 	for k in PRIMARY + SECONDARY + ["muscle", "cup", "belly", "seat", "weight"]:
 		parts.append("-" if req.get(k, null) == null else "%.4f" % float(req[k]))
+	if String(req.get("face", "")) != "":
+		parts.append("face:" + String(req["face"]))
 	return "/".join(parts)
+
+
+# The face likeness on the generated rest body: the offsets scaled by how much bigger this head is than the base mesh's
+# (the distance of the two reference vertices).
+static func _apply_face(m: Dictionary, out: PackedFloat32Array) -> void:
+	var base: PackedFloat32Array = m["base"]
+	var ref: Array = face["ref"]
+	var a := int(ref[0])
+	var b := int(ref[1])
+	var db := Vector3(base[3 * a] - base[3 * b], base[3 * a + 1] - base[3 * b + 1], base[3 * a + 2] - base[3 * b + 2]).length()
+	var dout := Vector3(out[3 * a] - out[3 * b], out[3 * a + 1] - out[3 * b + 1], out[3 * a + 2] - out[3 * b + 2]).length()
+	var k := dout / maxf(db, 1e-6)
+	var idx: PackedInt32Array = face["idx"]
+	var d: PackedFloat32Array = face["d"]
+	for q in idx.size():
+		var i := idx[q]
+		out[3 * i] += d[3 * q] * k
+		out[3 * i + 1] += d[3 * q + 1] * k
+		out[3 * i + 2] += d[3 * q + 2] * k
 
 
 static func _fnum(req: Dictionary, k: String, def: float) -> float:
@@ -623,6 +649,8 @@ static func generate(m: Dictionary, meas: Dictionary, prev: Variant) -> Dictiona
 		out[3 * i] = p[3 * i] * s
 		out[3 * i + 1] = (p[3 * i + 1] - y0) * s
 		out[3 * i + 2] = (p[3 * i + 2] - zc) * s
+	if String(req.get("face", "")) != "" and String(face.get("id", "")) == String(req["face"]):
+		_apply_face(m, out)
 	var measm := {}
 	for kkk in PRIMARY + SECONDARY:
 		measm[kkk] = mm.get(kkk, null)

@@ -8,7 +8,7 @@ const Geom = preload("res://cut_geom.gd")
 const Seams = preload("res://seams.gd")
 const Guides = preload("res://guides.gd")
 const SEAM_COLORS := ["#3fd3c0", "#ff9d4d", "#c792ea", "#82aaff", "#f07178", "#c3e88d", "#ffcb6b", "#89ddff"]
-const FABRIC_COLORS := {"cotton_poplin": "#6f93c4", "denim_12oz": "#3d5c8c", "linen_medium": "#c2b184",
+const FABRIC_COLORS := {"cotton_poplin": "#6f93c4", "cotton_crepe": "#b9776a", "denim_12oz": "#3d5c8c", "linen_medium": "#c2b184",
 	"wool_suiting": "#566175", "silk_charmeuse": "#a8405c", "polyester_chiffon": "#dc94ac",
 	"canvas_heavy": "#a89a76", "cotton_jersey": "#6f9a88", "lambskin_leather": "#7a4630"}
 

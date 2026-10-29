@@ -31,7 +31,7 @@ static func load_library(path: String = DATA_PATH) -> Dictionary:
 	for s in v["scenarios"]:
 		var sc := {"id": String(s["id"]), "name": String(s["name"]), "duration": float(s["duration"]), "frames": int(s["frames"]),
 			"fps": float(s.get("fps", v.get("store_fps", 60.0))), "loop": bool(s["loop"]), "props": s["props"], "checks": s.get("checks", {}),
-			"reference": s.get("reference", {}), "rot": [], "root": []}
+			"reference": s.get("reference", {}), "rev": String(s.get("rev", "")), "rot": [], "root": []}
 		for f in sc["frames"]:
 			sc["rot"].append(PackedFloat32Array(s["rot"][f]))
 			var r: Array = s["root"][f]

@@ -217,7 +217,7 @@ void ClothSolver::assembleEnergy(Real seamScale) {
     for (const SeamC& s : seamC_) {
         const Vec3 target = x_[s.b0] * (1 - s.t) + x_[s.b1] * s.t;
         const Vec3 d = x_[s.a] - target;
-        const Real k = seamScale / s.alpha;
+        const Real k = seamScaleOf(s, seamScale) / s.alpha;
         // energy 0.5*k*|d|^2 is exactly quadratic: gradient k*d*w_a, Hessian k*w_a*w_b*I (no rank-1 approximation)
         const Real w[3] = {1.0, -(1 - s.t), -s.t};
         const int idx[3] = {s.a, s.b0, s.b1};
@@ -255,7 +255,7 @@ Real ClothSolver::variationalEnergy(Real invH2, Real seamScale) const {
     }
     for (const SeamC& s : seamC_) {
         const Vec3 d = x_[s.a] - (x_[s.b0] * (1 - s.t) + x_[s.b1] * s.t);
-        E += 0.5 * seamScale / s.alpha * length2(d);
+        E += 0.5 * seamScaleOf(s, seamScale) / s.alpha * length2(d);
     }
     return E;
 }
@@ -448,7 +448,7 @@ void ClothSolver::stepImplicit() {
     const Real h = p_.dt / S;
     const Real invH2 = 1.0 / (h * h);
     const int N = vertexCount();
-    const Real seamScale = p_.seamRampFrames > 0 ? std::min(Real(1), std::max(Real(0.02), (frame_ + 1.0) / p_.seamRampFrames)) : Real(1);
+    const Real seamScale = seamScaleNow();
 
     const bool skin = skinOn() && collider_;
     if (rigidForce_.size() != static_cast<size_t>(N)) { rigidForce_.assign(N, 0.0); skinK_.assign(N, 0.0); skinPhi_.assign(N, 1e30); }
@@ -802,7 +802,29 @@ void ClothSolver::stepImplicit() {
 // An inexact solve (capped CG) leaves stretch unresolved where loads concentrate (a pinned corner carries the cloth's
 // weight); this pass keeps those spots from running away. Off unless strainLimit > 0.
 void ClothSolver::limitStrain() {
-    if (slEdges_.empty()) {
+    if (slEdges_.empty()) buildStrainEdges();
+    const Real s = 1 + p_.strainLimit;
+    for (int pass = 0; pass < std::max(1, p_.strainLimitPasses); ++pass) {
+        bool any = false;
+        for (const SlEdge& e : slEdges_) {
+            const Real wa = w_[e.a], wb = w_[e.b];
+            if (wa + wb == 0) continue;
+            const Vec3 d = x_[e.b] - x_[e.a];
+            const Real l = length(d);
+            const Real lmax = s * e.l0;
+            if (l <= lmax) continue;
+            const Vec3 c = d * ((l - lmax) / (l * (wa + wb)));
+            x_[e.a] += c * wa;
+            x_[e.b] -= c * wb;
+            any = true;
+        }
+        if (!any) break;
+    }
+}
+
+void ClothSolver::buildStrainEdges() {
+    slEdges_.clear();
+    {
         // Rest length per mesh edge from the triangles' own rest shapes (CROCHET_PLAN §2.1 step 6): restUV_ is only
         // a layout parameterisation for an intrinsic panel, so the edge vector must come from triRest_. For panel
         // triangles the map value equals length(restUV_[a] - restUV_[b]) bit for bit (the same two numbers, and a
@@ -830,22 +852,25 @@ void ClothSolver::limitStrain() {
             if (l0 > 1e-9) slEdges_.push_back({pr.first, pr.second, l0});
         }
     }
-    const Real s = 1 + p_.strainLimit;
-    for (int pass = 0; pass < std::max(1, p_.strainLimitPasses); ++pass) {
-        bool any = false;
-        for (const SlEdge& e : slEdges_) {
-            const Real wa = w_[e.a], wb = w_[e.b];
-            if (wa + wb == 0) continue;
-            const Vec3 d = x_[e.b] - x_[e.a];
-            const Real l = length(d);
-            const Real lmax = s * e.l0;
-            if (l <= lmax) continue;
-            const Vec3 c = d * ((l - lmax) / (l * (wa + wb)));
-            x_[e.a] += c * wa;
-            x_[e.b] -= c * wb;
-            any = true;
-        }
-        if (!any) break;
+    // Gauss-Seidel order: by colour (greedy; no two edges of a colour share a vertex), so the GPU, which projects a whole
+    // colour at once, does exactly what this loop does. The order matters while the passes have not converged (the first
+    // frames of a drape): the sorted order and the colour order drifted 0.7 mm apart in one frame on the A-line skirt.
+    std::vector<std::uint64_t> used(x_.size(), 0);
+    std::vector<std::vector<SlEdge>> byColour;
+    for (const SlEdge& e : slEdges_) {
+        const std::uint64_t u = used[e.a] | used[e.b];
+        int c = 0;
+        while (c < 63 && (u >> c & 1u)) ++c;  // a cloth vertex has well under 63 edges
+        used[e.a] |= std::uint64_t(1) << c;
+        used[e.b] |= std::uint64_t(1) << c;
+        if (static_cast<int>(byColour.size()) <= c) byColour.resize(c + 1);
+        byColour[c].push_back(e);
+    }
+    slEdges_.clear();
+    slColStart_.assign(1, 0);
+    for (const auto& list : byColour) {
+        slEdges_.insert(slEdges_.end(), list.begin(), list.end());
+        slColStart_.push_back(static_cast<int>(slEdges_.size()));
     }
 }
 

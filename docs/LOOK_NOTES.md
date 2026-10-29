@@ -221,3 +221,27 @@ softbox a blot over a third of the iris), the sky reflections give the softboxes
 * Frame time on a GPU. The skin shader evaluates seven value-noise octaves per pixel; the body view gathers 14.5k drawn
   vertices per frame in GDScript (a few ms).
 * A real photographic skin (see above).
+
+## Face likeness (face.gd, hair.gd, tools/face/)
+
+A face made from the wearer's photos: Body tab > Look > Face "Mine", Hair "Long (mine)", Eyes "Mine (from the photos)".
+`tools/face/build_face.sh <id> <front photo> [<hair-down photo>] [more]` writes `~/Documents/Failoring/faces/<id>/`
+(outside the repository and the app data; nothing is uploaded). Measured on the first one (6 phone photos):
+
+- **Shape** (`fit_shape.py`): MediaPipe landmarks on the photo and on a render of the mannequin's head
+  (`tests/face_capture.gd`); their aligned difference, spread over the head by a thin-plate spline, is a per-vertex offset
+  of the base mesh that `BodyGen.generate` adds (scaled with the head). Landmark error to the photo, as a share of the eye
+  span: mannequin 2.6 %, first fit 1.9 %, one refinement 1.2 % (further steps only add the detector's noise). The inner
+  lips are fitted too, tucked 3 mm back: that closes the base mesh's parted mouth without folding the lips.
+- **Skin** (`bake_skin.py`): the front photo projected (solvePnP from the landmarks, 13.5 px mean error on an 880 px face)
+  into MakeHuman's UV layout, the broad ceiling-light shading divided out, alpha by how squarely each point faced the
+  camera (full to 45 degrees, none from 80). The skin shader lays it over the albedo with a gain to the body's tone;
+  where it covers, the painted brows, lips, crop and the mouth's cavity and teeth give way.
+- **Hair** (`hair.gd`): generated from the body: a cap over the skin shader's scalp mask, and two layers of wavy ribbons
+  that follow the head's outline down and never move in under it (at most 3.5 mm out per cm at the sides, 8 behind, so
+  they pass behind the shoulders' top instead of splintering over them). Opaque with cut-out edges (blended, the studio's
+  screen-space reflections made it read as glass). Weakest from behind: the ribbon ends look shredded.
+- **Iris and hair colour**: sampled from the photos (`face.json`); a photographed iris reads dark and is lifted to a
+  believable lightness, keeping its hue.
+
+Checks: `tests/face_check.tscn` (synthetic face: only its vertices move, scaled with the head; key; fallbacks; the hairline).

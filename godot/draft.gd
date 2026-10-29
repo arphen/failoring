@@ -149,6 +149,16 @@ static func shirt(body: Dictionary, wrap_helper: FailoringWrap, opt: Dictionary)
 	return tank(body, wrap_helper, o)
 
 
+# A crop top: the tank cut off above the waist, its hem 38 % of the way from the waist up to the bust (about 7 to 8 cm
+# above the waist on the presets), so a strip of midriff shows above a skirt or trousers at the waist. Below the bust its
+# sides run straight down (straightBelow), a boxy crop: cut to the ribcage, the hem rode up under the bust.
+static func crop(body: Dictionary, wrap_helper: FailoringWrap, opt: Dictionary) -> Dictionary:
+	var m := measures(body, wrap_helper)
+	var hem := float(m["yWaist"]) + 0.38 * (float(m["yBust"]) - float(m["yWaist"]))
+	return tank(body, wrap_helper, dict_merge({"hemY": hem, "straightBelow": float(m["yBust"]), "name": "Crop top - 2 panels (drafted to this body)",
+		"fabric": "cotton_jersey"}, opt))
+
+
 static func tank(body: Dictionary, wrap_helper: FailoringWrap, opt: Dictionary) -> Dictionary:
 	opt = opt if opt != null else {}
 	var s: Dictionary = body["sections"]
@@ -188,6 +198,14 @@ static func tank(body: Dictionary, wrap_helper: FailoringWrap, opt: Dictionary) 
 		var r := []
 		for yy in ys:
 			r.append(arc_at.call(yy, theta, half.call(yy) * dd))
+		# opt.straightBelow: below this height the panel is no narrower than there (a crop top hangs straight down from the
+		# bust; following the ribcage in, its hem was a ring smaller than the bust and rode up under it)
+		if opt.has("straightBelow"):
+			var yb := float(opt["straightBelow"])
+			var rb: float = arc_at.call(yb, theta, half.call(yb) * dd)
+			for i in ys.size():
+				if float(ys[i]) < yb:
+					r[i] = maxf(float(r[i]), rb)
 		var x_top: float = r[r.size() - 1] - strap_w
 		var y_n0: float = y_top - depth
 		var neck := []
@@ -290,7 +308,7 @@ static func tank(body: Dictionary, wrap_helper: FailoringWrap, opt: Dictionary) 
 	for pp in pieces:
 		(pp as Dictionary).erase("names")
 	return {
-		"name": "T-shirt - body + 2 sleeves (drafted to this body)" if opt.get("sleeves", false) else "Tank top - 2 panels (drafted to this body)",
+		"name": String(opt["name"]) if opt.has("name") else ("T-shirt - body + 2 sleeves (drafted to this body)" if opt.get("sleeves", false) else "Tank top - 2 panels (drafted to this body)"),
 		"fabric": String(opt.get("fabric", "cotton_poplin")),
 		"notes": "Front and back, unrolled from this mannequin's trunk sections (arc length of the body at every height plus %d mm ease). Side seams and shoulder seams; scoop neckline, no darts or hem allowance." % int(round(clear * 1000.0)),
 		"pieces": pieces, "seams": seams,

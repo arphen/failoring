@@ -247,3 +247,61 @@ shader uses one set and runs.
 - `scale.cpp`: Cholesky vs CG(SSOR) vs CG(block-Jacobi) vs CholeskyPCG at a given spacing.
 - `fbench.cpp`: factor-only benchmark.
 - `tg.cpp`: `test_garment` with env TOL, SUB, NOSELF, FR, KC, INIT, NF.
+
+## The GPU substep (done 2026-10-29)
+
+`gdextension/src/gpu_step.{h,cpp}` runs whole frames of the fast solve on the GPU; `cloth_core/src/cloth_gpu_model.cpp`
+exports the solver as flat arrays (`fl::GpuModel`). `set_param("gpu_step", 1)`, `FL_GPU_STEP=1`, or the editor's
+**GPU solver** checkbox (Fabric tab, on by default with a window; `FL_CPU=1` turns the default off).
+
+**Measured on the M3 first (phase 0, `godot/tests/gpu_dispatch_bench.tscn`).**
+- A tiny dispatch costs 1.3-1.9 us of GPU time inside one compute list with barriers, plus 0.2 us to record.
+  So the CG is many small multi-workgroup dispatches, not one workgroup looping.
+- A local RenderingDevice made, used and freed on a worker thread ran 1000 frames. Made on a worker and freed on the
+  main thread while it draws: fine 20 times out of 20. So the editor keeps its step worker and Render mode its thread.
+
+**Layout.** One submission per frame, one read-back (positions, velocities, contact state); the CPU solver stays the
+owner of the state, so pins, teleports and a switch back to the CPU need nothing special. Per substep: predict, lagged
+friction, contact lift, element kernel (local gradients and 3x3 blocks into scratch), gather into the block matrix and
+the gradient (precomputed lists, no float atomics), right-hand side and hold filter, block-Jacobi CG in the pipelined
+form (Ap by recurrence; 2 dispatches per iteration, the dot products summed by every workgroup from per-group partials
+instead of a reduction dispatch), line search on the variational energy (10 trials), strain limit by colour, push-out,
+self collision, velocity.
+
+**Precision.** float32. Positions are the substep's start XP plus the displacement U: friction's stick threshold
+(1.7e-8 m per substep) is below the float spacing of absolute positions near 1 m (6e-8 m), not of U.
+
+**Self collision** is the CPU's vertex-triangle projection in Jacobi form: spatial hash by counting sort (int atomics),
+corrections summed in fixed point (1e-9 m) and averaged per vertex, 4 rounds per substep. Two layers dropped on a
+sphere, 90 frames: upper-layer vertices under the lower layer 0 (CPU) / 3 (GPU) / ~450 without self collision.
+
+**Strain-limit order.** The CPU now projects strain-limit edges in greedy colour order (the GPU projects a colour at a
+time). Sorted order vs colour order drifted 0.7 mm apart in the first frame of the A-line skirt; with the same order
+the GPU tracks the CPU to 0.004 mm. Only the fast solve uses strain limiting; the Newton default is unchanged
+(`test_garment` hem 165.6 mm before and after).
+
+**The body moves through the frame.** The body is baked once per frame, at its end. On the GPU the contact of substep
+k sees it short of that by the rest of its motion (the per-vertex surface motion the friction uses, times
+1 - (k+1)/S), for the body grid and box props. Without it the whole frame's motion arrived at the first substep: in the
+runway walk a knee swinging at about 4 m/s moved 7 cm in one frame, past the middle of the leg, and pushed the skirt
+out through the front. The CPU path still moves the body once per frame.
+
+**Not on the GPU** (the frame stays on the CPU, `gpu_step_cpu_reason` says why): barrier contact, contact multipliers,
+the soft skin, hinges with a rest angle, friction mode 0, capsule / cylinder / ellipsoid colliders.
+
+**Check: `godot/tests/gpu_step_check.tscn`** (window needed). Each scene against the CPU fast solve and a control (the
+CPU with gravity 1e-6 stronger: how chaotic the scene is). 90 frames, M3:
+
+| scene | verts | CPU fast ms/frame | GPU ms/frame | GPU-CPU apart (avg) | control |
+|---|---|---|---|---|---|
+| hanging patch | 479 | 13.0 | 20.2 | 0.36 cm | 0.23 cm |
+| drape on a sphere | 949 | 26.1 | 21.6 | 1.79 cm | 1.13 cm |
+| A-line skirt on the body | 680 | 14.0 | 17.4 | 1.11 cm | 1.33 cm |
+| tiered skirt, Photo mesh, self collision | 2878 | 92.2 | 33.9 | 2.14 cm | 1.16 cm |
+| two layers on a sphere, self collision | 2154 | 65.9 | 30.0 | 5.2 cm | 8.2 cm |
+
+Plus a box prop (rests on it, carried 0.4 m up, nothing inside) and the tiered skirt walking in `skirt_cover_check`
+(`FL_GPU_STEP=1`: 144 of 144 frames on the GPU, back covered throughout). The GPU's cost is nearly flat up to a few
+thousand vertices (about 2700 dispatches of ~7 us), so small garments are not faster than the CPU; Photo-size
+garments are about 3x faster than the CPU fast solve and about 45x faster than the CPU's default Newton solve at Photo
+quality (1.5 s/frame for the tiered skirt).
