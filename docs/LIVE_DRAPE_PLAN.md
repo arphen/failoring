@@ -100,12 +100,15 @@ the native calls). Extras found on the way:
 * `damping_scale` is live (`ClothSolver::setDampingScale`): a pre-sew entry settles for 45 frames at 25x damping, so the
   panels drop onto their holds instead of swinging off the exploded pose.
 * Point seams (tacks) ignore `seam_scale`: they hold while the garment is unsewn (GPU: negative alpha marks them, PF[24]).
-* The GPU read-back gathers its six buffers into one (`buffer_copy`): 120 -> ~35 ms.
+* The GPU frame reads back once: the six result buffers are gathered (`buffer_copy`) and `buffer_get_data` does the
+  only submit-and-wait (no separate `submit()` + `sync()`): 160 -> 26-60 ms per frame in the editor.
+* The display drew each sewn vertex on its partner's edge even with the seam open: with the panels apart that was a
+  sheet stretched between them (a "green box"). It now snaps only seams closer than 1.5 cm.
+* Sleeves hang from their cap (the end nearest the body's axis), not their top edge.
 * Live runs the GPU solve at 5 substeps / CG 50 (845 dispatches instead of 2690).
 
 Open:
 
-* Speed: ~60-75 ms per frame on the M3 with the editor drawing (GPU ~25 ms, read-back ~35-40 ms). The read-back waits
-  behind the editor's own rendering. Next: pipeline (submit frame n+1 before reading n) or a shared device.
-* A sleeve's "top edge" hold runs along its whole length on a raised arm: it sticks out. Hold sleeves at the cap only.
+* Speed: 26-60 ms per frame on the M3 (the wait queues behind the editor's own drawing, more at a larger window). Next:
+  pipeline (submit frame n+1 before reading n).
 * Leaving live drape rebuilds from the pattern; the live drape itself is not kept.
