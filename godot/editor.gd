@@ -3665,6 +3665,7 @@ func rebuild() -> void:
 	if _sim_pieces.is_empty() or body_stand == null:
 		meta = {}
 		frames.clear()
+		_show_no_cloth()
 		_build_mat()
 		_render_info()
 		status_label.text = ("No garment on the mannequin - add one from the Library tab" if body_stand != null else "starting") + _status_suffix()
@@ -3705,6 +3706,7 @@ func rebuild() -> void:
 		return
 	sim = built["sim"]
 	_disp_idx = sim.get_display_indices()  # topology is fixed for this sim: read it once
+	cloth_node.visible = true
 	_solver_stats = sim.get_solver_stats()
 	_vcount = sim.get_vertex_count()
 	meta = built
@@ -3751,6 +3753,18 @@ func rebuild() -> void:
 	status_label.text = "%d verts - press play" % int(built["n"]) + _status_suffix()
 	if live.active:   # an edit on the table while live: the new garment goes on live from its start
 		live.restart()
+
+
+# No garment on the mannequin: the last garment's cloth, stitch lines and needles go (they stayed on screen before).
+func _show_no_cloth() -> void:
+	cloth_node.visible = false
+	cur_cloth = PackedVector3Array()
+	for n in [_stitch_mesh, _seam_mesh, _trail_mesh, _hl_mesh]:
+		if n != null:
+			n.visible = false
+	for g in _needle_groups:
+		(g["needle"] as Node3D).visible = false
+	_last_shown = ""
 
 
 func _tris() -> PackedInt32Array:
@@ -4477,6 +4491,7 @@ func _update_stitches(cloth: PackedVector3Array, t: float) -> void:
 				var up := Vector3.UP if absf(ax.dot(Vector3.UP)) < 0.95 else Vector3.RIGHT
 				nd.global_transform = Transform3D(Basis.looking_at(-ax, up).scaled(Vector3.ONE * Stitching.NEEDLE_SCALE), pose["tip"])
 				Stitching.trail(cloth, path, ty, kpos, 14.0, 28, Stitching.colour(ty), tverts, tcols, cam.global_transform.basis.x)
+	var _arr_sel := _merged_sel()
 	for s in stitch_nodes:
 		var pairs: Array = s["pairs"]
 		var m: int = pairs.size()
@@ -4485,9 +4500,12 @@ func _update_stitches(cloth: PackedVector3Array, t: float) -> void:
 		var count: int = m
 		if t >= 2.0 and t < 3.0 and gi >= 0:
 			count = clampi(int(ceil(float(gk[gi]) + 1.0 - float(s["off"]))) if float(gk[gi]) > 0.0 else 0, 0, m)
-		# while the panels are still being arranged only a few connections per seam show: enough to see what joins what
-		var step: int = 1 if t >= 2.0 else maxi(1, m / 7)
-		var col: Color = tc if t >= 2.0 else (s["col"] as Color)
+		# while the panels are still being arranged only a few faint connections per seam show, enough to see what joins
+		# what (every seam at full strength filled the view with a fan of lines); with a panel picked, only its seams
+		if t < 2.0 and _arr_sel != "" and String(s["pa"]) != _arr_sel and String(s["pb"]) != _arr_sel:
+			continue
+		var step: int = 1 if t >= 2.0 else maxi(1, m / 3)
+		var col: Color = tc if t >= 2.0 else (s["col"] as Color) * Color(1, 1, 1, 0.45 if _arr_sel == "" else 0.9)
 		var rev: bool = bool(s["rev"])
 		for k in range(0, count, step):
 			var pr: Array = pairs[m - 1 - k] if rev else pairs[k]
@@ -4495,13 +4513,21 @@ func _update_stitches(cloth: PackedVector3Array, t: float) -> void:
 			sarr.append(cloth[int(pr[1])])
 			scol.append(col)
 			scol.append(col)
-	_set_lines(_stitch_mesh, sarr, scol, show_st and not sarr.is_empty())
+	_set_lines(_stitch_mesh, sarr, scol, show_st and t < 3.0 and not sarr.is_empty())
 	_set_lines(_trail_mesh, tverts, tcols, not tverts.is_empty())
 	var garr := PackedVector3Array()
 	var gcol := PackedColorArray()
 	var any_seg := false
+	# draped (stage 4), the seams are closed and a line along every one reads as a crack in the cloth: only the selected
+	# panel's seams are drawn then
+	var draped := t >= 3.0
+	var msel := _merged_sel() if draped else ""
 	if true:
 		for s in seam_nodes:
+			if draped:
+				var sd: Dictionary = _sim_seams[int(s["si"]) - 1]
+				if msel == "" or (String(sd["a"][0]) != msel and String(sd["b"][0]) != msel):
+					continue
 			var seg: Array = s["seg"]
 			var gc: Color = s["col"]
 			for k in seg.size():

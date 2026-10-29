@@ -786,7 +786,7 @@ PackedVector3Array FailoringSim::get_display_positions(real_t margin) const {
     if (dispLevels_ >= 2)
         for (const auto& s : solver_->seamLinks()) {
             const fl::Vec3 to = x[s.b0] * (1 - s.t) + x[s.b1] * s.t;
-            if (fl::length(to - x[s.a]) < fl::Real(0.015)) P[s.a] = to;
+            if (fl::length(to - x[s.a]) < fl::Real(0.05)) P[s.a] = to;
         }
     if (active_)
         for (size_t i = 0; i < n; ++i) phi[i] = active_->eval(P[i], N[i]);
