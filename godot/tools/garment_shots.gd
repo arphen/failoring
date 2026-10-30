@@ -5,6 +5,7 @@ extends Node
 
 const BodyGen = preload("res://body_gen.gd")
 const CamViews = preload("res://cam_views.gd")
+const Recipe = preload("res://garment_recipe.gd")
 const VIEWS := ["front", "q_l", "left", "back"]
 
 var ed: Node
@@ -23,7 +24,9 @@ func _ready() -> void:
 	var file := ""
 	var body := ""
 	var out := ""
-	var quality := "fine"   # 2.8 cm triangles: frills and gathers read as folds (the editor's Preview, 5 cm, crumples them)
+	# 1.5 cm triangles on the GPU solver: gathers hang as folds. Coarser meshes (Preview 5 cm, Fine 2.8 cm) crumple gathered
+	# tiers and let them ride up 10 to 15 cm, which is not what the garment does
+	var quality := "ultra"
 	var i := 1
 	while i < args.size():
 		if args[i] == "--body" and i + 1 < args.size():
@@ -87,6 +90,7 @@ func _ready() -> void:
 	print("DRAPE %d frames at %s quality in %.1f s  %s" % [ed.frames.size(), quality, (Time.get_ticks_msec() - t0) / 1000.0, ed.health_text])
 	ed.tl_t = 4.0
 	ed._last_shown = ""
+	_report_pieces()
 	var imgs := []
 	for v in VIEWS:
 		ed._cam_goto(v)
@@ -115,3 +119,33 @@ func _ready() -> void:
 	sheet.save_png(sp)
 	print("SHOT sheet %s  (front, three-quarter, side, back)" % sp)
 	get_tree().quit(0)
+
+
+# Where each piece hangs after the drape at this quality (as ./garment drape prints it, on the finer mesh).
+func _report_pieces() -> void:
+	var meta: Dictionary = ed.meta
+	if meta.is_empty() or ed.frames.is_empty():
+		return
+	var cloth: PackedVector3Array = ed.frames[ed.frames.size() - 1]["cloth"]
+	var v := Recipe.body_vars(ed.body_stand, ed._helper_wrap())
+	for pid in meta["order"]:
+		var first := int(meta["first"][pid])
+		var n: int = (meta["uv"][pid] as PackedVector2Array).size()
+		var lo := 1e9
+		var hi := -1e9
+		for i in range(first, mini(first + n, cloth.size())):
+			lo = minf(lo, cloth[i].y)
+			hi = maxf(hi, cloth[i].y)
+		print("PIECE %-14s hangs %.2f..%.2f m (%s .. %s)" % [RegEx.create_from_string("^g[0-9]+_").sub(String(pid), ""), lo, hi, _near(lo, v), _near(hi, v)])
+
+
+static func _near(y: float, v: Dictionary) -> String:
+	if y < 0.03:
+		return "floor"
+	var best := ""
+	var bd := 1e9
+	for k in ["y_neck", "y_shoulder", "y_bust", "y_waist", "y_hip", "y_crotch", "y_knee", "y_ankle"]:
+		if absf(y - float(v[k])) < bd:
+			bd = absf(y - float(v[k]))
+			best = k.trim_prefix("y_")
+	return "%s%+.0fcm" % [best, (y - float(v["y_" + best])) * 100.0]

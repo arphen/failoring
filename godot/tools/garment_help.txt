@@ -4,8 +4,8 @@
   ./garment list                            garments in the library
   ./garment export ID [--body B]            a library garment as a plan (JSON), to borrow shapes from
   ./garment check FILE [--body B]           expand a recipe: pieces, edges (index=name length), seams, ERRORs
-  ./garment drape FILE [--body B] [--walk]  simulate it on the body: where each piece hangs, seam gaps, OK/ERROR
-  ./garment shots FILE [--body B] [--quality fine|photo]  photos of the drape (front, 3/4, side, back) -> PNG paths
+  ./garment drape FILE [--body B] [--walk]  quick check on a coarse mesh: seams close, nothing falls off, OK/ERROR
+  ./garment shots FILE [--body B] [--quality ultra|fine]  the real drape (1.5 cm mesh, GPU): photos + where pieces hang
   ./garment install FILE                    put it in the editor's library
   ./garment wear FILE                       install it and put it on the mannequin in the running editor
   ./garment editor                          start the editor (the user watches the mannequin there)

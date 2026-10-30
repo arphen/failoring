@@ -502,14 +502,46 @@ func point(u: float, v: float) -> Vector3:
 		var g := _generic()
 		var ring: float = float(_wrap.get("ring", 0.0))
 		var width: float = _row_t(u, v)[1]
+		# wrap.gather (garment_recipe.gd sets it on a piece sewn by its long edge to a shorter one): the piece starts
+		# already gathered, on the ring of the shorter edge, folded like an accordion so its length fits; the seam then
+		# has nothing to pull in, and the folds hang as gathers (pulled in from a wide ring, the cloth crumpled)
+		var gather: float = maxf(1.0, float(_wrap.get("gather", 1.0)))
 		var f := 1.0
 		if ring > 0.0:
-			f = maxf(1.0, ring * width / float(g["per"]))
-		var p := _gen_phi_of(float(g["sc"]) + (u - _uc) / f)
+			f = maxf(1.0, ring * width / gather / float(g["per"]))
+		var p := _gen_phi_of(float(g["sc"]) + (u - _uc) / (f * gather))
 		var r := _gen_rad(p) * f
+		if gather > 1.0:
+			r += _fold_amp(gather) * (1.0 + sin(TAU * (u - _uc) / (FOLD * gather)))
 		return Vector3(r * sin(p), float(_wrap.get("y", 0.0)) + (v - _bb[1]), float(g["cz"]) + r * cos(p))
 	var p := _pos_at(u, v)
 	return Vector3(p[0], p[1], p[2])
+
+
+const FOLD := 0.10   # m round the body per fold of a gathered start (wrap.gather): two to three triangles of the mesh
+
+
+# Fold depth (m) for a gathered start: a sine of wavelength FOLD whose length is `gather` times its span.
+static var _amp_cache := {}
+
+
+static func _fold_amp(gather: float) -> float:
+	if _amp_cache.has(gather):
+		return _amp_cache[gather]
+	var lo := 0.0
+	var hi := FOLD * gather
+	for it in 30:
+		var a := (lo + hi) * 0.5
+		var k := TAU * a / FOLD
+		var l := 0.0
+		for i in 32:
+			l += sqrt(1.0 + pow(k * cos(TAU * (float(i) + 0.5) / 32.0), 2.0))
+		if l / 32.0 < gather:
+			lo = a
+		else:
+			hi = a
+	_amp_cache[gather] = (lo + hi) * 0.5
+	return _amp_cache[gather]
 
 
 # Exploded pose (worker.js P1): upright and flat, tangent to the envelope at the piece

@@ -115,6 +115,9 @@ static func save(name: String, category: String, fitted: String, from: String, n
 	return file
 
 
+static var last_replaced := ""   # install_recipe: where the replaced version went ("" when there was none)
+
+
 # Writes a garment recipe (garment_recipe.gd) under a file name from its name, so installing it again replaces it.
 # Returns the file name, or "" on failure.
 static func install_recipe(recipe: Dictionary) -> String:
@@ -122,6 +125,11 @@ static func install_recipe(recipe: Dictionary) -> String:
 	var r := recipe.duplicate(true)
 	r["format"] = RECIPE_FORMAT
 	var file := "agent-%s.json" % slug(String(r.get("name", "garment")))
+	# the version it replaces is kept (undo: "go back to the last one"), see last_replaced
+	if FileAccess.file_exists(DIR + "/" + file):
+		DirAccess.make_dir_recursive_absolute(DIR + "/history")
+		last_replaced = "%s/history/%s-%d.json" % [DIR, file.get_basename(), Time.get_unix_time_from_system()]
+		DirAccess.copy_absolute(DIR + "/" + file, last_replaced)
 	var f := FileAccess.open(DIR + "/" + file, FileAccess.WRITE)
 	if f == null:
 		return ""

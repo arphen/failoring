@@ -224,6 +224,10 @@ func _cmd_drape() -> void:
 	print("DRAPE %s on body %s: %d frames in %.1f s" % [plan["name"], b["name"], DRAPE_FRAMES, (Time.get_ticks_msec() - t0) / 1000.0])
 	var vars := Recipe.body_vars(stand, b["helper"])
 	_report_pieces(built, merged, start, fin, vars)
+	for p in res["plan"]["pieces"]:
+		if (p["wrap"] as Dictionary).has("gather"):
+			print("NOTE gathered pieces ride up and crumple on this coarse mesh (4 cm); ./garment shots drapes on 1.5 cm and prints where they really hang")
+			break
 	var gap := sim.get_max_seam_gap() * 1000.0
 	print("SEAMS widest gap %.1f mm%s" % [gap, "  (closed)" if gap < 15.0 else "  (open: a seam joins edges that are far apart on the body, or pulls the wrong way: check reverse and which edges)"])
 	print("SETTLE fastest point moves %.1f mm/frame at the end%s" % [moving * 1000.0, "" if moving < 0.004 else "  (still moving: sliding off, or too heavy for its seams)"])
@@ -304,6 +308,8 @@ func _cmd_install(wear: bool) -> void:
 		return
 	print("INSTALLED user:%s -> %s" % [file, ProjectSettings.globalize_path(Library.DIR + "/" + file)])
 	print("  the editor's library shows it as \"%s\"; a running editor reloads it if it is being worn" % l["recipe"].get("name", file))
+	if Library.last_replaced != "":
+		print("  the version it replaced: %s (copy it back to the recipe to undo)" % ProjectSettings.globalize_path(Library.last_replaced))
 	if wear:
 		Library.request_wear(file)
 		print("WEAR requested: a running editor puts it on the mannequin within a second (start one: ./garment editor)")

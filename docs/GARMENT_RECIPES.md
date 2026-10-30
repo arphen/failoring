@@ -10,13 +10,13 @@ editor. You never need to read the Godot code to make a garment.
 ./garment body                      # body sizes for expressions (girths, heights above the floor, metres)
 $EDITOR garments/my-dress.json      # write the recipe
 ./garment check garments/my-dress.json   # pieces, edges with names and lengths, seams, ERROR lines with the fix
-./garment drape garments/my-dress.json   # simulated: where each piece ends up, seam gaps, OK or ERROR
-./garment shots garments/my-dress.json   # photos (front, 3/4, side, back): look at shots/my-dress/sheet.png
+./garment drape garments/my-dress.json   # quick check (coarse mesh, 20 s): seams close, nothing falls off, OK or ERROR
+./garment shots garments/my-dress.json   # the real drape (1.5 cm mesh, GPU, ~80 s): where each piece hangs + photos
 ./garment wear garments/my-dress.json    # into the library and onto the mannequin in the running editor
 ```
 
 Every command prints `ERROR ...` lines that say what to change, and exits 1 when there is one. Fix, run again.
-`check` takes a second; `drape` about 20 s; `shots` about a minute (opens a window; `--quality photo` for a finer mesh). `--body average|petite|tall|curvy|plus|athletic`
+`check` takes a second; `drape` about 20 s; `shots` about 80 s (opens a window; `--quality fine` is faster and coarser). `--body average|petite|tall|curvy|plus|athletic`
 picks a preset body; the default is the user's own measurements.
 
 ## Recipe format
@@ -118,14 +118,19 @@ SETTLE fastest point moves 0.3 mm/frame at the end
 OK drapes
 ```
 
-- `hangs` is where the piece ended up, also named by the nearest body height. Check the hem is where you meant.
+- `hangs` is where the piece ended up, also named by the nearest body height. Check the hem is where you meant; for
+  gathered tiers trust the `hangs` lines of `./garment shots` (the coarse mesh of `drape` lets them ride up).
 - `top moved` large and negative, `SLID DOWN`, `ON THE FLOOR`: nothing holds it up (see above).
 - `SEAMS ... open` over 15 mm: a seam joins edges that start far apart, or the wrong edges.
 - `--walk` simulates a few steps of walking too.
 
-Then `./garment shots` and **look at the sheet**: the numbers cannot tell you whether it looks like the garment asked for.
+Then `./garment shots`: it prints the same `PIECE ... hangs` lines from the fine drape and the photos. **Look at the
+sheet**: the numbers cannot tell you whether it looks like the garment asked for.
+
+Gathers: a piece sewn by its top edge to a shorter edge starts already gathered (`check` says `starts gathered 1.6x`),
+folded onto the ring of the shorter edge, so the gathers hang as folds. Nothing to set.
 
 ## Examples
 
 `garments/` holds working recipes to copy from: `tiered-skirt.json` (around, gathered tiers),
-`peplum-top.json` (tank include, a frill sewn to the hem).
+`peplum-top.json` (tank include, a frill sewn to the hem), `frilly-dress.json` (tank bodice and four gathered tiers).

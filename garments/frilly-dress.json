@@ -1,0 +1,25 @@
+{
+  "format": "failoring-garment/1",
+  "name": "Frilly dress",
+  "category": "dresses",
+  "fabric": "cotton_poplin",
+  "notes": "Made by an opencode agent (glm-5.3-flash) with ./garment, then shortened 10 cm with a fourth ruffle tier by voice. Fitted bodice cut at the waist, four gathered tiers, each 1.2 to 1.3 times wider than the one above. Waist to hem about 76 cm.",
+  "include": [{"draft": "tank", "opt": {"hemY": "y_waist + 0.01", "scoop": 0.09}}],
+  "pieces": [
+    {"id": "tier1", "name": "Tier 1", "shape": {"kind": "trapezoid", "top": "waist * 0.53", "bottom": "hip * 0.60", "h": 0.24},
+     "around": 2, "wrap": {"theta": 0, "y": "y_waist - 0.24", "clear": 0.018}},
+    {"id": "tier2", "name": "Tier 2", "shape": {"kind": "rect", "w": "hip * 0.60 * 1.3", "h": 0.18},
+     "around": 2, "wrap": {"theta": 0, "y": "y_waist - 0.42", "clear": 0.03}},
+    {"id": "tier3", "name": "Tier 3", "shape": {"kind": "rect", "w": "hip * 0.60 * 1.3 * 1.2", "h": 0.17},
+     "around": 2, "wrap": {"theta": 0, "y": "y_waist - 0.60", "clear": 0.04}},
+    {"id": "tier4", "name": "Tier 4", "shape": {"kind": "rect", "w": "hip * 0.60 * 1.3 * 1.2 * 1.25", "h": 0.17},
+     "around": 2, "wrap": {"theta": 0, "y": "y_waist - 0.77", "clear": 0.05}}
+  ],
+  "seams": [
+    {"a": ["front", "hem"], "b": ["tier1_front", "top"]},
+    {"a": ["back", "hem"], "b": ["tier1_back", "top"]},
+    {"a": ["tier1", "bottom"], "b": ["tier2", "top"]},
+    {"a": ["tier2", "bottom"], "b": ["tier3", "top"]},
+    {"a": ["tier3", "bottom"], "b": ["tier4", "top"]}
+  ]
+}

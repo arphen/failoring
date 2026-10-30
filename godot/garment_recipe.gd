@@ -28,7 +28,7 @@ const SHAPE_EDGES := {
 	"triangle": ["bottom", "right", "left"],
 }
 const GATHER_MAX := 3.5   # a seam whose one side is longer than this many times the other cannot be eased in
-const WRAP_KEYS := ["mode", "theta", "y", "clear", "ring", "loose", "side", "sTop", "phiSeam", "lift", "vcap", "P", "Py0", "Pdy",
+const WRAP_KEYS := ["mode", "theta", "y", "clear", "ring", "gather", "loose", "side", "sTop", "phiSeam", "lift", "vcap", "P", "Py0", "Pdy",
 	"tilt", "over"]
 
 
@@ -224,6 +224,7 @@ static func expand(recipe: Dictionary, body: Dictionary, wrap_helper: FailoringW
 				var t1: float = r0.x + (r0.y - r0.x) * ((1.0 - f0) if rev else f1)
 				var part := Seams.make_side(String(one[0]), int(one[1]), t0, t1)
 				seams.append({"a": many[k], "b": part, "reverse": rev} if sa.size() > 1 else {"a": part, "b": many[k], "reverse": rev})
+	_auto_gather(pieces, seams, names)
 	var cat := String(recipe.get("category", "custom"))
 	if not cat in CATEGORIES:
 		ctx["warnings"].append("category '%s' unknown, using custom (%s)" % [cat, ", ".join(CATEGORIES)])
@@ -231,6 +232,44 @@ static func expand(recipe: Dictionary, body: Dictionary, wrap_helper: FailoringW
 		"pieces": pieces, "seams": seams}
 	_check(plan, names, ctx)
 	return {"plan": plan, "errors": ctx["errors"], "warnings": ctx["warnings"], "edges": names, "vars": ctx["vars"]}
+
+
+# A piece round the body (wrap.ring) sewn by its top edge to a shorter edge starts gathered (wrap.gather, wrap.gd): on
+# the ring of that shorter edge, in folds. The ratio carries down a chain of tiers: a tier sewn to a gathered tier
+# starts on that tier's gathered ring. A wrap.gather in the recipe is kept.
+static func _auto_gather(pieces: Array, seams: Array, names: Dictionary) -> void:
+	var by_id := {}
+	for p in pieces:
+		by_id[p["id"]] = p
+	var auto := {}
+	for p in pieces:
+		if not (p["wrap"] as Dictionary).has("gather") and String(p["wrap"].get("mode", "")) == "" and float(p["wrap"].get("ring", 0.0)) > 0.0:
+			auto[p["id"]] = 1.0
+	for pass_i in 6:   # tiers: each pass carries the ratio one tier further down
+		for s in seams:
+			if s["a"].size() > 2 or s["b"].size() > 2 or not by_id.has(s["a"][0]) or not by_id.has(s["b"][0]):
+				continue
+			var la := Table.edge_len(by_id[s["a"][0]]["outline"], int(s["a"][1]))
+			var lb := Table.edge_len(by_id[s["b"][0]]["outline"], int(s["b"][1]))
+			var long_side: Array = s["a"] if la > lb else s["b"]
+			var short_side: Array = s["b"] if la > lb else s["a"]
+			var pid := String(long_side[0])
+			if not auto.has(pid) or not _is_top_edge(by_id[pid]["outline"], int(long_side[1])):
+				continue
+			var partner := float(auto.get(short_side[0], float(by_id[short_side[0]]["wrap"].get("gather", 1.0))))
+			var ratio: float = maxf(la, lb) / maxf(1e-6, minf(la, lb)) * partner
+			if ratio > 1.12:
+				auto[pid] = ratio
+	for pid in auto:
+		if float(auto[pid]) > 1.12:
+			by_id[pid]["wrap"]["gather"] = snappedf(float(auto[pid]), 0.01)
+
+
+# True when edge e is the piece's top edge (both ends in the top quarter of its height).
+static func _is_top_edge(o: Array, e: int) -> bool:
+	var bb := Table.bbox_of(o)
+	var lim: float = float(bb[3]) - 0.25 * (float(bb[3]) - float(bb[1]))
+	return float(o[e][1]) >= lim and float(o[(e + 1) % o.size()][1]) >= lim
 
 
 static func _unknown(d: Dictionary, known: Array, where: String, ctx: Dictionary) -> void:
@@ -418,7 +457,8 @@ static func describe(res: Dictionary) -> String:
 		var w: Dictionary = p["wrap"]
 		out.append("PIECE %s  %.0fx%.0f cm  wrap: theta=%s y=%.3f m (top at %.3f)%s" % [p["id"], (float(bb[2]) - float(bb[0])) * 100.0,
 			(float(bb[3]) - float(bb[1])) * 100.0, str(w.get("theta", w.get("mode", "?"))), float(w.get("y", 0.0)),
-			float(w.get("y", 0.0)) + float(bb[3]) - float(bb[1]), (" ring=%s" % str(w["ring"])) if w.has("ring") else ""])
+			float(w.get("y", 0.0)) + float(bb[3]) - float(bb[1]), ((" ring=%s" % str(w["ring"])) if w.has("ring") else "")
+			+ ((" starts gathered %.2fx" % float(w["gather"])) if w.has("gather") else "")])
 		# numbered families (neck0..neck11 of a drafted piece) on one line each
 		var edges := PackedStringArray()
 		var e := 0

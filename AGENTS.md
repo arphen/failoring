@@ -10,12 +10,13 @@ Use `./garment`; do not read `godot/editor.gd` or the solver for this. The guide
 
 1. Write a recipe `garments/<name>.json` (copy an example; sizes in metres, expressions over the body like `"waist * 0.55"`).
 2. `./garment check garments/<name>.json` until there is no ERROR.
-3. `./garment drape garments/<name>.json` until it says OK and every piece hangs where you meant (the `hangs` lines).
-4. `./garment shots garments/<name>.json` and look at the printed `sheet.png`: does it look like what was asked?
+3. `./garment drape garments/<name>.json` (quick, coarse) until it says OK.
+4. `./garment shots garments/<name>.json` (the real drape): check the `hangs` lines put each piece where you meant, and
+   look at the printed `sheet.png`: does it look like what was asked?
 5. `./garment wear garments/<name>.json`: the user's editor shows it on the mannequin.
 
 To change a garment the user is wearing, edit its recipe in `garments/` and run `./garment wear` again: the editor
-reloads it. Report what the garment is (pieces, fabric, lengths) and what `drape` said.
+reloads it. `wear` prints where the version it replaced was kept: copy that back to undo. Report what the garment is (pieces, fabric, lengths) and what `drape` said.
 
 ## Rules
 
