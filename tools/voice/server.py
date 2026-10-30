@@ -167,6 +167,8 @@ def load():
 
 
 if __name__ == "__main__":
+    if not AGENT_MODEL.startswith("opencode/") or not AGENT_MODEL.endswith("-free"):
+        sys.exit(f"FL_AGENT_MODEL={AGENT_MODEL}: only opencode's free models are allowed (opencode/<name>-free)")
     threading.Thread(target=load, daemon=True).start()
     print(f"voice server on http://127.0.0.1:{PORT} (agent: {AGENT_MODEL}, repo: {ROOT})", flush=True)
     ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()

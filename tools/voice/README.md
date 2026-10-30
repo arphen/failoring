@@ -26,5 +26,5 @@ what was heard, what the agent is doing, and its answer; the garment updates on 
 From a terminal instead: `~/.cache/failoring-voice/bin/python -I tools/voice/talk.py`.
 
 One conversation is kept, so follow-ups work ("make it shorter", "now in silk"). `curl -X POST 127.0.0.1:47615/reset`
-starts a new one. `FL_AGENT_MODEL=provider/model` picks the agent's model (`opencode models` lists them);
+starts a new one. `FL_AGENT_MODEL=opencode/<name>-free` picks the agent's model: only opencode's free models (`opencode models | grep free`), never the Databricks provider;
 `FL_VOICE_PORT` the port (47615).

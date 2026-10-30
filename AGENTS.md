@@ -20,6 +20,8 @@ reloads it. `wear` prints where the version it replaced was kept: copy that back
 
 ## Rules
 
+- Agents run on opencode's free models only (`opencode/...-free`); never the Databricks provider or its token.
+
 - Do not change Godot code (`godot/*.gd`) to make a garment. If the tool cannot express something, say what is missing.
 - Do not rebuild the native library or run the full test suite; `./garment` is the check.
 - Godot: `/Users/swozny/toolchain/godot-4.3-stable/Godot.app/Contents/MacOS/Godot` (`./garment` finds it).
