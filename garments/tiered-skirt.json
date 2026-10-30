@@ -1,0 +1,19 @@
+{
+ "format": "failoring-garment/1",
+ "name": "Tiered skirt (recipe)",
+ "category": "skirts",
+ "fabric": "linen_medium",
+ "notes": "Three tiers, each about 1.4 times wider than the one above and gathered into it. Waist to hem about 85 cm.",
+ "pieces": [
+  {"id": "tier1", "name": "Tier 1", "shape": {"kind": "trapezoid", "top": "waist * 0.53", "bottom": "hip * 0.58", "h": 0.26},
+   "around": 2, "wrap": {"theta": 0, "y": "y_waist - 0.26"}},
+  {"id": "tier2", "name": "Tier 2", "shape": {"kind": "rect", "w": "hip * 0.58 * 1.4", "h": 0.28},
+   "around": 2, "wrap": {"theta": 0, "y": "y_waist - 0.54"}},
+  {"id": "tier3", "name": "Tier 3", "shape": {"kind": "rect", "w": "hip * 0.58 * 1.4 * 1.4", "h": 0.31},
+   "around": 2, "wrap": {"theta": 0, "y": "y_waist - 0.85"}}
+ ],
+ "seams": [
+  {"a": ["tier1", "bottom"], "b": ["tier2", "top"]},
+  {"a": ["tier2", "bottom"], "b": ["tier3", "top"]}
+ ]
+}

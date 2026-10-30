@@ -11,8 +11,10 @@
 #             garment that remembers one of those)
 const DIR := "user://library"
 const FORMAT := "failoring-library/1"
-const CATEGORIES := ["All", "Tops", "Bottoms", "Skirts", "Custom"]
-const CATEGORY_KEYS := ["", "tops", "bottoms", "skirts", "custom"]
+const RECIPE_FORMAT := "failoring-garment/1"   # garment_recipe.gd: kept as written, expanded on the live body
+const WEAR_REQUEST := "user://library/.wear"   # ./garment wear: a running editor puts this garment on (editor.gd)
+const CATEGORIES := ["All", "Tops", "Dresses", "Bottoms", "Skirts", "Custom"]
+const CATEGORY_KEYS := ["", "tops", "dresses", "bottoms", "skirts", "custom"]
 const DRAFTED := ["pants", "tank", "shirt", "crop"]
 
 
@@ -56,6 +58,12 @@ static func user_items() -> Array:
 		if not f.ends_with(".json"):
 			continue
 		var j := _read(DIR + "/" + f)
+		if String(j.get("format", "")) == RECIPE_FORMAT:
+			var r := _item("user:" + f, String(j.get("name", f)), _category_key(String(j.get("category", "custom"))), "user", "", true)
+			r["user_file"] = f
+			r["recipe"] = true
+			out.append(r)
+			continue
 		if String(j.get("format", "")) != FORMAT:
 			continue
 		var from := String(j.get("from", ""))
@@ -77,12 +85,14 @@ static func category_name(key: String) -> String:
 
 
 static func _category_key(c: String) -> String:
-	return c if c in ["tops", "bottoms", "skirts", "custom"] else "custom"
+	return c if c in ["tops", "dresses", "bottoms", "skirts", "custom"] else "custom"
 
 
 # Plan dictionary for a saved garment (un-normalized: the caller normalizes). {} if the file is missing.
 static func plan_for_user(id: String) -> Dictionary:
 	var j := _read(DIR + "/" + id.trim_prefix("user:"))
+	if String(j.get("format", "")) == RECIPE_FORMAT:
+		return {"recipe": j}   # the editor expands it on its body (garment_recipe.gd)
 	if j.is_empty() or String(j.get("format", "")) != FORMAT:
 		return {}
 	return {"name": String(j.get("name", "Saved garment")), "notes": String(j.get("notes", "")),
@@ -103,6 +113,28 @@ static func save(name: String, category: String, fitted: String, from: String, n
 		"from": from, "notes": notes, "fabric": fabric, "pieces": pieces, "seams": seams}, " "))
 	f.close()
 	return file
+
+
+# Writes a garment recipe (garment_recipe.gd) under a file name from its name, so installing it again replaces it.
+# Returns the file name, or "" on failure.
+static func install_recipe(recipe: Dictionary) -> String:
+	DirAccess.make_dir_recursive_absolute(DIR)
+	var r := recipe.duplicate(true)
+	r["format"] = RECIPE_FORMAT
+	var file := "agent-%s.json" % slug(String(r.get("name", "garment")))
+	var f := FileAccess.open(DIR + "/" + file, FileAccess.WRITE)
+	if f == null:
+		return ""
+	f.store_string(JSON.stringify(r, " "))
+	f.close()
+	return file
+
+
+static func request_wear(file: String) -> void:
+	var f := FileAccess.open(WEAR_REQUEST, FileAccess.WRITE)
+	if f != null:
+		f.store_string(file)
+		f.close()
 
 
 static func rename(file: String, name: String) -> bool:

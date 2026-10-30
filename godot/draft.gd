@@ -135,8 +135,10 @@ static func pants(body: Dictionary, wrap_helper: FailoringWrap, opt: Dictionary)
 	seams.append_array(pair.call("frontR", "backR", ["out0", "out1", "out2a", "out2b", "inseam0", "inseam1"]))
 	seams.append_array(pair.call("frontL", "frontR", ["crotch0", "crotch1", "crotch2", "crotch3", "rise"]))
 	seams.append_array(pair.call("backL", "backR", ["crotch0", "crotch1", "crotch2", "crotch3", "rise"]))
+	# opt.names keeps each piece's edge names (garment_recipe.gd sews to them by name)
 	for pp in pieces:
-		(pp as Dictionary).erase("names")
+		if not opt.get("names", false):
+			(pp as Dictionary).erase("names")
 	return {
 		"name": "Straight trousers - 4 panels (drafted to this body)", "fabric": String(opt.get("fabric", "denim_12oz")),
 		"notes": "Front and back panel for each leg, drafted from this mannequin: hip %.0f cm, waist %.0f cm, thigh %.0f cm, knee %.0f cm. Seams: outseams, inseams, front and back rise. No waistband, pockets or darts." % [hg * 100.0, wg * 100.0, m["thigh"] * 100.0, m["knee"] * 100.0],
@@ -305,8 +307,10 @@ static func tank(body: Dictionary, wrap_helper: FailoringWrap, opt: Dictionary) 
 			seams.append({"a": [pid, idx.call(s2, "seamR")], "b": [pid, idx.call(s2, "seamL")], "reverse": true})
 		pieces[2]["table"] = {"x": 1.3, "y": 0.0}
 		pieces[3]["table"] = {"x": 1.3, "y": 0.4}
+	# opt.names keeps each piece's edge names (garment_recipe.gd sews to them by name)
 	for pp in pieces:
-		(pp as Dictionary).erase("names")
+		if not opt.get("names", false):
+			(pp as Dictionary).erase("names")
 	return {
 		"name": String(opt["name"]) if opt.has("name") else ("T-shirt - body + 2 sleeves (drafted to this body)" if opt.get("sleeves", false) else "Tank top - 2 panels (drafted to this body)"),
 		"fabric": String(opt.get("fabric", "cotton_poplin")),

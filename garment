@@ -1,0 +1,24 @@
+#!/bin/bash
+# Garment tool for agents and people: ./garment help. Runs the Godot project headless (docs/GARMENT_RECIPES.md).
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+GODOT="${GODOT:-/Users/swozny/toolchain/godot-4.3-stable/Godot.app/Contents/MacOS/Godot}"
+if [ ! -x "$GODOT" ]; then GODOT="$(command -v godot || command -v godot4)"; fi
+export FL_CWD="$(pwd)"
+# a fresh checkout has no import cache: Godot imports once (about a minute) and loads the native library from then on
+if [ ! -f "$ROOT/godot/.godot/extension_list.cfg" ] || [ ! -f "$ROOT/godot/.godot/global_script_class_cache.cfg" ]; then
+  echo "first run: importing the Godot project (once, about a minute)..." >&2
+  "$GODOT" --headless --path "$ROOT/godot" --import >/dev/null 2>&1
+  "$GODOT" --headless --path "$ROOT/godot" --import >/dev/null 2>&1
+fi
+case "$1" in
+  editor)
+    "$GODOT" --path "$ROOT/godot" res://editor.tscn >/dev/null 2>&1 & echo "editor started (pid $!)"; exit 0 ;;
+  shots)
+    "$GODOT" --path "$ROOT/godot" res://tools/garment_shots.tscn -- "$@" 2>&1 | grep -E '^(SHOT|ERROR|WARNING|OK|DRAPE|PIECE)'
+    exit "${PIPESTATUS[0]}" ;;
+  *)
+    # headless; Godot's own log lines (version banner, shader cache) are dropped, the tool's lines kept
+    "$GODOT" --headless --path "$ROOT/godot" res://tools/garment.tscn -- "$@" 2>&1 \
+      | grep -v -E '^(Godot Engine|WARNING: .*(Shader|shader|ObjectDB)|     at: |.*AVCaptureDevice|$)'
+    exit "${PIPESTATUS[0]}" ;;
+esac

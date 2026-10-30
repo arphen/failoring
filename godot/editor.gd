@@ -11,6 +11,7 @@ const BodyGen = preload("res://body_gen.gd")
 const MeasurementsForm = preload("res://measurements_form.gd")
 const FaceLikeness = preload("res://face.gd")
 const Draft = preload("res://draft.gd")
+const Recipe = preload("res://garment_recipe.gd")
 const Wrap = preload("res://wrap.gd")
 const Info = preload("res://info.gd")
 const Builtin = preload("res://builtin_plans.gd")
@@ -318,6 +319,8 @@ func _ready() -> void:
 
 
 func _apply_auto_env() -> void:
+	if OS.has_environment("FL_GARMENT"):  # a recipe file to start with (./garment shots)
+		plan_key = "file:" + OS.get_environment("FL_GARMENT")
 	if not OS.has_environment("FL_AUTO"):
 		return
 	var parts := OS.get_environment("FL_AUTO").split(",")
@@ -2807,6 +2810,8 @@ func _store_active() -> void:
 static func _redraft_key(key: String, p: Dictionary) -> String:
 	if key in Library.DRAFTED or key.begins_with("fs-"):
 		return key
+	if bool(p.get("recipe", false)):
+		return key  # a recipe is expanded on the body again
 	if Library.is_user(key):
 		return String(p.get("from", ""))  # a saved garment remembers what it was drafted from
 	return ""
@@ -3146,6 +3151,7 @@ var _fps_t0 := 0
 
 
 func _process(_delta: float) -> void:
+	_poll_agent_garments(_delta)
 	if OS.has_environment("FL_FPS"):          # look work: average frame rate over frames 120..420, printed once
 		_fps_n += 1
 		if _fps_n == 120:
@@ -3569,8 +3575,21 @@ func _plan_for_key(key: String) -> Dictionary:
 		p = PlanLoader.load_json("res://assets/%s/plan_%s.json" % [_fs_preset(meas), key.trim_prefix("fs-")])
 	elif Library.is_user(key):
 		p = Library.plan_for_user(key)
+	elif key.begins_with("file:"):  # a recipe file outside the library (FL_GARMENT, ./garment shots)
+		p = {"recipe": PlanLoader.load_json(key.trim_prefix("file:"))}
 	elif Builtin.all().has(key):
 		p = (Builtin.all()[key] as Dictionary).duplicate(true)
+	if p.get("recipe") is Dictionary:
+		# a garment recipe (./garment, garment_recipe.gd): expanded on this body, so it follows body changes like a draft
+		if body_stand == null:
+			return {}
+		var res := Recipe.expand(p["recipe"], body_stand, _helper_wrap())
+		for e in res["errors"]:
+			push_warning("recipe %s: %s" % [key, e])
+		if (res["plan"]["pieces"] as Array).is_empty():
+			return {}
+		p = res["plan"]
+		p["recipe"] = true
 	return PlanLoader.normalize_plan(p) if not p.is_empty() else {}
 
 
@@ -3610,12 +3629,66 @@ func regen_and_rebuild() -> void:
 # single-garment editor always did. FreeSewing garments keep their outline (re-draft on request, see _redraft_entry).
 # A garment with user edits keeps its pattern: the body change is shown in the status line, and Re-draft (which asks
 # first) fits it to the new body.
+func _follows_body(e: Dictionary) -> bool:
+	return String(e["redraft"]) in Library.DRAFTED or bool((e["plan"] as Dictionary).get("recipe", false))
+
+
+# ./garment install / wear (agents): a recipe being worn is reloaded when its file changes, and a wear request puts a
+# garment on the mannequin (replacing the one with the same key). Polled once a second from _process.
+var _agent_poll := 0.0
+var _agent_mtimes := {}   # library file -> modified time when last loaded
+
+
+func _poll_agent_garments(delta: float) -> void:
+	_agent_poll -= delta
+	if _agent_poll > 0.0 or M.is_empty() or body_stand == null or live.active or body_mode.active:
+		return
+	_agent_poll = 1.0
+	var reload := []
+	for i in outfit.size():
+		var key := String(outfit[i]["key"])
+		if not Library.is_user(key) or not bool((outfit[i]["plan"] as Dictionary).get("recipe", false)):
+			continue
+		var path := Library.DIR + "/" + key.trim_prefix("user:")
+		var mt := FileAccess.get_modified_time(path)
+		if _agent_mtimes.has(path) and int(_agent_mtimes[path]) != mt:
+			reload.append(i)
+		_agent_mtimes[path] = mt
+	var want := ""
+	if FileAccess.file_exists(Library.WEAR_REQUEST):
+		want = FileAccess.get_file_as_string(Library.WEAR_REQUEST).strip_edges()
+		DirAccess.remove_absolute(Library.WEAR_REQUEST)
+	if want != "":
+		var key := "user:" + want
+		_agent_mtimes[Library.DIR + "/" + want] = FileAccess.get_modified_time(Library.DIR + "/" + want)
+		var at := -1
+		for i in outfit.size():
+			if String(outfit[i]["key"]) == key:
+				at = i
+		if at < 0:
+			_on_library_add(key)
+		elif not at in reload:
+			reload.append(at)
+		if library_panel != null:
+			library_panel.refresh()
+	for i in reload:
+		var p := _plan_for_key(String(outfit[i]["key"]))
+		if p.is_empty():
+			continue
+		_store_active()
+		_entry_set_plan(i, p)
+		if i == active:
+			_activate(i, false)
+		_notice = "%s was updated by the garment tool." % String(outfit[i]["name"])
+		changed("outfit")
+
+
 func _redraft_drafted() -> void:
 	var was := active
 	var kept := false
 	for i in outfit.size():
 		var e: Dictionary = outfit[i]
-		if String(e["redraft"]) in Library.DRAFTED and not bool(e["locked"]):
+		if _follows_body(e) and not bool(e["locked"]):
 			if bool(e.get("edited", false)):
 				kept = kept or i == was
 				continue
@@ -3624,7 +3697,7 @@ func _redraft_drafted() -> void:
 				_entry_set_plan(i, p)
 	if kept:
 		_notice = "Body changed: your edits to this pattern are kept. Press Re-draft to fit it to the new body."
-	if was >= 0 and was < outfit.size() and String(outfit[was]["redraft"]) in Library.DRAFTED and not kept:
+	if was >= 0 and was < outfit.size() and _follows_body(outfit[was]) and not kept:
 		# reload the working copy without clearing the undo history
 		pieces = outfit[was]["pieces"]
 		seams = outfit[was]["seams"]
