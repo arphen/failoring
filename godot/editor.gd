@@ -39,6 +39,7 @@ const Studio = preload("res://studio.gd")
 const SkinMap = preload("res://skin.gd")
 const Eyes = preload("res://eyes.gd")
 const LiveDrape = preload("res://live_drape.gd")
+const BodyMode = preload("res://body_mode.gd")
 
 # body_h: spacing (m) of the body's signed-distance grid, baked for every walking frame. 7 mm is the reference (the
 # numbers in docs/PERF_NOTES.md are measured with it). Draft and Preview use 10 mm: the bake takes about 1.8x less CPU,
@@ -204,6 +205,9 @@ const CAM_PITCH_MIN := -1.5   # browser view3d.js clamps elevation to -0.15..1.5
 const CAM_PITCH_MAX := 0.15
 const CAM_ZOOM_MIN := 0.25
 const CAM_ZOOM_MAX := 3.0
+# Zoomed in closer than this the camera stays here and the lens narrows instead (an optical zoom): a camera 30 cm from a
+# face draws the nose big and the ears small, the selfie look, and the likeness read as uncanny up close
+const CAM_NEAR_DIST := 0.6
 const CAM_PAN_MAX := 3.0      # metres the target may wander from its framed position
 const CAM_IDLE_MS := 3000     # auto-orbit resumes this long after the last camera input
 var pan_off := Vector3.ZERO
@@ -213,6 +217,7 @@ var _foc_pivot := Vector3(0.0, 0.9, 0.0)
 var _foc_dist := 4.0
 var _foc_ready := false
 var _fov_goal := 27.0         # the lens the current view wants: 50 mm for the mannequin, wider across the room
+var _fov_base := 27.0         # the lens gliding to _fov_goal; cam.fov is it, narrowed when zoomed in closer than CAM_NEAR_DIST
 var _cam_goal := {}           # an animated move to a view: yaw, pitch, zoom, pan (any user input cancels it)
 var user_cam_until := 0       # ms timestamp: auto-orbit is paused until then
 var pointer_over_view := false
@@ -227,6 +232,9 @@ var view_image: TextureRect
 var layout = Layout.new()   # pane splits, toggles and their saved state (layout.gd)
 var place_view = PlaceView.new()   # moving and turning panels in the 3D view (place_view.gd)
 var live = LiveDrape.new()         # working on the garment live on the mannequin (live_drape.gd, docs/LIVE_DRAPE_PLAN.md)
+var body_mode = BodyMode.new()     # measuring and dressing up the mannequin on itself (body_mode.gd, docs/BODY_MODE_PLAN.md)
+var body_btn: Button
+var cam_custom := {}               # the camera's focus {p, d} while cam_focus is "custom" (body mode aims it)
 var live_btn: Button
 var place_btn: Button
 var arrange_btn: Button
@@ -278,6 +286,7 @@ func _ready() -> void:
 	_build_scene()
 	place_view.setup(self)
 	live.setup(self)
+	body_mode.setup(self)
 	_apply_render_quality()
 	_apply_auto_env()
 	_build_ui()
@@ -590,6 +599,7 @@ func _build_scene() -> void:
 		pitch = float(vv["pitch"])
 		_fov_goal = CamViews.fov_of(vv, Look.CAM_FOV)
 		cam.fov = _fov_goal
+		_fov_base = _fov_goal
 		if OS.has_environment("FL_ZOOM"):
 			zoom = float(OS.get_environment("FL_ZOOM"))
 	if OS.has_environment("FL_NOSHADOW"):     # look work: all lamps without shadows
@@ -2390,6 +2400,12 @@ func _rebuild_body_tab() -> void:
 
 func _build_body_tab_content() -> void:
 	var vb := _tab_vbox("Body")
+	var bm := Button.new()
+	bm.name = "BodyModeBtn"
+	bm.text = "Open body mode  (B)"
+	bm.tooltip_text = "Measure yourself on the mannequin with a tailor's tape, step by step; pick a figure; try on faces, hair, eyes and skin"
+	bm.pressed.connect(func() -> void: _set_body_mode(true))
+	vb.add_child(bm)
 	var mine := Button.new()
 	mine.name = "MyMeasurementsBtn"
 	mine.text = "Enter my measurements..."
@@ -3163,7 +3179,8 @@ func _idle_gains(delta: float) -> void:
 		if bool(e["visible"]):
 			dressed = true
 			break
-	idle.body_gain = move_toward(idle.body_gain, 0.0 if dressed else 1.0, delta * 1.5)
+	# body mode: still, so the tape stays where it was laid (the head, eyes and breath go on)
+	idle.body_gain = move_toward(idle.body_gain, 0.0 if dressed or body_mode.active else 1.0, delta * 1.5)
 	body_node.breath_gain = move_toward(body_node.breath_gain, 0.3 if dressed else 1.0, delta * 1.5)
 
 
@@ -3586,6 +3603,7 @@ func regen_and_rebuild() -> void:
 	_refresh_garment_tabs()
 	library_panel.refresh()  # fitted labels and drafted previews follow the body
 	rebuild()
+	body_mode.on_body_changed()
 
 
 # Drafted garments (pants, tank, shirt) are drafted from the live body: re-draft them on every body change, as the
@@ -3783,6 +3801,9 @@ func _physics_process(_delta: float) -> void:
 	if render_mode != null:
 		render_mode.tick(_delta)
 	if _showcase != null and _showcase.drive(_delta):
+		return
+	if body_mode.active:
+		body_mode.tick(_delta)
 		return
 	if sim == null:
 		return
@@ -4038,6 +4059,8 @@ var _last_shown := ""
 func _show_current() -> void:
 	if live.active:
 		live.show()
+		return
+	if body_mode.active:
 		return
 	if tl_range != null and (not tl_range.has_focus() or playing) and tl_range.value != tl_t * 1000.0:
 		tl_range.set_value_no_signal(tl_t * 1000.0)
@@ -4705,18 +4728,18 @@ func _update_camera() -> void:
 	var h: float = float(meas.get("height", 1.68))
 	var s: float = _smooth(tl_t - 0.9)
 	var asp := float(sub_view.size.x) / maxf(1.0, float(sub_view.size.y))
-	var foc := CamViews.focus(cam_focus, h, asp, _fov_goal, s)
+	var foc := cam_custom if cam_focus == "custom" and not cam_custom.is_empty() else CamViews.focus(cam_focus, h, asp, _fov_goal, s)
 	var dt := 1.0 / maxf(1.0, float(Engine.physics_ticks_per_second))
 	if not _foc_ready:
 		_foc_ready = true
 		_foc_pivot = foc["p"]
 		_foc_dist = foc["d"]
+		_fov_base = _fov_goal
 	else:
 		var kf := 1.0 - exp(-7.0 * dt)
 		_foc_pivot = _foc_pivot.lerp(foc["p"], kf)
 		_foc_dist = lerpf(_foc_dist, float(foc["d"]), kf)
-		if not shoot_busy:
-			cam.fov = lerpf(cam.fov, _fov_goal, kf)
+		_fov_base = lerpf(_fov_base, _fov_goal, kf)
 	if not _cam_goal.is_empty():
 		var kg := 1.0 - exp(-8.0 * dt)
 		yaw += (float(_cam_goal["yaw"]) - yaw) * kg
@@ -4735,6 +4758,10 @@ func _update_camera() -> void:
 	# down a little more
 	cam_pivot.rotation = Vector3(pitch - (0.2 * (1.0 - s) if cam_focus == "auto" else 0.0), yaw, 0.0)
 	view_dist = _foc_dist * zoom
+	if not shoot_busy:
+		var near_k := minf(1.0, view_dist / CAM_NEAR_DIST)
+		view_dist = maxf(view_dist, CAM_NEAR_DIST)
+		cam.fov = rad_to_deg(2.0 * atan(tan(deg_to_rad(_fov_base) * 0.5) * near_k))
 	# the studio is a room: a wall stops the orbit camera. The focus follows the subject.
 	view_dist = minf(view_dist, Studio.max_orbit_dist(cam_pivot.position, cam_pivot.transform.basis.z))
 	Look.focus(view_dist)
@@ -4809,6 +4836,14 @@ func _show_view_texture() -> void:
 	live_btn.focus_mode = Control.FOCUS_NONE
 	live_btn.tooltip_text = "Work on the garment live on the mannequin (L): click a panel, then grab, pin, tack, lengthen or shorten it, slide it out from the body. The cloth keeps moving while you work."
 	live_btn.toggled.connect(func(on: bool) -> void: _set_live_mode(on))
+	body_btn = Button.new()
+	body_btn.name = "BodyBtn"
+	body_btn.text = "Body"
+	body_btn.toggle_mode = true
+	body_btn.focus_mode = Control.FOCUS_NONE
+	body_btn.tooltip_text = "Body mode (B): take your measurements on the mannequin with a tailor's tape, pick a figure, try on faces, hair, eyes and skin"
+	body_btn.toggled.connect(func(on: bool) -> void: _set_body_mode(on))
+	bar.add_child(body_btn)
 	bar.add_child(live_btn)
 	bar.add_child(arrange_btn)
 	bar.add_child(place_btn)
@@ -4844,6 +4879,7 @@ func _show_view_texture() -> void:
 	view_pane.add_child(bar)
 	view_pane.add_child(_build_view_chips())
 	live.build_ui(view_pane)
+	body_mode.build_ui(view_pane)
 	render_mode = RenderModeLib.new(self, _showcase, view_pane)
 
 
@@ -5244,6 +5280,7 @@ func _set_live_mode(on: bool) -> void:
 			_set_place_mode(false)
 		if stitch_mode:
 			_set_stitch_mode(false)
+		_set_body_mode(false)
 		live.enter()
 		notify("Live drape: click a panel, then use the tools at the top. L or Esc leaves.")
 	else:
@@ -5261,6 +5298,40 @@ func _set_live_mode(on: bool) -> void:
 func _leave_live() -> void:
 	if live.active:
 		_set_live_mode(false)
+
+
+# Body mode (body_mode.gd): the garment goes and the mannequin stands still while the body is measured and dressed up;
+# leaving shows the garment and the timeline as they were.
+func _set_body_mode(on: bool) -> void:
+	if on == body_mode.active:
+		if body_btn != null:
+			body_btn.set_pressed_no_signal(on)
+		return
+	if on:
+		if body_stand == null:
+			if body_btn != null:
+				body_btn.set_pressed_no_signal(false)
+			return
+		_set_live_mode(false)
+		if place_view.active or place_view.arrange:
+			_set_arrange_mode(false)
+			_set_place_mode(false)
+		if stitch_mode:
+			_set_stitch_mode(false)
+		playing = false
+		body_node.show_pose(_stand_v3)
+		_body_key = "stand"
+		body_mode.enter()
+		notify("Body mode: click a dot to measure there, or Guided measuring. B or Esc leaves.")
+	else:
+		body_mode.leave()
+		cloth_node.visible = sim != null and not meta.is_empty()
+		_body_key = ""
+		_last_shown = ""
+		_show_current()
+		notify("")
+	if body_btn != null:
+		body_btn.set_pressed_no_signal(on)
 
 
 # Drops the selected piece's 3D move and turn (one undoable action).
@@ -5291,6 +5362,12 @@ func _click_select(local: Vector2) -> void:
 
 
 func _on_view_gui_input(e: InputEvent) -> void:
+	if body_mode.active:
+		if body_mode.input(e):
+			view_pane.accept_event()
+		elif _camera_input(e):
+			view_pane.accept_event()
+		return
 	if live.active:
 		if live.input(e):
 			view_pane.accept_event()
@@ -5346,6 +5423,18 @@ func _unhandled_key_input(e: InputEvent) -> void:
 		return
 	if not pointer_over_view or not (e is InputEventKey) or not e.pressed or e.echo:
 		return
+	if e.keycode == KEY_B:
+		_set_body_mode(not body_mode.active)
+		get_viewport().set_input_as_handled()
+		return
+	if body_mode.active:
+		if e.keycode == KEY_ESCAPE:
+			_set_body_mode(false)
+			get_viewport().set_input_as_handled()
+			return
+		if body_mode.key(e):
+			get_viewport().set_input_as_handled()
+			return
 	if e.keycode == KEY_F or e.keycode == KEY_HOME:
 		_touch_user_cam()
 		_reset_view()

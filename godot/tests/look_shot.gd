@@ -214,6 +214,13 @@ func _init() -> void:
 	if OS.has_environment("FL_SHOTS"):
 		var want := OS.get_environment("FL_SHOTS").split(",")
 		_list = SHOTS.filter(func(s: Array) -> bool: return want.has(s[0]))
+	# FL_CAM="name:x,y,z:tx,ty,tz:fov" adds a camera of its own (a view seen in the editor)
+	if OS.has_environment("FL_CAM"):
+		for spec in OS.get_environment("FL_CAM").split(";", false):
+			var c := spec.split(":")
+			var a := c[1].split_floats(",")
+			var b := c[2].split_floats(",")
+			_list = _list + [[c[0], Vector3(a[0], a[1], a[2]), Vector3(b[0], b[1], b[2]), float(c[3])]]
 	print("LOOK body ", v.size(), " verts, height ", float(meas.get("height", 1.68)), ", quality ", qual)
 	process_frame.connect(_tick)
 

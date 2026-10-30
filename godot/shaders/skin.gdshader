@@ -446,7 +446,7 @@ void fragment() {
 		float tz = exp(-pow(rp.x / 0.022, 2.0)) * smoothstep(0.615, 0.64, rp.y) * (1.0 - smoothstep(0.71, 0.73, rp.y));
 		rough -= 0.10 * tz;
 	}
-	rough = mix(rough, 0.2, lip);                  // wet lips
+	rough = mix(rough, 0.34, lip);                 // moist lips (0.2 read as lip gloss under the studio lamps)
 	rough = mix(rough, 0.16, wet_lid);
 	rough = mix(rough, 0.25, nail);
 	rough = mix(rough, 0.72, clamp(hair_m + brow_m, 0.0, 1.0));
