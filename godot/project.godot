@@ -15,3 +15,7 @@ window/size/viewport_height=720
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
 window/stretch/scale_mode="fractional"
+
+[audio]
+
+driver/enable_input=true

@@ -55,6 +55,17 @@ static func body_vars(body: Dictionary, wrap_helper: FailoringWrap) -> Dictionar
 # The plan has numeric outlines and seams (no expressions, shapes, includes or names) and is not normalized.
 static func expand(recipe: Dictionary, body: Dictionary, wrap_helper: FailoringWrap) -> Dictionary:
 	var ctx := {"vars": body_vars(body, wrap_helper), "errors": [], "warnings": []}
+	# keys the format does not have are ignored: say so, an invented key is a misunderstanding worth knowing about
+	_unknown(recipe, ["format", "name", "category", "fabric", "notes", "include", "pieces", "seams"], "recipe", ctx)
+	for r in recipe.get("pieces", []):
+		if r is Dictionary:
+			_unknown(r, ["id", "name", "shape", "outline", "edges", "holes", "around", "wrap", "grain"], "piece '%s'" % r.get("id", "?"), ctx)
+	for r in recipe.get("seams", []):
+		if r is Dictionary:
+			_unknown(r, ["a", "b", "reverse"], "seam %s" % JSON.stringify(r), ctx)
+	for r in recipe.get("include", []):
+		if r is Dictionary:
+			_unknown(r, ["draft", "opt", "prefix"], "include", ctx)
 	var pieces := []
 	var names := {}       # pid -> [edge name per edge index]
 	var groups := {}      # around id -> [copy ids]
@@ -132,9 +143,16 @@ static func expand(recipe: Dictionary, body: Dictionary, wrap_helper: FailoringW
 			var th0 := float(wrap.get("theta", 0.0))
 			for i in n:
 				var c: Dictionary = base.duplicate(true)
-				c["id"] = "%s%d" % [pid, i + 1]
-				c["name"] = "%s %d" % [base["name"], i + 1]
-				c["wrap"]["theta"] = fposmod(th0 + 360.0 * float(i) / float(n), 360.0)
+				var th := fposmod(th0 + 360.0 * float(i) / float(n), 360.0)
+				# skirt_front / skirt_back for a front and a back panel, else skirt_1 .. skirt_N from the first angle on
+				var tag := ("front" if th < 1.0 or th > 359.0 else ("back" if absf(th - 180.0) < 1.0 else "")) if n == 2 else ""
+				if n == 2 and tag == "":
+					tag = str(i + 1)
+				if n != 2:
+					tag = str(i + 1)
+				c["id"] = "%s_%s" % [pid, tag]
+				c["name"] = "%s (%s)" % [base["name"], tag]
+				c["wrap"]["theta"] = th
 				if not c["wrap"].has("ring"):
 					c["wrap"]["ring"] = float(n)
 				c["table"] = {"x": tx, "y": 0.0}
@@ -213,6 +231,12 @@ static func expand(recipe: Dictionary, body: Dictionary, wrap_helper: FailoringW
 		"pieces": pieces, "seams": seams}
 	_check(plan, names, ctx)
 	return {"plan": plan, "errors": ctx["errors"], "warnings": ctx["warnings"], "edges": names, "vars": ctx["vars"]}
+
+
+static func _unknown(d: Dictionary, known: Array, where: String, ctx: Dictionary) -> void:
+	for k in d:
+		if not k in known:
+			ctx["warnings"].append("%s: key '%s' is not part of the format and is ignored (keys: %s)" % [where, k, ", ".join(PackedStringArray(known))])
 
 
 static func _draft(kind: String, body: Dictionary, wrap_helper: FailoringWrap, opt: Dictionary) -> Dictionary:

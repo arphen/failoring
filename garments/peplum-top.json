@@ -10,7 +10,7 @@
    "around": 2, "wrap": {"theta": 0, "y": "y_waist + 0.01 - 0.14", "clear": 0.02}}
  ],
  "seams": [
-  {"a": ["front", "hem"], "b": ["peplum1", "top"]},
-  {"a": ["back", "hem"], "b": ["peplum2", "top"]}
+  {"a": ["front", "hem"], "b": ["peplum_front", "top"]},
+  {"a": ["back", "hem"], "b": ["peplum_back", "top"]}
  ]
 }

@@ -16,7 +16,7 @@ $EDITOR garments/my-dress.json      # write the recipe
 ```
 
 Every command prints `ERROR ...` lines that say what to change, and exits 1 when there is one. Fix, run again.
-`check` takes a second; `drape` about 15 s; `shots` about a minute (opens a window). `--body average|petite|tall|curvy|plus|athletic`
+`check` takes a second; `drape` about 20 s; `shots` about a minute (opens a window; `--quality photo` for a finer mesh). `--body average|petite|tall|curvy|plus|athletic`
 picks a preset body; the default is the user's own measurements.
 
 ## Recipe format
@@ -34,8 +34,8 @@ picks a preset body; the default is the user's own measurements.
      "around": 2, "wrap": {"theta": 0, "y": "y_waist - 0.45"}}
   ],
   "seams": [
-    {"a": ["front", "hem"], "b": ["skirt1", "top"]},
-    {"a": ["back", "hem"],  "b": ["skirt2", "top"]}
+    {"a": ["front", "hem"], "b": ["skirt_front", "top"]},
+    {"a": ["back", "hem"],  "b": ["skirt_back", "top"]}
   ]
 }
 ```
@@ -56,7 +56,7 @@ canvas_heavy, lambskin_leather.
 | `id` | unique name, used by seams |
 | `shape` | `{"kind": "rect", "w", "h"}`, `{"kind": "trapezoid", "top", "bottom", "h"}` (wide bottom = flare), `{"kind": "triangle", "b", "h"}`. Edges are named: rect and trapezoid `bottom right top left`, triangle `bottom right left`. |
 | `outline` | instead of `shape`: `[[x, y], ...]` counter-clockwise, y up. Edge `i` runs from point `i` to point `i+1`. Name them with `"edges": ["hem", "side", ...]` (one name per edge). |
-| `around` | `N`: N copies round the body (ids `skirt1`..`skirtN`, `skirt1` at the front), each side seam sewn for you (copy i `right` to copy i+1 `left`). Use 2 (front/back) to 6 (gores). |
+| `around` | `N`: N copies round the body, each side seam sewn for you (copy i `right` to copy i+1 `left`). With 2 the ids are `skirt_front` and `skirt_back`; otherwise `skirt_1`..`skirt_N`, `skirt_1` at `theta`. Use 2 (front/back) to 6 (gores). `./garment check` lists the ids. |
 | `wrap.y` | height of the piece's **lowest point** above the floor where it starts. Its top is at `y + h`. Put each piece where it will hang: the top of a skirt at the waist means `y = y_waist - h`. |
 | `wrap.theta` | where round the body its centre starts, degrees: 0 front, 180 back, 90 and 270 the sides. With `around`, the first copy's angle. |
 | `wrap.ring` | set by `around`; for a single piece that goes all the way round, 1. |
@@ -85,7 +85,8 @@ Fitted parts drafted from the body, with all their own seams. Their piece ids an
 - part of an edge: `{"edge": "bottom", "from": 0.0, "to": 0.5}`.
 
 A piece id made with `around` (`"skirt"`) stands for all its copies: `{"a": ["skirt", "bottom"], "b": ["frill", "top"]}`
-sews skirt1 to frill1 and skirt2 to frill2 (both need the same `around`).
+sews skirt_front to frill_front and skirt_back to frill_back (both need the same `around`). To sew one copy, use its
+own id (`skirt_front`).
 
 `reverse` defaults to true, which is right for two pieces side by side or one above the other. Leave it out.
 
@@ -100,13 +101,18 @@ over 3.5x is an ERROR. Every edge can be sewn once; leave hems and necklines ope
 - Start each piece where it will hang, next to the pieces it is sewn to (sewn edges at the same height). Seams pull
   the edges together; edges that start far apart tangle.
 - Flare comes from a wider bottom (trapezoid) or more panels; frills from gathering (long edge to short edge).
-- Fabric: poplin and linen hold a shape; chiffon and charmeuse fall in soft folds; jersey clings.
+- Fabric: cotton_poplin, cotton_crepe and linen_medium hold a shape and make crisp frills; silk_charmeuse falls in soft
+  folds; cotton_jersey clings. polyester_chiffon is so light that it crumples into small creases all over in the
+  simulation: avoid it for frills.
+- Tiers: each tier's top sewn to the hem of the tier above, 1.3x to 1.6x wider. Very wide lower tiers (2x and more,
+  or over 1.5 m round) puff up and hide the tiers above. Gathered tiers ride up a few cm while they settle: make the
+  skirt a little longer than the hem you want and read the `hangs` lines.
 - Keep pieces at least 3 cm in each direction and under 2 m; a hem tier 10 to 25 cm deep reads as a frill.
 
 ## Reading `drape`
 
 ```
-PIECE skirt1  hangs 0.62..1.09 m (knee+15cm .. waist+0cm), top moved -0.4 cm
+PIECE skirt_front  hangs 0.62..1.09 m (knee+15cm .. waist+0cm), top moved -0.4 cm
 SEAMS widest gap 6.0 mm  (closed)
 SETTLE fastest point moves 0.3 mm/frame at the end
 OK drapes

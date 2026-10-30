@@ -12,6 +12,7 @@ const MeasurementsForm = preload("res://measurements_form.gd")
 const FaceLikeness = preload("res://face.gd")
 const Draft = preload("res://draft.gd")
 const Recipe = preload("res://garment_recipe.gd")
+const Voice = preload("res://voice.gd")
 const Wrap = preload("res://wrap.gd")
 const Info = preload("res://info.gd")
 const Builtin = preload("res://builtin_plans.gd")
@@ -235,6 +236,7 @@ var place_view = PlaceView.new()   # moving and turning panels in the 3D view (p
 var live = LiveDrape.new()         # working on the garment live on the mannequin (live_drape.gd, docs/LIVE_DRAPE_PLAN.md)
 var body_mode = BodyMode.new()     # measuring and dressing up the mannequin on itself (body_mode.gd, docs/BODY_MODE_PLAN.md)
 var body_btn: Button
+var voice: Node   # the Talk button: speech to the garment agent (voice.gd)
 var cam_custom := {}               # the camera's focus {p, d} while cam_focus is "custom" (body mode aims it)
 var live_btn: Button
 var place_btn: Button
@@ -3643,6 +3645,8 @@ func _poll_agent_garments(delta: float) -> void:
 	_agent_poll -= delta
 	if _agent_poll > 0.0 or M.is_empty() or body_stand == null or live.active or body_mode.active:
 		return
+	if OS.has_environment("FL_GARMENT") or OS.has_environment("FL_AUTO"):
+		return  # a scripted run (./garment shots, tests) shows only its own garment
 	_agent_poll = 1.0
 	var reload := []
 	for i in outfit.size():
@@ -4953,6 +4957,11 @@ func _show_view_texture() -> void:
 	view_pane.add_child(_build_view_chips())
 	live.build_ui(view_pane)
 	body_mode.build_ui(view_pane)
+	voice = Voice.new()
+	voice.name = "Voice"
+	add_child(voice)
+	voice.setup(self, bar, view_pane)
+	bar.move_child(voice.btn, body_btn.get_index() + 1)
 	render_mode = RenderModeLib.new(self, _showcase, view_pane)
 
 
@@ -5492,6 +5501,10 @@ func _unhandled_key_input(e: InputEvent) -> void:
 			_:
 				if e.shift_pressed or e.alt_pressed or not layout.handle_key(e):
 					return
+		get_viewport().set_input_as_handled()
+		return
+	# hold V to talk (voice.gd): the release counts too, wherever the pointer went meanwhile
+	if e is InputEventKey and voice != null and (pointer_over_view or voice.recording) and voice.key(e):
 		get_viewport().set_input_as_handled()
 		return
 	if not pointer_over_view or not (e is InputEventKey) or not e.pressed or e.echo:
