@@ -91,7 +91,9 @@ static func build(plan: Dictionary, sections: Dictionary, arms: Dictionary, stan
 		sim.set_param("linear_solver", 1)
 		sim.set_param("cg_block_jacobi", 1)
 		sim.set_param("cg_max_iterations", float(OS.get_environment("FL_CG")) if OS.has_environment("FL_CG") else 100.0)
-		sim.set_param("strain_limit", 0.03)
+		sim.set_param("strain_limit", float(OS.get_environment("FL_STRAIN")) if OS.has_environment("FL_STRAIN") else 0.03)
+		if OS.has_environment("FL_DAMP"):   # FL_STRAIN, FL_DAMP: solver experiments (as FL_CG)
+			sim.set_param("damping_scale", float(OS.get_environment("FL_DAMP")))
 		# FL_GPU=1: those CG solves on the GPU (gdextension/src/gpu_cg.h); needs the Forward+ or Mobile renderer
 		if OS.get_environment("FL_GPU") == "1":
 			sim.set_param("gpu", 1)

@@ -99,6 +99,16 @@ var self_collision := false
 # strain limit) with every substep on the GPU. Frames it cannot run (no GPU device, a collider or solver feature it does
 # not implement) stay on the CPU with the same settings; the status line says which. Off under headless (tests).
 var solver_gpu := DisplayServer.get_name() != "headless" and OS.get_environment("FL_CPU") != "1"
+# After the timeline's last frame the cloth keeps simulating (Sim tab): walking, for ever; standing, until it is still
+# (SETTLE_KE for SETTLE_FRAMES frames). The timeline ran a fixed number of frames and then froze the cloth wherever it
+# was, often still falling. Off under headless (tests run a fixed number of frames).
+var keep_simulating := DisplayServer.get_name() != "headless"
+const SETTLE_KE := 2.0e-4       # J: whole-scene kinetic energy below this counts as still
+const SETTLE_FRAMES := 45
+var _still_frames := 0
+const SETTLE_DAMPING := 4.0
+var _settle_damped := false
+var _live_seq := 0              # frames simulated past the timeline: keys the display (the shown index stays the last)
 
 # Outfit: the garments on the mannequin, inner first (outfit.gd merges the shown ones into one simulation). Entry:
 # {uid, key, redraft, name, notes, fabric, color, visible, locked, fitted, plan, pieces, seams}. The globals above
@@ -2587,6 +2597,13 @@ func _build_fabric_tab() -> void:
 	gchk.button_pressed = solver_gpu
 	gchk.toggled.connect(func(on: bool) -> void: solver_gpu = on; _schedule())
 	vb.add_child(gchk)
+	var kchk := CheckBox.new()
+	kchk.name = "KeepSimCheck"
+	kchk.text = "Keep simulating"
+	kchk.tooltip_text = "After the timeline ends the cloth goes on moving: walking keeps walking, standing runs until the cloth is still. Off: the drape stops at the timeline's last frame."
+	kchk.button_pressed = keep_simulating
+	kchk.toggled.connect(func(on: bool) -> void: keep_simulating = on; _still_frames = 0)
+	vb.add_child(kchk)
 	var note := Label.new()
 	note.name = "FabricNote"
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -3861,6 +3878,9 @@ func rebuild() -> void:
 	soft.reset()
 	var qf: int = QUALITIES[_qual_key()]["frames"]
 	target = qf + (96 if motion == "walk" else qf)
+	_still_frames = 0
+	_live_seq = 0
+	_settle_damped = false
 	if OS.has_environment("FL_AUTO"):
 		tl_t = 4.0
 		playing = true
@@ -3910,6 +3930,15 @@ func _physics_process(_delta: float) -> void:
 		live.tick(_delta)
 	elif playing:
 		_advance()
+	elif keep_simulating and tl_t >= 4.0 and target > 0 and frames.size() >= target and not _in_flight \
+			and not (render_mode != null and render_mode.active()) \
+			and _still_frames < SETTLE_FRAMES and (_use_worker or _may_step()):
+		if motion != "walk" and not _settle_damped:
+			# standing still, past the timeline: more air damping, so the drape comes to rest instead of swinging (the
+			# fast solve does not lose its last few mm/s: a dress kept swinging 14 mm per 2 s, 4 mm with this)
+			sim.set_param("damping_scale", SETTLE_DAMPING)
+			_settle_damped = true
+		_submit_step(_take_job())
 	_show_current()
 	_tick += 1
 	if OS.has_environment("FL_OUTFIT") and _tick == 20 and body_stand != null:   # FL_OUTFIT=crop,...: more garments on (tests, shots)
@@ -3947,10 +3976,14 @@ func _advance() -> void:
 	var qf: int = QUALITIES[_qual_key()]["frames"]
 	if tl_t < 3.0:
 		tl_t = minf(4.0, tl_t + tl_speed / 60.0 / 2.4)
+		# the drape is simulated while the cut, placement and sewing play: the frames are there when sewing ends (it
+		# waited for the drape stage, and then for its own first frame index, which is -1 with no frames: 6 s of nothing)
+		if not _in_flight and frames.size() < target and (_use_worker or _may_step()):
+			_submit_step(_take_job())
 		if tl_t >= 4.0:
 			playing = false
 	else:
-		var need := target if tl_t >= 4.0 else mini(target, _frame_idx() + 1)
+		var need := target
 		# at most one step in flight. Threaded: the next step starts as soon as the last one is collected. Synchronous
 		# (headless/tests): one step per drawn frame, as before. Playback time still advances below, so a slow sim makes
 		# playback slower instead of freezing the UI in bursts.
@@ -4120,6 +4153,13 @@ func _collect(res: Dictionary) -> void:
 			live.collect(res)
 		return
 	frames.append(res["frame"])
+	if frames.size() > target and target > 0:
+		frames.remove_at(frames.size() - 2)   # past the timeline: the newest frame replaces the last one shown
+		_live_seq += 1
+	if motion != "walk" and float(res["frame"].get("ke", 1.0)) < SETTLE_KE:
+		_still_frames += 1
+	else:
+		_still_frames = 0
 	_solver_stats = res["stats"]
 	_vcount = res["vcount"]
 	var fr: Dictionary = frames[frames.size() - 1]
@@ -4181,7 +4221,7 @@ func _show_current() -> void:
 	elif phase == 1:
 		key = "1|%d|%s" % [int(tl_t * 1000.0), sel]      # the needles move with the clock
 	else:
-		key = "%d|%d|%s" % [phase, _frame_idx(), sel]
+		key = "%d|%d|%d|%s" % [phase, _frame_idx(), _live_seq, sel]
 	if key == _last_shown:
 		return
 	_last_shown = key
