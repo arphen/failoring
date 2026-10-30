@@ -3154,7 +3154,10 @@ func _process(_delta: float) -> void:
 func _idle_gains(delta: float) -> void:
 	if body_node == null or idle == null:
 		return
-	body_node.idle_pose_on = _body_key == "stand" or sim == null
+	# only on the standing body: the idle pose turns the head about the standing neck, so on a body that walked away (the
+	# showcase, a render) a small turn moved the head by centimetres and the rigid hair came off the scalp
+	var driven: bool = (render_mode != null and render_mode.active()) or (_showcase != null and _showcase._view)
+	body_node.idle_pose_on = (_body_key == "stand" or sim == null) and not driven
 	var dressed := false
 	for e in outfit:
 		if bool(e["visible"]):

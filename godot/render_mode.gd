@@ -16,7 +16,7 @@ const OUTPUTS := [["720p", 1280, 720], ["1080p", 1920, 1080]]
 const SSAA := 2
 const MOVIE_FPS := 30
 const JPEG_Q := 0.92
-const MOVIE_VERSION := 2
+const MOVIE_VERSION := 13   # 3: hair, eyes and props drawn where they are (they lagged a frame: a bald scalp on the runway)
 const DIR := "user://renders"
 const CAMERAS := ["Current view", "Slow orbit"]
 const SIM_QUALITY := ["preview", "standard", "fine", "photo", "ultra"]
@@ -447,6 +447,17 @@ func tick(delta: float) -> void:
 			_play_tick(delta)
 
 
+# Hands every 3D instance's transform to the renderer now. A moved node tells the renderer at the end of the frame, and
+# force_draw draws before that: the hair and the eyes (placed on the head by transform, not in the body's mesh) and the
+# props were drawn where they were a movie frame before, about 5 cm behind a walking body, and the front of the scalp
+# came out bald.
+static func _push_transforms(n: Node) -> void:
+	if n is VisualInstance3D and (n as VisualInstance3D).is_visible_in_tree():
+		RenderingServer.instance_set_transform((n as VisualInstance3D).get_instance(), (n as Node3D).global_transform)
+	for c in n.get_children():
+		_push_transforms(c)
+
+
 # Renders every frame of the activity offline, at full quality and at twice the size, into the movie.
 func _capture() -> void:
 	if state == S.FRAMES:
@@ -472,6 +483,18 @@ func _capture() -> void:
 	vi.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	Look.apply_quality("high", ed.render_env, ed.render_key, ed.sub_view, ed.body_node.material_override)
 	ed._shade.set_quality("high")
+	if OS.has_environment("FL_RENDER_FX"):   # look work: as the editor's FL_FX, after the render's quality (finding an artifact)
+		var fx := OS.get_environment("FL_RENDER_FX").split(",")
+		var bm: ShaderMaterial = ed.body_node.material_override
+		if fx.has("nosss"): bm.set_shader_parameter("sss", 0.0)
+		if fx.has("nogi"): ed.render_env.sdfgi_enabled = false
+		if fx.has("nossr"): ed.render_env.ssr_enabled = false
+		if fx.has("nossil"): ed.render_env.ssil_enabled = false
+		if fx.has("nossao"): ed.render_env.ssao_enabled = false
+		if fx.has("nodof"): ed.cam.attributes = null
+		if fx.has("noprobe"): Look._probe.visible = false
+		if fx.has("nomsaa"): ed.sub_view.msaa_3d = Viewport.MSAA_DISABLED
+		if fx.has("nopost") and ed.sub_view.get_node_or_null("Post") != null: ed.sub_view.get_node("Post").visible = false
 	ed.body_node.idle_paused = true
 	var idle = ed.idle
 	var yaw0: float = ed.yaw
@@ -515,6 +538,7 @@ func _capture() -> void:
 		# drawn here, not awaited: a window macOS hides (covered, minimised, another Space) is not drawn at all, and a
 		# render waiting for its frames stopped until the window showed again. Two draws, as the two frames it awaited
 		# before (temporal effects settle). A tick in between keeps the HUD and Cancel working.
+		_push_transforms(ed.stage)
 		RenderingServer.force_draw(false)
 		RenderingServer.force_draw(false)
 		var img: Image = ed.sub_view.get_texture().get_image()

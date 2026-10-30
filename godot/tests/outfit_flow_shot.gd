@@ -8,7 +8,9 @@ var dir := ""
 
 
 func _shot(name: String) -> void:
-	await RenderingServer.frame_post_draw
+	# drawn here, not awaited: macOS does not draw a hidden window (covered, screen asleep), as in render_mode.gd
+	RenderingServer.force_draw(false)
+	RenderingServer.force_draw(false)
 	var img := get_viewport().get_texture().get_image()
 	img.save_png("%s/%s.png" % [dir, name])
 	print("FLOW shot %s | %s | %s" % [name, ed.status_label.text.replace("\n", " / "), ed.health_text])
