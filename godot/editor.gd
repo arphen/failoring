@@ -3641,6 +3641,23 @@ var _agent_poll := 0.0
 var _agent_mtimes := {}   # library file -> modified time when last loaded
 
 
+const _PLACES := {"tops": ["upper"], "dresses": ["upper", "lower"], "skirts": ["lower"], "bottoms": ["lower"]}
+
+
+static func _clashes(a: String, b: String) -> bool:
+	for p in _PLACES.get(a, []):
+		if p in _PLACES.get(b, []):
+			return true
+	return false
+
+
+func _category_of(key: String) -> String:
+	for it in Library.items(_fs_preset(meas)):
+		if String(it["id"]) == key:
+			return String(it["category"])
+	return ""
+
+
 func _poll_agent_garments(delta: float) -> void:
 	_agent_poll -= delta
 	if _agent_poll > 0.0 or M.is_empty() or body_stand == null or live.active or body_mode.active:
@@ -3670,6 +3687,10 @@ func _poll_agent_garments(delta: float) -> void:
 			if String(outfit[i]["key"]) == key:
 				at = i
 		if at < 0:
+			# a dress takes off the tops, skirts and dresses already on (and the other way round): one garment per place
+			for i in range(outfit.size() - 1, -1, -1):
+				if _clashes(_category_of(String(outfit[i]["key"])), _category_of(key)) and not bool(outfit[i]["locked"]):
+					_outfit_remove_now(i)
 			_on_library_add(key)
 		elif not at in reload:
 			reload.append(at)

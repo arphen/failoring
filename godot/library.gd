@@ -9,10 +9,11 @@
 #   fitted    body preset the outline is fitted for ("" = fixed outline)
 #   redraft   true when the outline can be drafted again for another body (drafted, FreeSewing, or a saved
 #             garment that remembers one of those)
-const DIR := "user://library"
+# FL_LIBRARY: another folder (tests: a running editor shares user://library and would act on their wear requests)
+static var DIR: String = OS.get_environment("FL_LIBRARY") if OS.has_environment("FL_LIBRARY") else "user://library"
 const FORMAT := "failoring-library/1"
 const RECIPE_FORMAT := "failoring-garment/1"   # garment_recipe.gd: kept as written, expanded on the live body
-const WEAR_REQUEST := "user://library/.wear"   # ./garment wear: a running editor puts this garment on (editor.gd)
+static var WEAR_REQUEST: String = DIR + "/.wear"   # ./garment wear: a running editor puts this garment on (editor.gd)
 const CATEGORIES := ["All", "Tops", "Dresses", "Bottoms", "Skirts", "Custom"]
 const CATEGORY_KEYS := ["", "tops", "dresses", "bottoms", "skirts", "custom"]
 const DRAFTED := ["pants", "tank", "shirt", "crop"]

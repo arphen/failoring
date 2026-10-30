@@ -1,7 +1,8 @@
 # Garment recipes in the editor (garment_recipe.gd, library.gd, editor.gd _poll_agent_garments): a recipe installed in
 # the library loads as a garment, a wear request puts it on, and a changed recipe file is reloaded. Headless; uses a
-# scratch library entry (agent-recipe-check.json) and removes it. Prints RECIPECHECK lines, exits 1 on a failure.
-#   godot --headless --path godot res://tests/recipe_library_check.tscn
+# scratch library folder: FL_LIBRARY is required, so a running editor (which watches user://library) never sees the test's
+# wear requests. Prints RECIPECHECK lines, exits 1 on a failure.
+#   FL_LIBRARY=/tmp/fl_lib godot --headless --path godot res://tests/recipe_library_check.tscn
 extends Node
 
 const Library = preload("res://library.gd")
@@ -16,6 +17,10 @@ func _check(ok: bool, what: String) -> void:
 
 
 func _ready() -> void:
+	if not OS.has_environment("FL_LIBRARY"):
+		print("RECIPECHECK FAIL set FL_LIBRARY to a scratch folder (a running editor would act on the test's wear requests)")
+		get_tree().quit(1)
+		return
 	var recipe := {"name": "Recipe check", "category": "skirts", "fabric": "cotton_poplin",
 		"pieces": [{"id": "skirt", "shape": {"kind": "trapezoid", "top": "waist * 0.53", "bottom": "hip * 0.7", "h": 0.4},
 			"around": 2, "wrap": {"theta": 0, "y": "y_waist - 0.4"}}], "seams": []}
@@ -54,6 +59,19 @@ func _ready() -> void:
 			reloaded = true
 			break
 	_check(reloaded, "a changed recipe file is reloaded")
+	# a dress takes off what it clashes with: the tee (tops) and the skirt go, the dress stays alone
+	var dress := {"name": "Recipe check dress", "category": "dresses", "fabric": "cotton_poplin",
+		"include": [{"draft": "tank", "opt": {"hemY": "y_waist"}}], "pieces": [], "seams": []}
+	var dfile := Library.install_recipe(dress)
+	Library.request_wear(dfile)
+	for i in 40:
+		await get_tree().create_timer(0.1).timeout
+		if ed.outfit.any(func(e): return String(e["key"]) == "user:" + dfile):
+			break
+	await get_tree().create_timer(0.5).timeout
+	var keys: Array = ed.outfit.map(func(e): return String(e["key"]))
+	_check(keys == ["user:" + dfile], "a dress replaces the top and the skirt: %s" % str(keys))
+	Library.delete(dfile)
 	Library.delete(file)
 	if Library.last_replaced != "":
 		DirAccess.remove_absolute(Library.last_replaced)

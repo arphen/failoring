@@ -35,6 +35,10 @@ func setup(editor: Node, bar: Control, view_pane: Control) -> void:
 			start()
 		else:
 			stop())
+	# right-click stops the agent (tools/voice/server.py /stop ends its opencode session)
+	btn.gui_input.connect(func(e: InputEvent) -> void:
+		if e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_RIGHT:
+			stop_agent())
 	bar.add_child(btn)
 	_bubble = PanelContainer.new()
 	_bubble.name = "VoiceBubble"
@@ -131,6 +135,18 @@ func stop() -> void:
 	_poll = 0.5
 
 
+func stop_agent() -> void:
+	if _job == "":
+		say("No agent is working.", 3.0)
+		return
+	var h := HTTPRequest.new()
+	add_child(h)
+	h.request_completed.connect(func(_a, _b, _c, _d) -> void: h.queue_free())
+	h.request(URL + "/stop", [], HTTPClient.METHOD_POST, "")
+	_job = ""
+	say("Stopped the agent.", 4.0)
+
+
 func _json(res: Array):
 	if int(res[0]) != HTTPRequest.RESULT_SUCCESS:
 		return null
@@ -169,7 +185,7 @@ func _process(delta: float) -> void:
 	var lines: Array = j.get("lines", [])
 	var head := "You: %s" % String(j.get("text", ""))
 	if String(j.get("state", "")) == "running":
-		say("%s\n%s" % [head, String(lines[-1]) if not lines.is_empty() else "Thinking..."])
+		say("%s\n%s\n(right-click Talk to stop)" % [head, String(lines[-1]) if not lines.is_empty() else "Thinking..."])
 	else:
 		_job = ""
 		var reply := String(j.get("reply", ""))

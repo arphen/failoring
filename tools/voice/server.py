@@ -7,13 +7,16 @@ this server over HTTP on localhost; a terminal works too (tools/voice/talk.py).
 POST /transcribe   body: a WAV file             -> {"text"}
 POST /ask          {"text"}                     -> {"job"}       the agent starts on the request
 GET  /job/<id>                                  -> {"state": running|done|failed, "lines": [...], "reply"}
+POST /stop                                     -> stops the running agent
 POST /reset                                     -> a new agent conversation from the next /ask on
 GET  /health                                    -> {"ok", "model", "agent_model", "session"}
 
 One agent conversation is kept (opencode --session), so "make it shorter" follows "make me a frilly dress". The agent
 runs in the repo root, where AGENTS.md sends it to ./garment.
 """
+import atexit
 import json
+import signal
 import os
 import subprocess
 import sys
@@ -38,6 +41,7 @@ BRIEF = ("You are the tailor's assistant for the Failoring editor; the user is s
 sys.path.insert(0, str(Path(__file__).parent))
 transcriber = None
 jobs = {}
+procs = {}   # job -> the running opencode process
 lock = threading.Lock()
 
 
@@ -77,7 +81,10 @@ def run_agent(job, text):
     cmd.append((BRIEF if not sid else "The user said: ") + text)
     j = jobs[job]
     try:
-        proc = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        proc = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                start_new_session=True)
+        with lock:
+            procs[job] = proc
         texts = []
         for line in proc.stdout:
             try:
@@ -101,6 +108,22 @@ def run_agent(job, text):
         with lock:
             j["lines"].append(f"cannot start opencode: {e}")
             j["state"] = "failed"
+
+
+def stop_agents():
+    """Stops running agent jobs. opencode runs sessions in its background service, which keeps a session working after
+    its `opencode run` client is killed (seen 2026-10-30: test agents went on installing garments for half an hour), so
+    the session itself is deleted too; the next request starts a new conversation."""
+    running = [j for j, p in procs.items() if p.poll() is None]
+    for job in running:
+        os.killpg(procs[job].pid, signal.SIGTERM)
+        with lock:
+            jobs[job]["state"] = "failed"
+            jobs[job]["lines"].append("stopped")
+    sid = session_id()
+    if running and sid:
+        subprocess.run(["opencode", "session", "delete", sid], cwd=ROOT, capture_output=True, timeout=30)
+        set_session("")
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -152,6 +175,9 @@ class Handler(BaseHTTPRequestHandler):
             threading.Thread(target=run_agent, args=(job, text), daemon=True).start()
             print(f"agent job {job}: {text}", flush=True)
             return self._send(200, {"job": job})
+        if self.path == "/stop":   # stop every running agent job
+            stop_agents()
+            return self._send(200, {"ok": True})
         if self.path == "/reset":
             set_session("")
             return self._send(200, {"ok": True})
@@ -171,4 +197,9 @@ if __name__ == "__main__":
         sys.exit(f"FL_AGENT_MODEL={AGENT_MODEL}: only opencode's free models are allowed (opencode/<name>-free)")
     threading.Thread(target=load, daemon=True).start()
     print(f"voice server on http://127.0.0.1:{PORT} (agent: {AGENT_MODEL}, repo: {ROOT})", flush=True)
-    ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
+    atexit.register(stop_agents)   # agents do not outlive the server
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    try:
+        ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
+    except KeyboardInterrupt:
+        pass
